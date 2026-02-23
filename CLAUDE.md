@@ -42,12 +42,12 @@
 
 Four tools, defined in `src/mcp-server/tools/definitions/`:
 
-| Tool | File | Annotations | Maps To |
-|:--|:--|:--|:--|
-| `pixoo_compose` | `pixoo-compose.tool.ts` | `destructiveHint: true` | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `buildAnimation`, `push`/`pushAnimation` |
-| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true` | `loadImage`, `push` |
-| `pixoo_text` | `pixoo-text.tool.ts` | `destructiveHint: true` | `sendText`, `clearText` (device-side `Draw/SendHttpText`) |
-| `pixoo_control` | `pixoo-control.tool.ts` | `readOnlyHint: true` (when no params), `idempotentHint: true` | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock` |
+| Tool               | File                       | Annotations                                                   | Maps To                                                                                                  |
+| :----------------- | :------------------------- | :------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------- |
+| `pixoo_compose`    | `pixoo-compose.tool.ts`    | `destructiveHint: true`                                       | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `buildAnimation`, `push`/`pushAnimation` |
+| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true`                                       | `loadImage`, `push`                                                                                      |
+| `pixoo_text`       | `pixoo-text.tool.ts`       | `destructiveHint: true`                                       | `sendText`, `clearText` (device-side `Draw/SendHttpText`)                                                |
+| `pixoo_control`    | `pixoo-control.tool.ts`    | `readOnlyHint: true` (when no params), `idempotentHint: true` | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock`                                      |
 
 Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `Custom` channel before pushing.
 
@@ -56,25 +56,27 @@ Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `Custo
 The compose tool accepts a declarative JSON structure: `{ background, elements[], frames, speed, push, output }`.
 
 **Rendering order:** Back-to-front. For each frame:
+
 1. Create `Canvas`, fill with `background` color
 2. For each element, resolve animated properties for this frame index
 3. If `visible === false`, skip
 4. Dispatch to renderer by `type`:
 
-| Type | Renderer | Async | Notes |
-|:--|:--|:--|:--|
-| `text` | `drawText` / `drawTextCentered` | No | `font`: `'standard'` → `FONT_5x7`, `'compact'` → `FONT_3x5` |
-| `image` | `loadImage` | Yes | Pre-load once, `blit` per frame. `fit`/`kernel` options. |
-| `sprite` | `downsampleSprite` + `renderSprite` | Yes | Pre-load once, render per frame. `bodyColor`/`darkColor` overrides. |
-| `rect` | `fillRect` / `drawRect` | No | `fill: true` (default) → filled, `false` → stroked |
-| `circle` | `fillCircle` / `drawCircle` | No | Same fill logic |
-| `line` | `drawLine` | No | |
-| `bitmap` | Manual `setPixel` loop | No | Palette indices in row strings, `scale` multiplier |
-| `pixels` | Batch `setPixel` | No | Array of `{ x, y, color }` |
+| Type     | Renderer                            | Async | Notes                                                               |
+| :------- | :---------------------------------- | :---- | :------------------------------------------------------------------ |
+| `text`   | `drawText` / `drawTextCentered`     | No    | `font`: `'standard'` → `FONT_5x7`, `'compact'` → `FONT_3x5`         |
+| `image`  | `loadImage`                         | Yes   | Pre-load once, `blit` per frame. `fit`/`kernel` options.            |
+| `sprite` | `downsampleSprite` + `renderSprite` | Yes   | Pre-load once, render per frame. `bodyColor`/`darkColor` overrides. |
+| `rect`   | `fillRect` / `drawRect`             | No    | `fill: true` (default) → filled, `false` → stroked                  |
+| `circle` | `fillCircle` / `drawCircle`         | No    | Same fill logic                                                     |
+| `line`   | `drawLine`                          | No    |                                                                     |
+| `bitmap` | Manual `setPixel` loop              | No    | Palette indices in row strings, `scale` multiplier                  |
+| `pixels` | Batch `setPixel`                    | No    | Array of `{ x, y, color }`                                          |
 
 **Async asset pre-loading:** Before the frame loop, scan elements for `image` and `sprite` types. `loadImage`/`downsampleSprite` once, store results. In the frame loop, blit cached results with per-frame position/visibility.
 
 **Animation keyframes:** When `frames > 1`, elements can include `animate: { prop: [[frame, value], ...] }`. Interpolation rules:
+
 - **Numbers** — linear lerp between surrounding keyframes
 - **Colors** (hex strings) — `lerpColor` between resolved RGB values
 - **Booleans/other** — snap at keyframe (hold previous value until keyframe frame)
@@ -86,11 +88,11 @@ Utility: a shared `interpolateKeyframes(keyframes, frame)` function handles all 
 
 ### `pixoo_text` — Parameter Mapping
 
-| Spec Param | Toolkit Param | Mapping |
-|:--|:--|:--|
-| `direction` (`'left'`/`'right'`) | `dir` | `'left'` → `0`, `'right'` → `1` |
-| `align` (`'left'`/`'center'`/`'right'`) | `align` | `'left'` → `1`, `'center'` → `2`, `'right'` → `3` |
-| `clear: true` | `clearText(id)` | Clears overlay at given `id` instead of setting |
+| Spec Param                              | Toolkit Param   | Mapping                                           |
+| :-------------------------------------- | :-------------- | :------------------------------------------------ |
+| `direction` (`'left'`/`'right'`)        | `dir`           | `'left'` → `0`, `'right'` → `1`                   |
+| `align` (`'left'`/`'center'`/`'right'`) | `align`         | `'left'` → `1`, `'center'` → `2`, `'right'` → `3` |
+| `clear: true`                           | `clearText(id)` | Clears overlay at given `id` instead of setting   |
 
 ### Device Quirks
 
@@ -108,35 +110,35 @@ Utility: a shared `interpolateKeyframes(keyframes, frame)` function handles all 
 
 See [docs/tree.md](docs/tree.md) for the complete visual tree. Respect the established layout — new services go in `src/services/`, new tools in `src/mcp-server/tools/definitions/`, etc. Don't create top-level directories or put code in non-standard locations.
 
-| Directory | Purpose |
-|:--|:--|
-| `src/mcp-server/tools/definitions/` | **Tool definitions.** `[tool-name].tool.ts`. Variants: `.task-tool.ts` (async tasks), `.app-tool.ts` (UI-enabled). |
-| `src/mcp-server/resources/definitions/` | **Resource definitions.** `[resource-name].resource.ts`. Variant: `.app-resource.ts` (linked UI). |
-| `src/mcp-server/prompts/definitions/` | **Prompt definitions.** `[prompt-name].prompt.ts`. |
-| `src/mcp-server/tools/utils/` | Shared tool infrastructure (`ToolDefinition`, `toolHandlerFactory`). |
-| `src/mcp-server/resources/utils/` | Shared resource utilities (`ResourceDefinition`, resource handler factory). |
-| `src/mcp-server/prompts/utils/` | Shared prompt utilities (`PromptDefinition` type). |
-| `src/mcp-server/roots/` | Roots capability registration. Tracks client-provided root URIs via `RootsRegistry`. |
-| `src/mcp-server/tasks/` | Tasks API infrastructure (experimental). `TaskManager`, `TaskToolDefinition`, SDK type re-exports. Task tool definitions go in `tools/definitions/` with `.task-tool.ts` suffix. |
-| `src/mcp-server/transports/` | Transport implementations: `http/` (Hono + `@hono/mcp` Streamable HTTP), `stdio/` (MCP spec stdio), `auth/` (strategies and helpers). HTTP can enforce JWT/OAuth. Stdio should not implement HTTP-based auth. |
-| `src/config/` | Zod-validated config from environment variables. Derives `serviceName`/`version` from `package.json`. |
-| `src/types-global/` | Global type definitions shared across the codebase (error types, etc.). |
-| `src/services/` | External service integrations. Each domain (e.g. `llm/`, `speech/`, `graph/`) contains: `core/` (interfaces, orchestrators), `providers/` (implementations), `types.ts`, `index.ts`. Use DI for all service deps. |
-| `src/storage/` | Storage abstractions and provider implementations (in-memory, filesystem, supabase, cloudflare). |
-| `src/container/` | Dependency injection (custom typed container). `Token<T>` phantom branding, service registration/resolution. Zero external deps. |
-| `src/utils/` | Global utilities: logging, performance, parsing, network, security, formatting, telemetry. Error handling is at `src/utils/internal/error-handler/`. |
-| `tests/` | Unit/integration tests. Mirrors `src/` layout. Includes compliance suites. |
+| Directory                               | Purpose                                                                                                                                                                                                           |
+| :-------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/mcp-server/tools/definitions/`     | **Tool definitions.** `[tool-name].tool.ts`. Variants: `.task-tool.ts` (async tasks), `.app-tool.ts` (UI-enabled).                                                                                                |
+| `src/mcp-server/resources/definitions/` | **Resource definitions.** `[resource-name].resource.ts`. Variant: `.app-resource.ts` (linked UI).                                                                                                                 |
+| `src/mcp-server/prompts/definitions/`   | **Prompt definitions.** `[prompt-name].prompt.ts`.                                                                                                                                                                |
+| `src/mcp-server/tools/utils/`           | Shared tool infrastructure (`ToolDefinition`, `toolHandlerFactory`).                                                                                                                                              |
+| `src/mcp-server/resources/utils/`       | Shared resource utilities (`ResourceDefinition`, resource handler factory).                                                                                                                                       |
+| `src/mcp-server/prompts/utils/`         | Shared prompt utilities (`PromptDefinition` type).                                                                                                                                                                |
+| `src/mcp-server/roots/`                 | Roots capability registration. Tracks client-provided root URIs via `RootsRegistry`.                                                                                                                              |
+| `src/mcp-server/tasks/`                 | Tasks API infrastructure (experimental). `TaskManager`, `TaskToolDefinition`, SDK type re-exports. Task tool definitions go in `tools/definitions/` with `.task-tool.ts` suffix.                                  |
+| `src/mcp-server/transports/`            | Transport implementations: `http/` (Hono + `@hono/mcp` Streamable HTTP), `stdio/` (MCP spec stdio), `auth/` (strategies and helpers). HTTP can enforce JWT/OAuth. Stdio should not implement HTTP-based auth.     |
+| `src/config/`                           | Zod-validated config from environment variables. Derives `serviceName`/`version` from `package.json`.                                                                                                             |
+| `src/types-global/`                     | Global type definitions shared across the codebase (error types, etc.).                                                                                                                                           |
+| `src/services/`                         | External service integrations. Each domain (e.g. `llm/`, `speech/`, `graph/`) contains: `core/` (interfaces, orchestrators), `providers/` (implementations), `types.ts`, `index.ts`. Use DI for all service deps. |
+| `src/storage/`                          | Storage abstractions and provider implementations (in-memory, filesystem, supabase, cloudflare).                                                                                                                  |
+| `src/container/`                        | Dependency injection (custom typed container). `Token<T>` phantom branding, service registration/resolution. Zero external deps.                                                                                  |
+| `src/utils/`                            | Global utilities: logging, performance, parsing, network, security, formatting, telemetry. Error handling is at `src/utils/internal/error-handler/`.                                                              |
+| `tests/`                                | Unit/integration tests. Mirrors `src/` layout. Includes compliance suites.                                                                                                                                        |
 
 **File suffix conventions:**
 
-| Suffix | Meaning |
-|:--|:--|
-| `.tool.ts` | Standard tool |
-| `.task-tool.ts` | Async task tool |
-| `.app-tool.ts` | UI-enabled tool (MCP Apps, links to `.app-resource.ts`) |
-| `.resource.ts` | Standard resource |
-| `.app-resource.ts` | UI resource linked to an app tool |
-| `.prompt.ts` | Prompt template |
+| Suffix             | Meaning                                                 |
+| :----------------- | :------------------------------------------------------ |
+| `.tool.ts`         | Standard tool                                           |
+| `.task-tool.ts`    | Async task tool                                         |
+| `.app-tool.ts`     | UI-enabled tool (MCP Apps, links to `.app-resource.ts`) |
+| `.resource.ts`     | Standard resource                                       |
+| `.app-resource.ts` | UI resource linked to an app tool                       |
+| `.prompt.ts`       | Prompt template                                         |
 
 ---
 
@@ -160,6 +162,7 @@ Template: [template-echo-message.tool.ts](src/mcp-server/tools/definitions/templ
 **Definition structure:**
 
 Export a single `const` of type `ToolDefinition<InputSchema, OutputSchema>` with:
+
 - `name`, `title` (opt), `description` — clear, LLM-facing
 - `inputSchema`/`outputSchema` as `z.object()` — all fields need `.describe()`
 - `logic` — pure business logic. `async (input, appContext, sdkContext) => { ... }`
@@ -208,6 +211,7 @@ Template: [template-async-countdown.task-tool.ts](src/mcp-server/tools/definitio
 6. Register in `allToolDefinitions` in [index.ts](src/mcp-server/tools/definitions/index.ts)
 
 **Key concepts:**
+
 - `RequestTaskStore` provides `createTask`, `getTask`, `storeTaskResult`, `getTaskResult`, `updateTaskStatus`
 - Background work updates status via `taskStore.updateTaskStatus(taskId, 'working', 'message...')`
 - Terminal states: `completed`, `failed`, `cancelled` — use `storeTaskResult` for completion
@@ -238,6 +242,7 @@ Template: [code-review.prompt.ts](src/mcp-server/prompts/definitions/code-review
 Template: [echo.resource.ts](src/mcp-server/resources/definitions/echo.resource.ts)
 
 Export a single `const` of type `ResourceDefinition<ParamsSchema, OutputSchema>` with:
+
 - `name`, `title` (opt), `description` — clear, LLM-facing
 - `uriTemplate` (e.g. `echo://{message}`), `paramsSchema`/`outputSchema`
 - `mimeType` (opt), `examples` (opt), `list()` (opt) for discovery
@@ -259,6 +264,7 @@ Export a single `const` of type `ResourceDefinition<ParamsSchema, OutputSchema>`
 All services live in `src/services/[service-name]/` with `core/` (interfaces), `providers/` (implementations), `types.ts`, `index.ts`. See [docs/tree.md](docs/tree.md).
 
 **Patterns:**
+
 - Single-provider (e.g. LLM) — inject via constructor
 - Multi-provider (e.g. Speech) — create orchestrator for routing/aggregation
 
@@ -274,17 +280,17 @@ All services live in `src/services/[service-name]/` with `core/` (interfaces), `
 
 Tokens live in `src/container/core/tokens.ts`.
 
-| Service | Token | Resolution | Notes |
-|:--|:--|:--|:--|
-| `ILlmProvider` | `LlmProvider` | `container.resolve(LlmProvider)` | |
-| `StorageService` | `StorageService` | `container.resolve(StorageService)` | Requires `context.tenantId` |
-| `RateLimiter` | `RateLimiterService` | `container.resolve(RateLimiterService)` | |
-| `Logger` | `Logger` | `container.resolve(Logger)` | Pino-backed singleton |
-| App Config | `AppConfig` | `container.resolve(AppConfig)` | |
-| Supabase Client | `SupabaseAdminClient` | `container.resolve(SupabaseAdminClient)` | Only when needed |
-| Transport Manager | `TransportManagerToken` | `container.resolve(TransportManagerToken)` | |
-| `SpeechService` | `SpeechService` | `container.resolve(SpeechService)` | TTS/STT provider orchestrator |
-| `TaskManager` | `TaskManagerToken` | `container.resolve(TaskManagerToken)` | For MCP Tasks API |
+| Service           | Token                   | Resolution                                 | Notes                         |
+| :---------------- | :---------------------- | :----------------------------------------- | :---------------------------- |
+| `ILlmProvider`    | `LlmProvider`           | `container.resolve(LlmProvider)`           |                               |
+| `StorageService`  | `StorageService`        | `container.resolve(StorageService)`        | Requires `context.tenantId`   |
+| `RateLimiter`     | `RateLimiterService`    | `container.resolve(RateLimiterService)`    |                               |
+| `Logger`          | `Logger`                | `container.resolve(Logger)`                | Pino-backed singleton         |
+| App Config        | `AppConfig`             | `container.resolve(AppConfig)`             |                               |
+| Supabase Client   | `SupabaseAdminClient`   | `container.resolve(SupabaseAdminClient)`   | Only when needed              |
+| Transport Manager | `TransportManagerToken` | `container.resolve(TransportManagerToken)` |                               |
+| `SpeechService`   | `SpeechService`         | `container.resolve(SpeechService)`         | TTS/STT provider orchestrator |
+| `TaskManager`     | `TaskManagerToken`      | `container.resolve(TaskManagerToken)`      | For MCP Tasks API             |
 
 ### Storage
 
@@ -295,6 +301,7 @@ Use DI-injected `StorageService`. Features: input validation, parallel batch ops
 ### Directly Imported Utilities
 
 From `@/utils/index.js`:
+
 - `logger`, `requestContextService`, `sanitization`, `fetchWithTimeout`, `measureToolExecution`
 - `pdfParser`, `frontmatterParser`
 - `markdown()`, `diffFormatter`, `tableFormatter`, `treeFormatter`
@@ -304,21 +311,22 @@ From `@/utils/index.js`:
 
 ### Utils Modules
 
-| Module | Key Exports |
-|:--|:--|
-| `parsing/` | `csvParser`, `yamlParser`, `xmlParser`, `jsonParser`, `pdfParser`, `frontmatterParser` (handles LLM `<think>` blocks) |
-| `formatting/` | `MarkdownBuilder`, `markdown()` helper, `diffFormatter`, `tableFormatter`, `treeFormatter` |
-| `security/` | `sanitization`, `rateLimiter`, `idGenerator` |
-| `network/` | `fetchWithTimeout` |
-| `scheduling/` | `scheduler` (node-cron wrapper) |
-| `internal/` | `logger`, `requestContextService`, `ErrorHandler`, `performance` |
-| `telemetry/` | OpenTelemetry instrumentation |
+| Module        | Key Exports                                                                                                           |
+| :------------ | :-------------------------------------------------------------------------------------------------------------------- |
+| `parsing/`    | `csvParser`, `yamlParser`, `xmlParser`, `jsonParser`, `pdfParser`, `frontmatterParser` (handles LLM `<think>` blocks) |
+| `formatting/` | `MarkdownBuilder`, `markdown()` helper, `diffFormatter`, `tableFormatter`, `treeFormatter`                            |
+| `security/`   | `sanitization`, `rateLimiter`, `idGenerator`                                                                          |
+| `network/`    | `fetchWithTimeout`                                                                                                    |
+| `scheduling/` | `scheduler` (node-cron wrapper)                                                                                       |
+| `internal/`   | `logger`, `requestContextService`, `ErrorHandler`, `performance`                                                      |
+| `telemetry/`  | OpenTelemetry instrumentation                                                                                         |
 
 ---
 
 ## Auth
 
 **HTTP mode:** `MCP_AUTH_MODE` = `none` | `jwt` | `oauth`
+
 - JWT: local secret (`MCP_AUTH_SECRET_KEY`), dev bypasses if missing
 - OAuth: JWKS verification (`OAUTH_ISSUER_URL`, `OAUTH_AUDIENCE`, opt `OAUTH_JWKS_URI`)
 - Claims: `clientId` (cid/client_id), `scopes` (scp/scope), `sub`, `tenantId` (tid → context.tenantId)
@@ -327,6 +335,7 @@ From `@/utils/index.js`:
 **STDIO mode:** No HTTP auth. Host handles authorization.
 
 **Endpoints:**
+
 - Unprotected: `/healthz`, `GET /mcp`
 - Protected (when auth enabled): `POST /mcp`, `OPTIONS /mcp`
 - CORS: `MCP_ALLOWED_ORIGINS` or `*`
@@ -362,6 +371,7 @@ From `@/utils/index.js`:
 Use plain strings for commit messages. Never use heredoc syntax (`cat <<'EOF'`) or command substitution (`$(...)`) in commit messages.
 
 **Correct:**
+
 ```bash
 git commit -m "feat(auth): add JWT validation middleware
 
@@ -371,6 +381,7 @@ git commit -m "feat(auth): add JWT validation middleware
 ```
 
 **Wrong:**
+
 ```bash
 # Do not use cat/heredoc/command substitution
 git commit -m "$(cat <<'EOF'
@@ -381,15 +392,15 @@ EOF
 
 **Format:** [Conventional Commits](https://www.conventionalcommits.org/):
 
-| Prefix | Use |
-|:--|:--|
-| `feat(scope):` | New feature |
-| `fix(scope):` | Bug fix |
-| `refactor(scope):` | Code refactoring |
-| `chore(scope):` | Maintenance (deps, config) |
-| `docs(scope):` | Documentation |
-| `test(scope):` | Test additions/updates |
-| `build(scope):` | Build system or dependency changes |
+| Prefix             | Use                                |
+| :----------------- | :--------------------------------- |
+| `feat(scope):`     | New feature                        |
+| `fix(scope):`      | Bug fix                            |
+| `refactor(scope):` | Code refactoring                   |
+| `chore(scope):`    | Maintenance (deps, config)         |
+| `docs(scope):`     | Documentation                      |
+| `test(scope):`     | Test additions/updates             |
+| `build(scope):`    | Build system or dependency changes |
 
 Group related changes into atomic commits. Use `filesToStage` to control which files are included.
 
@@ -397,14 +408,14 @@ Group related changes into atomic commits. Use `filesToStage` to control which f
 
 ## Commands
 
-| Command | Purpose |
-|:--|:--|
-| `bun run rebuild` | Clean, rebuild, clear logs (after dep changes) |
-| `bun run devcheck` | **Use often.** Lint, format, typecheck, security (opt-out: `--no-fix`, `--no-lint`, `--no-audit`; opt-in: `--test`) |
-| `bun run test` | Unit/integration tests |
-| `bun run dev:stdio/http` | Development mode |
-| `bun run start:stdio/http` | Production mode (after build) |
-| `bun run build:worker` | Cloudflare Worker bundle |
+| Command                    | Purpose                                                                                                             |
+| :------------------------- | :------------------------------------------------------------------------------------------------------------------ |
+| `bun run rebuild`          | Clean, rebuild, clear logs (after dep changes)                                                                      |
+| `bun run devcheck`         | **Use often.** Lint, format, typecheck, security (opt-out: `--no-fix`, `--no-lint`, `--no-audit`; opt-in: `--test`) |
+| `bun run test`             | Unit/integration tests                                                                                              |
+| `bun run dev:stdio/http`   | Development mode                                                                                                    |
+| `bun run start:stdio/http` | Production mode (after build)                                                                                       |
+| `bun run build:worker`     | Cloudflare Worker bundle                                                                                            |
 
 ---
 
@@ -412,14 +423,14 @@ Group related changes into atomic commits. Use `filesToStage` to control which f
 
 All config validated via Zod in `src/config/index.ts`. Config module derives `mcpServerName`/`mcpServerVersion` from `package.json` (overridable via `MCP_SERVER_NAME`/`MCP_SERVER_VERSION` env vars).
 
-| Category | Key Variables |
-|:--|:--|
-| **Pixoo** | **`PIXOO_IP`** (required), `PIXOO_SIZE` (`16`\|`32`\|`64`, default `64`) |
-| Transport | `MCP_TRANSPORT_TYPE` (`stdio`\|`http`), `MCP_HTTP_PORT`, `MCP_HTTP_HOST`, `MCP_HTTP_ENDPOINT_PATH` |
-| Auth | `MCP_AUTH_MODE` (`none`\|`jwt`\|`oauth`), `MCP_AUTH_SECRET_KEY`, `OAUTH_*` |
-| Storage | `STORAGE_PROVIDER_TYPE` (`in-memory`\|`filesystem`\|`supabase`\|`cloudflare-r2`\|`cloudflare-kv`\|`cloudflare-d1`) |
-| LLM | `OPENROUTER_API_KEY`, `OPENROUTER_APP_URL/NAME`, `LLM_DEFAULT_*` |
-| Telemetry | `OTEL_ENABLED`, `OTEL_SERVICE_NAME/VERSION`, `OTEL_EXPORTER_OTLP_*` |
+| Category  | Key Variables                                                                                                      |
+| :-------- | :----------------------------------------------------------------------------------------------------------------- |
+| **Pixoo** | **`PIXOO_IP`** (required), `PIXOO_SIZE` (`16`\|`32`\|`64`, default `64`)                                           |
+| Transport | `MCP_TRANSPORT_TYPE` (`stdio`\|`http`), `MCP_HTTP_PORT`, `MCP_HTTP_HOST`, `MCP_HTTP_ENDPOINT_PATH`                 |
+| Auth      | `MCP_AUTH_MODE` (`none`\|`jwt`\|`oauth`), `MCP_AUTH_SECRET_KEY`, `OAUTH_*`                                         |
+| Storage   | `STORAGE_PROVIDER_TYPE` (`in-memory`\|`filesystem`\|`supabase`\|`cloudflare-r2`\|`cloudflare-kv`\|`cloudflare-d1`) |
+| LLM       | `OPENROUTER_API_KEY`, `OPENROUTER_APP_URL/NAME`, `LLM_DEFAULT_*`                                                   |
+| Telemetry | `OTEL_ENABLED`, `OTEL_SERVICE_NAME/VERSION`, `OTEL_EXPORTER_OTLP_*`                                                |
 
 ---
 

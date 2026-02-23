@@ -5,6 +5,12 @@
  * @module src/mcp-server/tools/definitions
  */
 
+// Pixoo device tools
+import { pixooComposeTool } from './pixoo-compose.tool.js';
+import { pixooControlTool } from './pixoo-control.tool.js';
+import { pixooPushImageTool } from './pixoo-push-image.tool.js';
+import { pixooTextTool } from './pixoo-text.tool.js';
+// Template tools
 import { catFactTool } from './template-cat-fact.tool.js';
 import { codeReviewSamplingTool } from './template-code-review-sampling.tool.js';
 import { echoTool } from './template-echo-message.tool.js';
@@ -20,7 +26,12 @@ import { dataExplorerAppTool } from './template-data-explorer.app-tool.js';
  * Includes both regular tools and task-based tools (experimental).
  */
 export const allToolDefinitions = [
-  // Regular tools
+  // Pixoo device tools
+  pixooComposeTool,
+  pixooControlTool,
+  pixooPushImageTool,
+  pixooTextTool,
+  // Template tools
   catFactTool,
   codeReviewSamplingTool,
   echoTool,

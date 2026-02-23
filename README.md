@@ -1,119 +1,48 @@
 <div align="center">
-  <h1>mcp-ts-template</h1>
-  <p><b>TypeScript template for building Model Context Protocol (MCP) servers. Ships with declarative tools/resources, pluggable auth, multi-backend storage, OpenTelemetry observability, and first-class support for both local and edge (Cloudflare Workers) runtimes.</b>
-  <div>7 Tools • 2 Resources • 1 Prompt</div>
+  <h1>pixoo-mcp-server</h1>
+  <p><b>MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays (16x16, 32x32, 64x64) over the local network.</b>
+  <div>4 Tools • 2 Resources • 1 Prompt</div>
   </p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-2.9.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![MCP Spec](https://img.shields.io/badge/MCP%20Spec-2025--11--25-8A2BE2.svg?style=flat-square)](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/changelog.mdx) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.26.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Status](https://img.shields.io/badge/Status-Stable-brightgreen.svg?style=flat-square)](https://github.com/cyanheads/mcp-ts-template/issues) [![TypeScript](https://img.shields.io/badge/TypeScript-^5.9.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.2.21-blueviolet.svg?style=flat-square)](https://bun.sh/) [![Code Coverage](https://img.shields.io/badge/Coverage-86.30%25-brightgreen.svg?style=flat-square)](./coverage/index.html)
+[![Version](https://img.shields.io/badge/Version-0.1.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![MCP Spec](https://img.shields.io/badge/MCP%20Spec-2025--11--25-8A2BE2.svg?style=flat-square)](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/changelog.mdx) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^5.9.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun->=1.2.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
 ---
 
-## ✨ Features
+## Overview
 
-- **Declarative Tools & Resources**: Define capabilities in single, self-contained files. The framework handles registration and execution.
-- **Elicitation Support**: Tools can interactively prompt the user for missing parameters during execution, streamlining user workflows.
-- **Robust Error Handling**: A unified `McpError` system ensures consistent, structured error responses across the server.
-- **Pluggable Authentication**: Secure your server with zero-fuss support for `none`, `jwt`, or `oauth` modes.
-- **Abstracted Storage**: Swap storage backends (`in-memory`, `filesystem`, `Supabase`, `Cloudflare D1/KV/R2`) without changing business logic. Features secure opaque cursor pagination, parallel batch operations, and comprehensive validation.
-- **Full-Stack Observability**: Get deep insights with structured logging (Pino) and optional, auto-instrumented OpenTelemetry for traces and metrics.
-- **Dependency Injection**: Custom typed DI container with `Token<T>` phantom branding — zero external dependencies, fully type-safe resolution.
-- **Service Integrations**: Pluggable services for external APIs, including LLM providers (OpenRouter) and text-to-speech (ElevenLabs).
-- **Rich Built-in Utility Suite**: Helpers for parsing (PDF, YAML, CSV, frontmatter), formatting (diffs, tables, trees, markdown), scheduling, security, and more.
-- **Edge-Ready**: Write code once and run it seamlessly on your local machine or at the edge on Cloudflare Workers.
+Push pixel art, images, animations, and text to Divoom Pixoo displays directly from any MCP client (Claude Code, etc.). No auth required — the server communicates with the device via plain HTTP POST on the local network.
 
-## 🏗️ Architecture
+Built on [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit) and [`mcp-ts-template`](https://github.com/cyanheads/mcp-ts-template).
 
-This template follows a modular, domain-driven architecture with clear separation of concerns:
+## Tools
 
-```
-┌─────────────────────────────────────────────────────────┐
-│              MCP Client (Claude Code, ChatGPT, etc.)    │
-└────────────────────┬────────────────────────────────────┘
-                     │ JSON-RPC 2.0
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│           MCP Server (Tools, Resources)                 │
-│           📖 [MCP Server Guide](src/mcp-server/)        │
-└────────────────────┬────────────────────────────────────┘
-                     │ Dependency Injection
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│          Dependency Injection Container                 │
-│              📦 [Container Guide](src/container/)       │
-└────────────────────┬────────────────────────────────────┘
-                     │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
- ┌──────────┐   ┌──────────┐   ┌──────────┐
- │ Services │   │ Storage  │   │ Utilities│
- │ 🔌 [→]   │   │ 💾 [→]   │   │ 🛠️ [→]   │
- └──────────┘   └──────────┘   └──────────┘
+| Tool | Description |
+|:--|:--|
+| **`pixoo_compose`** | Compose a scene from layered elements (text, images, sprites, shapes, pixel art) and push to device — static or animated. |
+| **`pixoo_push_image`** | Load a single image file, resize to display grid, push. |
+| **`pixoo_text`** | Push native on-device scrolling text via hardware rendering. |
+| **`pixoo_control`** | Read or change device settings (brightness, screen, channel, clock face). |
 
-[→]: src/services/    [→]: src/storage/    [→]: src/utils/
-```
+## Getting Started
 
-**Key Modules:**
-
-- **[MCP Server](src/mcp-server/)** - Tools, resources, prompts, and transport layer implementations
-- **[Container](src/container/)** - Typed dependency injection container with zero external dependencies
-- **[Services](src/services/)** - External service integrations (LLM, Speech, Graph) with pluggable providers
-- **[Storage](src/storage/)** - Abstracted persistence layer with multiple backend support
-- **[Utilities](src/utils/)** - Cross-cutting concerns (logging, security, parsing, telemetry)
-
-> 💡 **Tip**: Each module has its own comprehensive README with architecture diagrams, usage examples, and best practices. Click the links above to dive deeper!
-
-## 🛠️ Included Capabilities
-
-This template includes working examples to get you started.
-
-### Tools
-
-| Tool                                | Description                                                              |
-| :---------------------------------- | :----------------------------------------------------------------------- |
-| **`template_echo_message`**         | Echoes a message back with optional formatting and repetition.           |
-| **`template_cat_fact`**             | Fetches a random cat fact from an external API.                          |
-| **`template_madlibs_elicitation`**  | Demonstrates elicitation by asking for words to complete a story.        |
-| **`template_code_review_sampling`** | Uses the LLM service to perform a simulated code review.                 |
-| **`template_image_test`**           | Returns a test image as a base64-encoded data URI.                       |
-| **`template_async_countdown`**      | Demonstrates MCP Tasks API with an async countdown timer (experimental). |
-| **`template_data_explorer`**        | Generates sample sales data with an interactive explorer UI (MCP Apps).  |
-
-### Resources
-
-| Resource               | URI                                    | Description                                                 |
-| :--------------------- | :------------------------------------- | :---------------------------------------------------------- |
-| **`echo`**             | `echo://{message}`                     | A simple resource that echoes back a message.               |
-| **`data-explorer-ui`** | `ui://template-data-explorer/app.html` | Interactive HTML app for the data explorer tool (MCP Apps). |
-
-### Prompts
-
-| Prompt            | Description                                                      |
-| :---------------- | :--------------------------------------------------------------- |
-| **`code-review`** | A structured prompt for guiding an LLM to perform a code review. |
-
-## 🚀 Getting Started
-
-### MCP Client Settings/Configuration
-
-Add the following to your MCP client configuration file.
+### MCP Client Configuration
 
 ```json
 {
   "mcpServers": {
-    "mcp-ts-template": {
+    "pixoo-mcp-server": {
       "type": "stdio",
       "command": "bunx",
-      "args": ["mcp-ts-template@latest"],
+      "args": ["pixoo-mcp-server@latest"],
       "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "STORAGE_PROVIDER_TYPE": "filesystem",
-        "STORAGE_FILESYSTEM_PATH": "/path/to/your/storage"
+        "PIXOO_IP": "192.168.1.100",
+        "PIXOO_SIZE": "64",
+        "MCP_LOG_LEVEL": "info"
       }
     }
   }
@@ -122,206 +51,135 @@ Add the following to your MCP client configuration file.
 
 ### Prerequisites
 
-- [Bun v1.2.21](https://bun.sh/) or higher.
+- [Bun v1.2.0](https://bun.sh/) or higher
+- A Divoom Pixoo device on the same local network
 
 ### Installation
 
-1.  **Clone the repository:**
-
 ```sh
-git clone https://github.com/cyanheads/mcp-ts-template.git
-```
-
-2.  **Navigate into the directory:**
-
-```sh
-cd mcp-ts-template
-```
-
-3.  **Install dependencies:**
-
-```sh
+git clone https://github.com/cyanheads/pixoo-mcp-server.git
+cd pixoo-mcp-server
 bun install
 ```
 
-## ⚙️ Configuration
+### Configuration
 
-All configuration is centralized and validated at startup in `src/config/index.ts`. Key environment variables in your `.env` file include:
-
-| Variable                  | Description                                                                                                | Default      |
-| :------------------------ | :--------------------------------------------------------------------------------------------------------- | :----------- |
-| `MCP_TRANSPORT_TYPE`      | The transport to use: `stdio` or `http`.                                                                   | `stdio`      |
-| `MCP_HTTP_PORT`           | The port for the HTTP server.                                                                              | `3010`       |
-| `MCP_HTTP_HOST`           | The hostname for the HTTP server.                                                                          | `127.0.0.1`  |
-| `MCP_LOG_LEVEL`           | Logging level (`fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`).                              | `debug`      |
-| `MCP_AUTH_MODE`           | Authentication mode: `none`, `jwt`, or `oauth`.                                                            | `none`       |
-| `MCP_AUTH_SECRET_KEY`     | **Required for `jwt` auth mode.** A 32+ character secret.                                                  | `(none)`     |
-| `OAUTH_ISSUER_URL`        | **Required for `oauth` auth mode.** URL of the OIDC provider.                                              | `(none)`     |
-| `STORAGE_PROVIDER_TYPE`   | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-d1`, `cloudflare-kv`, `cloudflare-r2`. | `in-memory`  |
-| `STORAGE_FILESYSTEM_PATH` | Path to the storage directory (for `filesystem` provider).                                                 | `./.storage` |
-| `SUPABASE_URL`            | **Required for `supabase` storage.** Your Supabase project URL.                                            | `(none)`     |
-| `SUPABASE_ANON_KEY`       | **Required for `supabase` storage.** Your Supabase anon key.                                               | `(none)`     |
-| `OTEL_ENABLED`            | Set to `true` to enable OpenTelemetry.                                                                     | `false`      |
-| `OPENROUTER_API_KEY`      | API key for OpenRouter LLM service.                                                                        | `(none)`     |
-
-### Authentication & Authorization
-
-- **Modes**: `none` (default), `jwt` (requires `MCP_AUTH_SECRET_KEY`), or `oauth` (requires `OAUTH_ISSUER_URL` and `OAUTH_AUDIENCE`).
-- **Enforcement**: Wrap your tool/resource `logic` functions with `withToolAuth([...])` or `withResourceAuth([...])` to enforce scope checks. Scope checks are bypassed for developer convenience when auth mode is `none`.
-
-### Storage
-
-- **Service**: A DI-managed `StorageService` provides a consistent API for persistence. **Never access `fs` or other storage SDKs directly from tool logic.**
-- **Providers**: The default is `in-memory`. Node-only providers include `filesystem`. Edge-compatible providers include `supabase`, `cloudflare-kv`, and `cloudflare-r2`.
-- **Multi-Tenancy**: The `StorageService` requires `context.tenantId`. This is automatically propagated from the `tid` claim in a JWT when auth is enabled.
-- **Advanced Features**:
-  - **Secure Pagination**: Opaque cursors with tenant ID binding prevent cross-tenant attacks
-  - **Batch Operations**: Parallel execution for `getMany()`, `setMany()`, `deleteMany()`
-  - **TTL Support**: Time-to-live with proper expiration handling across all providers
-  - **Comprehensive Validation**: Centralized input validation for tenant IDs, keys, and options
-
-### Observability
-
-- **Structured Logging**: Pino is integrated out-of-the-box. All logs are JSON and include the `RequestContext`.
-- **OpenTelemetry**: Disabled by default. Enable with `OTEL_ENABLED=true` and configure OTLP endpoints. Traces, metrics (duration, payload sizes), and errors are automatically captured for every tool call.
-
-## ▶️ Running the Server
-
-### Local Development
-
-- **Build and run the production version**:
-
-  ```sh
-  # One-time build
-  bun rebuild
-
-  # Run the built server
-  bun start:http
-  # or
-  bun start:stdio
-  ```
-
-- **Run checks and tests**:
-  ```sh
-  bun devcheck # Lints, formats, type-checks, and more
-  bun run test # Runs the test suite (Do not use 'bun test' directly as it may not work correctly)
-  ```
-
-### Cloudflare Workers
-
-1.  **Build the Worker bundle**:
+Copy `.env.example` to `.env` and set your device IP:
 
 ```sh
-bun build:worker
+cp .env.example .env
 ```
 
-2.  **Run locally with Wrangler**:
+| Variable | Description | Default |
+|:--|:--|:--|
+| **`PIXOO_IP`** | IP address of the Pixoo device on the local network | **(required)** |
+| `PIXOO_SIZE` | Display resolution: `16`, `32`, or `64` | `64` |
+| `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
+| `MCP_HTTP_PORT` | HTTP server port | `3010` |
+| `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `debug` |
+
+### Running
 
 ```sh
-bun deploy:dev
+# Development (watch mode)
+bun run dev:stdio
+bun run dev:http
+
+# Production (build first)
+bun run rebuild
+bun run start:stdio
+bun run start:http
 ```
 
-3.  **Deploy to Cloudflare**:
+### Development
 
 ```sh
-bun deploy:prod
+bun run devcheck    # Lint, format, typecheck, security audit
+bun run test        # Run tests
 ```
 
-> **Note**: The `wrangler.toml` file is pre-configured to enable `nodejs_compat` for best results.
+## Tool Details
 
-## 📂 Project Structure
+### `pixoo_compose`
 
-| Directory                              | Purpose & Contents                                                                   | Guide                                |
-| :------------------------------------- | :----------------------------------------------------------------------------------- | :----------------------------------- |
-| `src/mcp-server/tools/definitions`     | Your tool definitions (`*.tool.ts`). This is where you add new capabilities.         | [📖 MCP Guide](src/mcp-server/)      |
-| `src/mcp-server/resources/definitions` | Your resource definitions (`*.resource.ts`). This is where you add new data sources. | [📖 MCP Guide](src/mcp-server/)      |
-| `src/mcp-server/transports`            | Implementations for HTTP and STDIO transports, including auth middleware.            | [📖 MCP Guide](src/mcp-server/)      |
-| `src/storage`                          | The `StorageService` abstraction and all storage provider implementations.           | [💾 Storage Guide](src/storage/)     |
-| `src/services`                         | Integrations with external services (e.g., the default OpenRouter LLM provider).     | [🔌 Services Guide](src/services/)   |
-| `src/container`                        | Dependency injection container registrations and tokens.                             | [📦 Container Guide](src/container/) |
-| `src/utils`                            | Core utilities for logging, error handling, performance, security, and telemetry.    |                                      |
-| `src/config`                           | Environment variable parsing and validation with Zod.                                |                                      |
-| `tests/`                               | Unit and integration tests, mirroring the `src/` directory structure.                |                                      |
+The primary tool. Compose a scene from layered elements and push to the device.
 
-## 📚 Documentation
-
-Each major module includes comprehensive documentation with architecture diagrams, usage examples, and best practices:
-
-### Core Modules
-
-- **[MCP Server Guide](src/mcp-server/)** - Complete guide to building MCP tools and resources
-  - Creating tools with declarative definitions
-  - Resource development with URI templates
-  - Authentication and authorization
-  - Transport layer (HTTP/stdio) configuration
-  - SDK context and client interaction
-  - Response formatting and error handling
-
-- **[Container Guide](src/container/)** - Typed dependency injection container
-  - Understanding DI tokens and registration
-  - Service lifetimes (singleton, transient, instance)
-  - Constructor injection patterns
-  - Testing with mocked dependencies
-  - Adding new services to the container
-
-- **[Services Guide](src/services/)** - External service integration patterns
-  - LLM provider integration (OpenRouter)
-  - Speech services (TTS/STT with ElevenLabs, Whisper)
-  - Creating custom service providers
-  - Health checks and error handling
-
-- **[Storage Guide](src/storage/)** - Abstracted persistence layer
-  - Storage provider implementations
-  - Multi-tenancy and tenant isolation
-  - Secure cursor-based pagination
-  - Batch operations and TTL support
-  - Provider-specific setup guides
-
-### Additional Resources
-
-- **[AGENTS.md](AGENTS.md)** - Strict development rules for AI agents
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history and breaking changes
-- **[docs/tree.md](docs/tree.md)** - Complete visual directory structure
-- **[docs/publishing-mcp-server-registry.md](docs/publishing-mcp-server-registry.md)** - Publishing guide for MCP Registry
-
-## 🧑‍💻 Agent Development Guide
-
-For a strict set of rules when using this template with an AI agent, please refer to **`AGENTS.md`**. Key principles include:
-
-- **Logic Throws, Handlers Catch**: Never use `try/catch` in your tool/resource `logic`. Throw an `McpError` instead.
-- **Use Elicitation for Missing Input**: If a tool requires user input that wasn't provided, use the `elicitInput` function from the `SdkContext` to ask the user for it.
-- **Pass the Context**: Always pass the `RequestContext` object through your call stack.
-- **Use the Barrel Exports**: Register new tools and resources only in the `index.ts` barrel files.
-
-## ❓ FAQ
-
-- **Does this work with both STDIO and Streamable HTTP?**
-  - Yes. Both transports are first-class citizens. Use `bun run dev:stdio` or `bun run dev:http`.
-- **Can I deploy this to the edge?**
-  - Yes. The template is designed for Cloudflare Workers. Run `bun run build:worker` and deploy with Wrangler.
-- **Do I have to use OpenTelemetry?**
-  - No, it is disabled by default. Enable it by setting `OTEL_ENABLED=true` in your `.env` file.
-- **How do I publish my server to the MCP Registry?**
-  - Follow the step-by-step guide in `docs/publishing-mcp-server-registry.md`.
-
-## 🤝 Contributing
-
-Issues and pull requests are welcome! If you plan to contribute, please run the local checks and tests before submitting your PR.
-
-```sh
-bun run devcheck
-bun test
+```json
+{
+  "background": "black",
+  "elements": [
+    { "type": "rect", "x": 0, "y": 0, "w": 64, "h": 20, "color": "#1a1a2e" },
+    { "type": "text", "text": "Hello!", "x": 0, "y": 6, "color": "white", "font": "standard", "centered": true },
+    {
+      "type": "bitmap", "x": 28, "y": 40, "scale": 2,
+      "palette": ["", "#ff4488", "#cc2266"],
+      "data": ["0120210", "1111111", "1111111", "0111110", "0011100", "0001000"]
+    }
+  ]
+}
 ```
 
-## 📜 License
+**Element types:** `text`, `image`, `sprite`, `rect`, `circle`, `line`, `bitmap`, `pixels`
+
+**Animation:** Set `frames` > 1 and add `animate` keyframes to elements:
+
+```json
+{
+  "frames": 10, "speed": 150,
+  "elements": [{
+    "type": "text", "text": "Hello", "x": 0, "y": 2, "color": "#ffffff", "centered": true,
+    "animate": { "color": [[0, "#ffffff"], [5, "#ff8800"], [9, "#ffffff"]] }
+  }]
+}
+```
+
+See [docs/pixoo-mcp-server.md](docs/pixoo-mcp-server.md) for full element and animation documentation.
+
+### `pixoo_push_image`
+
+Shortcut to load and push a single image file.
+
+```json
+{ "path": "/path/to/image.png", "fit": "contain", "kernel": "nearest" }
+```
+
+### `pixoo_text`
+
+Native on-device scrolling text with hardware rendering.
+
+```json
+{ "text": "Hello World", "color": "#00ff00", "speed": 50, "direction": "left" }
+```
+
+### `pixoo_control`
+
+Read or change device settings. Call with no parameters to read current config.
+
+```json
+{ "brightness": 75, "channel": "custom" }
+```
+
+## Device Quirks
+
+- **~1 push/sec recommended** — device may freeze after ~300 rapid pushes
+- **Channel must be `custom`** to display pushed content — compose/push_image auto-switch
+- **Text overlays persist** across channel switches — use `clear: true` to remove
+- **Max ~40 animation frames** for stability
+- **~5s "Loading.." overlay** when a new animation starts
+
+## References
+
+- [Divoom API Docs](http://doc.divoom-gz.com/web/#/12?page_id=220)
+- [pixoo-toolkit](https://github.com/cyanheads/pixoo-toolkit) — `@cyanheads/pixoo-toolkit`
+- [mcp-ts-template](https://github.com/cyanheads/mcp-ts-template) — server foundation
+- [Device Font List](https://app.divoom-gz.com/Device/GetTimeDialFontList)
+
+## License
 
 This project is licensed under the Apache 2.0 License. See the [LICENSE](./LICENSE) file for details.
 
 ---
 
 <div align="center">
-  <p>
-    <a href="https://github.com/sponsors/cyanheads">Sponsor this project</a> •
-    <a href="https://www.buymeacoffee.com/cyanheads">Buy me a coffee</a>
-  </p>
+  <b>Maintained by <a href="https://github.com/cyanheads">@cyanheads</a></b>
 </div>

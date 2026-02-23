@@ -1,8 +1,8 @@
 # Agent Protocol
 
-**Version:** 2.9.6
-**Project:** mcp-ts-template
-**Updated:** 2026-02-18
+**Version:** 0.1.0
+**Project:** pixoo-mcp-server
+**Updated:** 2026-02-22
 
 > **Symlink note:** `AGENTS.md` is a symlink to `CLAUDE.md`. Only edit the root `CLAUDE.md`.
 
@@ -23,6 +23,84 @@
 **Local/edge runtime parity.** All features work with local transports (`stdio`/`http`) and Worker bundle (`build:worker` + `wrangler`). Guard non-portable deps. Prefer runtime-agnostic abstractions (Hono + `@hono/mcp`, Fetch APIs).
 
 **Elicitation for missing input.** Use `sdkContext.elicitInput()` for missing params. See `template-madlibs-elicitation.tool.ts`.
+
+---
+
+## Pixoo Integration
+
+**Design doc:** [docs/pixoo-mcp-server.md](docs/pixoo-mcp-server.md) — full tool specs, element types, animation system, device quirks.
+
+**Toolkit dependency:** [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit) provides all device communication and rendering primitives. **Read the toolkit's CLAUDE.md at `/Users/casey/Developer/github/pixoo-toolkit/CLAUDE.md` for the full API reference** — Canvas, PixooClient, fonts, image loading, sprites, animation, colors, SVG paths.
+
+**Config env vars:** `PIXOO_IP` (required — device IP on local network), `PIXOO_SIZE` (optional — `16` | `32` | `64`, default `64`). Added to `src/config/index.ts` as a `pixoo: { ip, size }` block.
+
+**Service pattern:** `PixooClient` from the toolkit is registered as a DI singleton token (`PixooClientToken` in `tokens.ts`). Tools resolve it via `container.resolve(PixooClientToken)`. No wrapper interface — the toolkit's client is the abstraction.
+
+**Worker builds are not a target.** The device is on a local network; `sharp` (required for image/sprite ops) doesn't work in Workers. All development/testing targets local `stdio`/`http` transports.
+
+### Tools
+
+Four tools, defined in `src/mcp-server/tools/definitions/`:
+
+| Tool | File | Annotations | Maps To |
+|:--|:--|:--|:--|
+| `pixoo_compose` | `pixoo-compose.tool.ts` | `destructiveHint: true` | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `buildAnimation`, `push`/`pushAnimation` |
+| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true` | `loadImage`, `push` |
+| `pixoo_text` | `pixoo-text.tool.ts` | `destructiveHint: true` | `sendText`, `clearText` (device-side `Draw/SendHttpText`) |
+| `pixoo_control` | `pixoo-control.tool.ts` | `readOnlyHint: true` (when no params), `idempotentHint: true` | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock` |
+
+Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `Custom` channel before pushing.
+
+### `pixoo_compose` — Element Rendering Pipeline
+
+The compose tool accepts a declarative JSON structure: `{ background, elements[], frames, speed, push, output }`.
+
+**Rendering order:** Back-to-front. For each frame:
+1. Create `Canvas`, fill with `background` color
+2. For each element, resolve animated properties for this frame index
+3. If `visible === false`, skip
+4. Dispatch to renderer by `type`:
+
+| Type | Renderer | Async | Notes |
+|:--|:--|:--|:--|
+| `text` | `drawText` / `drawTextCentered` | No | `font`: `'standard'` → `FONT_5x7`, `'compact'` → `FONT_3x5` |
+| `image` | `loadImage` | Yes | Pre-load once, `blit` per frame. `fit`/`kernel` options. |
+| `sprite` | `downsampleSprite` + `renderSprite` | Yes | Pre-load once, render per frame. `bodyColor`/`darkColor` overrides. |
+| `rect` | `fillRect` / `drawRect` | No | `fill: true` (default) → filled, `false` → stroked |
+| `circle` | `fillCircle` / `drawCircle` | No | Same fill logic |
+| `line` | `drawLine` | No | |
+| `bitmap` | Manual `setPixel` loop | No | Palette indices in row strings, `scale` multiplier |
+| `pixels` | Batch `setPixel` | No | Array of `{ x, y, color }` |
+
+**Async asset pre-loading:** Before the frame loop, scan elements for `image` and `sprite` types. `loadImage`/`downsampleSprite` once, store results. In the frame loop, blit cached results with per-frame position/visibility.
+
+**Animation keyframes:** When `frames > 1`, elements can include `animate: { prop: [[frame, value], ...] }`. Interpolation rules:
+- **Numbers** — linear lerp between surrounding keyframes
+- **Colors** (hex strings) — `lerpColor` between resolved RGB values
+- **Booleans/other** — snap at keyframe (hold previous value until keyframe frame)
+- Before first keyframe: hold first value. After last: hold last value.
+
+Utility: a shared `interpolateKeyframes(keyframes, frame)` function handles all types.
+
+**Output:** Static → `client.push(canvas)`. Animated → `client.pushAnimation(frames, speed)`. If `output` path specified → `savePng` / `saveAnimationPngs`. If `push: false` → skip device push, only save preview.
+
+### `pixoo_text` — Parameter Mapping
+
+| Spec Param | Toolkit Param | Mapping |
+|:--|:--|:--|
+| `direction` (`'left'`/`'right'`) | `dir` | `'left'` → `0`, `'right'` → `1` |
+| `align` (`'left'`/`'center'`/`'right'`) | `align` | `'left'` → `1`, `'center'` → `2`, `'right'` → `3` |
+| `clear: true` | `clearText(id)` | Clears overlay at given `id` instead of setting |
+
+### Device Quirks
+
+- **GIF ID reset** before each push — `PixooClient.push()` handles automatically
+- **~1 push/sec** recommended — device freezes after ~300 rapid pushes
+- **Channel must be `custom`** (index 3) for pushed content to display
+- **`Draw/CommandList` cannot batch `Draw/SendHttpGif`** — frames must be sent individually
+- **Text overlays persist** across channel switches — must explicitly `clearText(id)` to remove
+- **Max ~40 frames** before device instability
+- **~5s "Loading.." overlay** when a new animation starts
 
 ---
 
@@ -336,6 +414,7 @@ All config validated via Zod in `src/config/index.ts`. Config module derives `mc
 
 | Category | Key Variables |
 |:--|:--|
+| **Pixoo** | **`PIXOO_IP`** (required), `PIXOO_SIZE` (`16`\|`32`\|`64`, default `64`) |
 | Transport | `MCP_TRANSPORT_TYPE` (`stdio`\|`http`), `MCP_HTTP_PORT`, `MCP_HTTP_HOST`, `MCP_HTTP_ENDPOINT_PATH` |
 | Auth | `MCP_AUTH_MODE` (`none`\|`jwt`\|`oauth`), `MCP_AUTH_SECRET_KEY`, `OAUTH_*` |
 | Storage | `STORAGE_PROVIDER_TYPE` (`in-memory`\|`filesystem`\|`supabase`\|`cloudflare-r2`\|`cloudflare-kv`\|`cloudflare-d1`) |
@@ -366,4 +445,7 @@ All config validated via Zod in `src/config/index.ts`. Config module derives `mc
 - [ ] Tests added/updated (`bun test`)
 - [ ] **`bun devcheck` passes** (lint, format, typecheck, security)
 - [ ] Smoke-tested local transports (`dev:stdio`/`http`)
-- [ ] Worker bundle validated (`build:worker`)
+- [ ] Pixoo tools resolve `PixooClientToken` from DI (not direct instantiation)
+- [ ] `pixoo_compose`/`pixoo_push_image` auto-switch to `Custom` channel before push
+- [ ] Async assets (images, sprites) pre-loaded before frame loop in compose
+- [ ] Animation keyframes interpolate: numbers → lerp, colors → `lerpColor`, booleans → snap

@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Implemented `pixoo_push_image` tool — load and push a single image file to the display.
 - Implemented `pixoo_text` tool — native on-device scrolling text overlays via `Draw/SendHttpText`.
 - Implemented `pixoo_control` tool — read/change device settings (brightness, screen, channel, clock face).
+- Added example output GIFs (`example-output/`) — `neon-city-preview.gif` (animated neon cityscape) and `hello-heart.gif`.
 
 ### Tests
 

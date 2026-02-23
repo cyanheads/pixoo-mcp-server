@@ -1,6 +1,6 @@
 {
   "name": "pixoo-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "mcpName": "io.github.cyanheads/pixoo-mcp-server",
   "description": "MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays over the local network.",
   "main": "dist/index.js",
@@ -69,7 +69,7 @@
     "chrono-node": "2.9.0",
     "diff": "8.0.3",
     "dotenv": "17.3.1",
-    "hono": "4.11.9",
+    "hono": "4.11.10",
     "markdown-it": "14.1.1",
     "qs": "6.14.2",
     "zod": "4.3.6",
@@ -152,7 +152,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@cyanheads/pixoo-toolkit": "^0.3.2",
+    "@cyanheads/pixoo-toolkit": "0.4.0",
     "@hono/node-server": "^1.19.9",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@opentelemetry/api": "^1.9.0",

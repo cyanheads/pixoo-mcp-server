@@ -5,7 +5,7 @@
     "": {
       "name": "mcp-ts-template",
       "dependencies": {
-        "@cyanheads/pixoo-toolkit": "^0.3.2",
+        "@cyanheads/pixoo-toolkit": "0.4.0",
         "@hono/node-server": "^1.19.9",
         "@modelcontextprotocol/sdk": "^1.26.0",
         "@opentelemetry/api": "^1.9.0",
@@ -81,7 +81,7 @@
     "chrono-node": "2.9.0",
     "diff": "8.0.3",
     "dotenv": "17.3.1",
-    "hono": "4.11.9",
+    "hono": "4.11.10",
     "markdown-it": "14.1.1",
     "qs": "6.14.2",
     "typescript": "5.9.3",
@@ -126,7 +126,7 @@
 
     "@cloudflare/workers-types": ["@cloudflare/workers-types@4.20260302.0", "", {}, "sha512-mbFRnlu1lNCScMpXZk/X/uBPufYx5OSbq+euGonGRcY+DgOwm2kczGdK401rUh52NB0fFMEcOy/zqwxv7CdDNA=="],
 
-    "@cyanheads/pixoo-toolkit": ["@cyanheads/pixoo-toolkit@0.3.2", "", { "dependencies": { "sharp": "^0.34.5" } }, "sha512-SsHumwtAUf5T5QZ+ZvNqK1q7GsrP0xYZnhzrqsBLhTqQsCKg1KwJUzftuDpBUO6HdFauR/xrHsHZBjJw9szkKw=="],
+    "@cyanheads/pixoo-toolkit": ["@cyanheads/pixoo-toolkit@0.4.0", "", { "dependencies": { "gifenc": "^1.0.3", "sharp": "^0.34.5" } }, "sha512-EusOttr3VfcX5HJjK3TzdZh8ud/XOzrMZ/mlh2KH9tvJlT0qKnD6zfZKa3PLNTOOnf8Jw83iHo9JyV4jTrA/mg=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.8.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-mehfKSMWjjNol8659Z8KxEMrdSJDDot5SXMq00dM8BN4o+CLNXQ0xH2V7EchNHV4RmbZLmmPdEaXZc5H2FXmDg=="],
 
@@ -982,6 +982,8 @@
 
     "get-stream": ["get-stream@9.0.1", "", { "dependencies": { "@sec-ant/readable-stream": "^0.4.1", "is-stream": "^4.0.1" } }, "sha512-kVCxPF3vQM/N0B1PmoqVUqgHP+EeVjmZSQn+1oCRPxd2P21P2F19lIgbR3HBosbB1PUhOAoctJnfEn2GbN2eZA=="],
 
+    "gifenc": ["gifenc@1.0.3", "", {}, "sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw=="],
+
     "git-up": ["git-up@8.1.1", "", { "dependencies": { "is-ssh": "^1.4.0", "parse-url": "^9.2.0" } }, "sha512-FDenSF3fVqBYSaJoYy1KSc2wosx0gCvKP+c+PRBht7cAaiCeQlBtfBDX9vgnNOHmdePlSFITVcn4pFfcgNvx3g=="],
 
     "git-url-parse": ["git-url-parse@16.1.0", "", { "dependencies": { "git-up": "^8.1.0" } }, "sha512-cPLz4HuK86wClEW7iDdeAKcCVlWXmrLpb2L+G9goW0Z1dtpNS6BXXSOckUTlJT/LDQViE1QZKstNORzHsLnobw=="],
@@ -1020,7 +1022,7 @@
 
     "homedir-polyfill": ["homedir-polyfill@1.0.3", "", { "dependencies": { "parse-passwd": "^1.0.0" } }, "sha512-eSmmWE5bZTK2Nou4g0AI3zZ9rswp7GRKoKXS1BLUkvPviOqs4YTN1djQIqrXy9k5gEtdLPy86JjRwsNM9tnDcA=="],
 
-    "hono": ["hono@4.11.9", "", {}, "sha512-Eaw2YTGM6WOxA6CXbckaEvslr2Ne4NFsKrvc0v97JD5awbmeBLO5w9Ho9L9kmKonrwF9RJlW6BxT1PVv/agBHQ=="],
+    "hono": ["hono@4.11.10", "", {}, "sha512-kyWP5PAiMooEvGrA9jcD3IXF7ATu8+o7B3KCbPXid5se52NPqnOpM/r9qeW2heMnOekF4kqR1fXJqCYeCLKrZg=="],
 
     "hono-rate-limiter": ["hono-rate-limiter@0.4.2", "", { "peerDependencies": { "hono": "^4.1.1" } }, "sha512-AAtFqgADyrmbDijcRTT/HJfwqfvhalya2Zo+MgfdrMPas3zSMD8SU03cv+ZsYwRU1swv7zgVt0shwN059yzhjw=="],
 

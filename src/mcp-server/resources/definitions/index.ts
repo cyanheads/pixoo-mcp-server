@@ -4,17 +4,15 @@
  * @module src/mcp-server/resources/definitions
  */
 
-import { echoResourceDefinition } from './echo.resource.js';
-// App resources (MCP Apps extension)
-import { dataExplorerUiResource } from './data-explorer-ui.app-resource.js';
+import type { ResourceDefinition } from '@/mcp-server/resources/utils/resourceDefinition.js';
+import type { ZodObject, ZodRawShape } from 'zod';
 
 /**
  * An array containing all resource definitions for easy iteration.
  * This is used by the registration system to automatically discover and register
  * all available resources.
  */
-export const allResourceDefinitions = [
-  echoResourceDefinition,
-  // App resources (MCP Apps extension)
-  dataExplorerUiResource,
-];
+export const allResourceDefinitions: ResourceDefinition<
+  ZodObject<ZodRawShape>,
+  ZodObject<ZodRawShape> | undefined
+>[] = [];

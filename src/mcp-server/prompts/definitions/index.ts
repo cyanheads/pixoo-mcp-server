@@ -4,9 +4,12 @@
  * @module src/mcp-server/prompts/definitions
  */
 
-import { codeReviewPrompt } from './code-review.prompt.js';
+import type { PromptDefinition } from '@/mcp-server/prompts/utils/promptDefinition.js';
+import type { ZodObject, ZodRawShape } from 'zod';
 
 /**
  * An array containing all prompt definitions for easy iteration.
  */
-export const allPromptDefinitions = [codeReviewPrompt];
+export const allPromptDefinitions: PromptDefinition<
+  ZodObject<ZodRawShape> | undefined
+>[] = [];

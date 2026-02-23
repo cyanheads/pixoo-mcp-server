@@ -83,9 +83,12 @@ const OutputSchema = z
   .object({
     brightness: z.number().describe('Current brightness (0–100).'),
     channel: z.string().describe('Current active channel name.'),
-    channelIndex: z.number().describe('Current active channel index.'),
+    channelIndex: z
+      .number()
+      .optional()
+      .describe('Current active channel index.'),
     screenOn: z.boolean().describe('Whether the display is on.'),
-    clockId: z.number().describe('Current clock face ID.'),
+    clockId: z.number().optional().describe('Current clock face ID.'),
     applied: z
       .array(z.string())
       .describe('List of settings that were changed.'),

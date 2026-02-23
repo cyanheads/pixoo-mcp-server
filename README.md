@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![MCP Spec](https://img.shields.io/badge/MCP%20Spec-2025--11--25-8A2BE2.svg?style=flat-square)](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/changelog.mdx) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^5.9.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun->=1.2.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![MCP Spec](https://img.shields.io/badge/MCP%20Spec-2025--11--25-8A2BE2.svg?style=flat-square)](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-11-25/changelog.mdx) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^5.9.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun->=1.2.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -74,6 +74,7 @@ cp .env.example .env
 | :------------------- | :-------------------------------------------------- | :------------- |
 | **`PIXOO_IP`**       | IP address of the Pixoo device on the local network | **(required)** |
 | `PIXOO_SIZE`         | Display resolution: `16`, `32`, or `64`             | `64`           |
+| `PIXOO_OUTPUT_DIR`   | Directory for auto-saved preview images             | `output/`      |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`                        | `stdio`        |
 | `MCP_HTTP_PORT`      | HTTP server port                                    | `3010`         |
 | `MCP_LOG_LEVEL`      | Log level (`debug`, `info`, `warn`, `error`)        | `debug`        |

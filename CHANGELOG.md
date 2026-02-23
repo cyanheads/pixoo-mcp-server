@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.3.0] - 2026-02-22
+
+### Added
+
+- Auto-save output directory (`PIXOO_OUTPUT_DIR` env var / `pixoo.outputDir` config) — compose and push-image tools automatically save preview files when configured.
+- GIF animation export in `pixoo_compose` — animated compositions now output a single `.gif` instead of per-frame PNGs (uses `saveAnimationGif` from pixoo-toolkit 0.4.0).
+
+### Fixed
+
+- Prevented Pino serialization crash caused by spreading raw SDK context (contains `AbortSignal`) into `RequestContext` in tool and resource handler factories.
+- Made `channelIndex` and `clockId` optional in `pixoo_control` output schema to match actual device response variability.
+
+### Changed
+
+- Bumped `@cyanheads/pixoo-toolkit` from `^0.3.2` to `0.4.0` (pinned) — adds `gifenc` dependency for GIF encoding.
+- Bumped `hono` from `4.11.9` to `4.11.10`.
+- Refactored config path resolution with shared `resolveDir` helper for cleaner project root derivation.
+
+---
+
 ## [0.2.0] - 2026-02-22
 
 ### Added

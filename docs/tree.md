@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-02-23
+Generated on: 2026-02-23 07:39:51
 
 ```
 pixoo-mcp-server/
@@ -32,6 +32,9 @@ pixoo-mcp-server/
 │   ├── mcp-sdk-changes.md
 │   ├── pixoo-mcp-server.md
 │   └── publishing-mcp-server-registry.md
+├── example-output/
+│   ├── hello-heart.gif
+│   └── neon-city-preview.gif
 ├── scripts/
 │   ├── clean.ts
 │   ├── devcheck.ts
@@ -247,6 +250,7 @@ pixoo-mcp-server/
 │   │   └── index.ts
 │   ├── mcp-server/
 │   │   ├── prompts/
+│   │   │   ├── definitions/
 │   │   │   ├── utils/
 │   │   │   │   └── promptDefinition.test.ts
 │   │   │   └── prompt-registration.test.ts
@@ -255,7 +259,6 @@ pixoo-mcp-server/
 │   │   │   │   └── index.test.ts
 │   │   │   ├── schemas/
 │   │   │   │   ├── __snapshots__/
-│   │   │   │   │   └── schema-snapshots.test.ts.snap
 │   │   │   │   ├── json-schema-compatibility.test.ts
 │   │   │   │   └── schema-snapshots.test.ts
 │   │   │   ├── utils/
@@ -272,7 +275,11 @@ pixoo-mcp-server/
 │   │   │       └── taskToolDefinition.test.ts
 │   │   ├── tools/
 │   │   │   ├── definitions/
-│   │   │   │   └── index.test.ts
+│   │   │   │   ├── index.test.ts
+│   │   │   │   ├── pixoo-compose.tool.test.ts
+│   │   │   │   ├── pixoo-control.tool.test.ts
+│   │   │   │   ├── pixoo-push-image.tool.test.ts
+│   │   │   │   └── pixoo-text.tool.test.ts
 │   │   │   ├── fuzz/
 │   │   │   │   └── tool-input-fuzz.test.ts
 │   │   │   ├── schemas/

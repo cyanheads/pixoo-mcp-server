@@ -1,6 +1,6 @@
 # Agent Protocol
 
-**Version:** 0.2.0
+**Version:** 0.3.0
 **Project:** pixoo-mcp-server
 **Updated:** 2026-02-22
 
@@ -30,7 +30,7 @@
 
 **Toolkit dependency:** [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit) provides all device communication and rendering primitives. **Read the toolkit's CLAUDE.md at `/Users/casey/Developer/github/pixoo-toolkit/CLAUDE.md` for the full API reference** — Canvas, PixooClient, fonts, image loading, sprites, animation, colors, SVG paths.
 
-**Config env vars:** `PIXOO_IP` (required — device IP on local network), `PIXOO_SIZE` (optional — `16` | `32` | `64`, default `64`). Added to `src/config/index.ts` as a `pixoo: { ip, size }` block.
+**Config env vars:** `PIXOO_IP` (required — device IP on local network), `PIXOO_SIZE` (optional — `16` | `32` | `64`, default `64`), `PIXOO_OUTPUT_DIR` (optional — auto-save preview directory, default `output/`). Added to `src/config/index.ts` as a `pixoo: { ip, size, outputDir }` block.
 
 **Service pattern:** `PixooClient` from the toolkit is registered as a DI singleton token (`PixooClientToken` in `tokens.ts`). Tools resolve it via `container.resolve(PixooClientToken)`. No wrapper interface — the toolkit's client is the abstraction.
 
@@ -82,7 +82,7 @@ The compose tool accepts a declarative JSON structure: `{ background, elements[]
 
 Utility: a shared `interpolateKeyframes(keyframes, frame)` function handles all types.
 
-**Output:** Static → `client.push(canvas)`. Animated → `client.pushAnimation(frames, speed)`. If `output` path specified → `savePng` / `saveAnimationPngs`. If `push: false` → skip device push, only save preview.
+**Output:** Static → `client.push(canvas)`. Animated → `client.pushAnimation(frames, speed)`. If `output` path specified → `savePng` / `saveAnimationGif`. Auto-saves to `pixoo.outputDir` when configured. If `push: false` → skip device push, only save preview.
 
 ### `pixoo_text` — Parameter Mapping
 
@@ -419,7 +419,7 @@ All config validated via Zod in `src/config/index.ts`. Config module derives `mc
 
 | Category  | Key Variables                                                                                                      |
 | :-------- | :----------------------------------------------------------------------------------------------------------------- |
-| **Pixoo** | **`PIXOO_IP`** (required), `PIXOO_SIZE` (`16`\|`32`\|`64`, default `64`)                                           |
+| **Pixoo** | **`PIXOO_IP`** (required), `PIXOO_SIZE` (`16`\|`32`\|`64`, default `64`), `PIXOO_OUTPUT_DIR` (auto-save dir)       |
 | Transport | `MCP_TRANSPORT_TYPE` (`stdio`\|`http`), `MCP_HTTP_PORT`, `MCP_HTTP_HOST`, `MCP_HTTP_ENDPOINT_PATH`                 |
 | Auth      | `MCP_AUTH_MODE` (`none`\|`jwt`\|`oauth`), `MCP_AUTH_SECRET_KEY`, `OAUTH_*`                                         |
 | Storage   | `STORAGE_PROVIDER_TYPE` (`in-memory`\|`filesystem`\|`supabase`\|`cloudflare-r2`\|`cloudflare-kv`\|`cloudflare-d1`) |

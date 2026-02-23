@@ -89,9 +89,16 @@ export function createMcpToolHandler<
         : undefined;
 
     // Create the application's internal logger/tracing context.
+    // Extract only plain-data fields from sdkContext — spreading the raw SDK
+    // object copies native objects (AbortSignal) that crash Pino serialization.
     const appContext: ElicitableContext =
       requestContextService.createRequestContext({
-        parentContext: sdkContext,
+        parentContext: {
+          ...(typeof sdkContext?.requestId === 'string'
+            ? { requestId: sdkContext.requestId }
+            : {}),
+          ...(sessionId ? { sessionId } : {}),
+        },
         operation: 'HandleToolRequest',
         additionalContext: { toolName, sessionId, input },
       });

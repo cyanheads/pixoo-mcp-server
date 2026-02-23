@@ -10,7 +10,8 @@ All notable changes to this project will be documented in this file.
 
 - Added `example-output/hello_from_claude.png` hero image to README header.
 - Added Example Output reference link to README.
-- Added npm keywords: `animation`, `claude`, `divoom-pixoo`, `iot`, `sprite`.
+- Added Claude Code installation command (`claude mcp add`) to README.
+- Added npm keywords: `animation`, `claude`, `divoom-pixoo`, `iot`, `pixoo-16`, `pixoo-32`, `sprite`.
 
 ### Changed
 

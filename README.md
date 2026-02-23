@@ -35,6 +35,12 @@ Add the following to your MCP client configuration file (e.g., `claude_desktop_c
 
 **Be sure to set `PIXOO_IP` to the IP address of your Pixoo device on the local network.**
 
+#### Claude Code
+
+```bash
+claude mcp add pixoo-mcp-server -e PIXOO_IP=YOUR_DEVICE_IP -- bunx @cyanheads/pixoo-mcp-server@latest
+```
+
 #### Using bunx (Bun)
 
 ```json

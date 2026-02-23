@@ -16,6 +16,17 @@ All notable changes to this project will be documented in this file.
 - Implemented `pixoo_text` tool — native on-device scrolling text overlays via `Draw/SendHttpText`.
 - Implemented `pixoo_control` tool — read/change device settings (brightness, screen, channel, clock face).
 
+### Tests
+
+- Added unit tests for `pixoo_control`, `pixoo_push_image`, and `pixoo_text` tools.
+- Updated test setup to provide default `PIXOO_IP` env var for test environments.
+- Updated config tests for pixoo-specific expectations (`openrouterAppName`, `PIXOO_IP`).
+- Added `PixooClientToken` to DI token registry tests.
+- Updated resource tests to gracefully handle empty resource definitions array.
+- Updated fuzz tests with pixoo tool skip lists (DI/device dependencies, discriminatedUnion schemas).
+- Regenerated tool schema snapshots for pixoo tools (replaced template tool snapshots).
+- Removed stale resource schema snapshot file.
+
 ### Changed
 
 - Updated `docs/tree.md` to reflect current project structure.

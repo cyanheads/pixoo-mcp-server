@@ -1,6 +1,6 @@
 {
-  "name": "pixoo-mcp-server",
-  "version": "0.3.0",
+  "name": "@cyanheads/pixoo-mcp-server",
+  "version": "0.3.1",
   "mcpName": "io.github.cyanheads/pixoo-mcp-server",
   "description": "MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays over the local network.",
   "main": "dist/index.js",
@@ -9,6 +9,7 @@
     "dist"
   ],
   "bin": {
+    "@cyanheads/pixoo-mcp-server": "dist/index.js",
     "pixoo-mcp-server": "dist/index.js"
   },
   "exports": {
@@ -124,7 +125,7 @@
     "smart-display",
     "typescript"
   ],
-  "author": "cyanheads <casey@caseyjhand.com> (https://github.com/cyanheads/pixoo-mcp-server#readme)",
+  "author": "cyanheads <casey@caseyjhand.com> (https://github.com/cyanheads)",
   "license": "Apache-2.0",
   "funding": [
     {
@@ -145,7 +146,7 @@
     "ignores": [
       "bun",
       "repomix",
-      "pixoo-mcp-server"
+      "@cyanheads/pixoo-mcp-server"
     ]
   },
   "publishConfig": {

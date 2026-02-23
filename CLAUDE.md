@@ -1,8 +1,8 @@
 # Agent Protocol
 
-**Version:** 0.3.0
+**Version:** 0.3.1
 **Project:** pixoo-mcp-server
-**Updated:** 2026-02-22
+**Updated:** 2026-02-23
 
 > **Symlink note:** `AGENTS.md` is a symlink to `CLAUDE.md`. Only edit the root `CLAUDE.md`.
 

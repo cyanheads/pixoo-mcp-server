@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-02-23 07:39:51
+Generated on: 2026-02-23 08:16:04
 
 ```
 pixoo-mcp-server/
@@ -33,8 +33,10 @@ pixoo-mcp-server/
 │   ├── pixoo-mcp-server.md
 │   └── publishing-mcp-server-registry.md
 ├── example-output/
+│   ├── animated-weather.gif
 │   ├── hello-heart.gif
 │   └── neon-city-preview.gif
+├── output/
 ├── scripts/
 │   ├── clean.ts
 │   ├── devcheck.ts

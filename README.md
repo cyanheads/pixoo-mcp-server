@@ -1,6 +1,6 @@
 <div align="center">
-  <h1>pixoo-mcp-server</h1>
-  <p><b>MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays (16x16, 32x32, 64x64) over the local network.</b>
+  <h1>@cyanheads/pixoo-mcp-server</h1>
+  <p><b>An MCP server for pushing pixel art, images, animations, and text to Divoom Pixoo RGB LED matrix displays (16x16, 32x32, 64x64) over the local network. STDIO & Streamable HTTP</b>
   <div>4 Tools</div>
   </p>
 </div>
@@ -13,24 +13,28 @@
 
 ---
 
-## Overview
+## 🛠️ Tools Overview
 
-Push pixel art, images, animations, and text to Divoom Pixoo displays directly from any MCP client (Claude Code, etc.). No auth required — the server communicates with the device via plain HTTP POST on the local network.
+This server provides 4 tools for composing and pushing visual content to Pixoo displays:
 
-Built on [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit) and [`mcp-ts-template`](https://github.com/cyanheads/mcp-ts-template).
+| Tool                   | Description                                                                                                                                                           | Annotations       |
+| :--------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------- |
+| **`pixoo_compose`**    | Compose a scene from layered elements (text, images, sprites, shapes, bitmaps, pixels) and push to device. Supports multi-frame animation with per-element keyframes. | `destructiveHint` |
+| **`pixoo_push_image`** | Load a single image file (PNG, JPEG, WebP, GIF, AVIF, TIFF, SVG), resize to the display grid, and push to the device.                                                 | `destructiveHint` |
+| **`pixoo_text`**       | Push native on-device scrolling text overlay via the device's built-in fonts. Overlays persist across channel switches.                                               | `destructiveHint` |
+| **`pixoo_control`**    | Read or change device settings (brightness, channel, screen on/off, clock face). Call with no parameters to read config.                                              | `idempotentHint`  |
 
-## Tools
+Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `custom` channel before pushing.
 
-| Tool                   | Description                                                                                                               |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------ |
-| **`pixoo_compose`**    | Compose a scene from layered elements (text, images, sprites, shapes, pixel art) and push to device — static or animated. |
-| **`pixoo_push_image`** | Load a single image file, resize to display grid, push.                                                                   |
-| **`pixoo_text`**       | Push native on-device scrolling text via hardware rendering.                                                              |
-| **`pixoo_control`**    | Read or change device settings (brightness, screen, channel, clock face).                                                 |
+## 🚀 Getting Started
 
-## Getting Started
+### MCP Client Settings
 
-### MCP Client Configuration
+Add the following to your MCP client configuration file (e.g., `claude_desktop_config.json`). Clients have different ways to configure servers, so refer to your client's documentation for specifics.
+
+**Be sure to set `PIXOO_IP` to the IP address of your Pixoo device on the local network.**
+
+#### Using bunx (Bun)
 
 ```json
 {
@@ -38,10 +42,11 @@ Built on [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit
     "pixoo-mcp-server": {
       "type": "stdio",
       "command": "bunx",
-      "args": ["pixoo-mcp-server@latest"],
+      "args": ["@cyanheads/pixoo-mcp-server@latest"],
       "env": {
         "PIXOO_IP": "192.168.1.100",
         "PIXOO_SIZE": "64",
+        "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_LOG_LEVEL": "info"
       }
     }
@@ -49,61 +54,81 @@ Built on [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit
 }
 ```
 
+#### Streamable HTTP Configuration
+
+```bash
+MCP_TRANSPORT_TYPE=http
+MCP_HTTP_PORT=3010
+```
+
 ### Prerequisites
 
-- [Bun v1.2.0](https://bun.sh/) or higher
+- [Bun v1.2.0+](https://bun.sh/)
 - A Divoom Pixoo device on the same local network
 
-### Installation
+### Development Environment Setup
+
+1. **Clone the repository:**
 
 ```sh
 git clone https://github.com/cyanheads/pixoo-mcp-server.git
 cd pixoo-mcp-server
+```
+
+2. **Install dependencies:**
+
+```sh
 bun install
 ```
 
-### Configuration
-
-Copy `.env.example` to `.env` and set your device IP:
+3. **Configure environment:**
 
 ```sh
 cp .env.example .env
+# Edit .env and set PIXOO_IP to your device's IP address
 ```
 
-| Variable             | Description                                         | Default        |
-| :------------------- | :-------------------------------------------------- | :------------- |
-| **`PIXOO_IP`**       | IP address of the Pixoo device on the local network | **(required)** |
-| `PIXOO_SIZE`         | Display resolution: `16`, `32`, or `64`             | `64`           |
-| `PIXOO_OUTPUT_DIR`   | Directory for auto-saved preview images             | `output/`      |
-| `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`                        | `stdio`        |
-| `MCP_HTTP_PORT`      | HTTP server port                                    | `3010`         |
-| `MCP_LOG_LEVEL`      | Log level (`debug`, `info`, `warn`, `error`)        | `debug`        |
-
-### Running
+4. **Run:**
 
 ```sh
-# Development (watch mode)
-bun run dev:stdio
-bun run dev:http
-
-# Production (build first)
-bun run rebuild
-bun run start:stdio
-bun run start:http
+bun run dev:stdio    # Development (hot reload)
+bun run devcheck     # Lint, format, typecheck, audit
+bun run rebuild && bun run start:stdio  # Production
 ```
 
-### Development
+## ✨ Features
 
-```sh
-bun run devcheck    # Lint, format, typecheck, security audit
-bun run test        # Run tests
-```
+- **Full Compose Pipeline**: Layer text, images, sprites, shapes, bitmaps, and individual pixels — static or animated up to 40 frames.
+- **Animation Keyframes**: Per-element property animation with linear interpolation for numbers, color lerping for hex values, and snap transitions for booleans.
+- **Sprite Support**: Load sprite sheets with automatic downsampling and optional body/dark color overrides via [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit).
+- **Bitmap Font Rendering**: Built-in `standard` (5x7) and `compact` (3x5) pixel fonts for crisp text at any display size.
+- **Auto-Save Previews**: Optionally save PNG previews (static) or animated GIFs to a configurable output directory.
+- **Native Text Overlays**: Hardware-rendered scrolling text via device firmware — persists across channel switches with configurable font, alignment, and speed.
 
-## Tool Details
+Built on the [`mcp-ts-template`](https://github.com/cyanheads/mcp-ts-template) — declarative tool definitions, structured error handling, pluggable auth (JWT/OAuth), swappable storage backends, OpenTelemetry observability, and typed DI.
+
+## ⚙️ Configuration
+
+Key environment variables:
+
+| Variable                | Description                                                                                               | Default        |
+| :---------------------- | :-------------------------------------------------------------------------------------------------------- | :------------- |
+| **`PIXOO_IP`**          | IP address of the Pixoo device on the local network                                                       | **(required)** |
+| `PIXOO_SIZE`            | Display resolution: `16`, `32`, or `64`                                                                   | `64`           |
+| `PIXOO_OUTPUT_DIR`      | Directory for auto-saved preview images                                                                   | `output/`      |
+| `MCP_TRANSPORT_TYPE`    | Transport: `stdio` or `http`                                                                              | `stdio`        |
+| `MCP_HTTP_PORT`         | HTTP server port                                                                                          | `3010`         |
+| `MCP_HTTP_HOST`         | HTTP server hostname                                                                                      | `127.0.0.1`    |
+| `MCP_AUTH_MODE`         | Authentication mode: `none`, `jwt`, or `oauth`                                                            | `none`         |
+| `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-r2`, `cloudflare-kv`, `cloudflare-d1` | `in-memory`    |
+| `MCP_LOG_LEVEL`         | Log level (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`)                                  | `debug`        |
+| `OTEL_ENABLED`          | Enable OpenTelemetry instrumentation                                                                      | `false`        |
+
+## 🎨 Tool Details
 
 ### `pixoo_compose`
 
-The primary tool. Compose a scene from layered elements and push to the device.
+The primary tool. Compose a scene from layered elements and push to the device. Elements are drawn back-to-front.
 
 ```json
 {
@@ -159,23 +184,32 @@ The primary tool. Compose a scene from layered elements and push to the device.
 }
 ```
 
+**Output options:** Set `output` to an absolute path to save a preview PNG (static) or GIF (animated). Set `push: false` to skip device push and only save previews.
+
 See [docs/pixoo-mcp-server.md](docs/pixoo-mcp-server.md) for full element and animation documentation.
 
 ### `pixoo_push_image`
 
-Shortcut to load and push a single image file.
+Shortcut to load and push a single image file. Supports PNG, JPEG, WebP, GIF, AVIF, TIFF, and SVG.
 
 ```json
 { "path": "/path/to/image.png", "fit": "contain", "kernel": "nearest" }
 ```
 
+| Option   | Values                            | Default   |
+| :------- | :-------------------------------- | :-------- |
+| `fit`    | `contain`, `cover`, `fill`        | `contain` |
+| `kernel` | `nearest`, `lanczos3`, `mitchell` | `nearest` |
+
 ### `pixoo_text`
 
-Native on-device scrolling text with hardware rendering.
+Native on-device scrolling text with hardware rendering. Overlays render on top of the current display content and persist across channel switches.
 
 ```json
 { "text": "Hello World", "color": "#00ff00", "speed": 50, "direction": "left" }
 ```
+
+Use different IDs (0–19) to stack multiple overlays. Set `clear: true` to remove an overlay.
 
 ### `pixoo_control`
 
@@ -185,27 +219,26 @@ Read or change device settings. Call with no parameters to read current config.
 { "brightness": 75, "channel": "custom" }
 ```
 
-## Device Quirks
+## ⚠️ Device Quirks
 
 - **~1 push/sec recommended** — device may freeze after ~300 rapid pushes
-- **Channel must be `custom`** to display pushed content — compose/push_image auto-switch
+- **Channel must be `custom`** to display pushed content — `compose` and `push_image` auto-switch
 - **Text overlays persist** across channel switches — use `clear: true` to remove
 - **Max ~40 animation frames** for stability
 - **~5s "Loading.." overlay** when a new animation starts
+- **GIF ID reset** before each push — handled automatically by the toolkit
 
-## References
+## 📚 References
 
 - [Divoom API Docs](http://doc.divoom-gz.com/web/#/12?page_id=220)
-- [pixoo-toolkit](https://github.com/cyanheads/pixoo-toolkit) — `@cyanheads/pixoo-toolkit`
+- [@cyanheads/pixoo-toolkit](https://github.com/cyanheads/pixoo-toolkit) — rendering primitives and device communication
 - [mcp-ts-template](https://github.com/cyanheads/mcp-ts-template) — server foundation
 - [Device Font List](https://app.divoom-gz.com/Device/GetTimeDialFontList)
 
+## Contributing
+
+Issues and PRs welcome. Please run `bun run devcheck && bun test` before submitting.
+
 ## License
 
-This project is licensed under the Apache 2.0 License. See the [LICENSE](./LICENSE) file for details.
-
----
-
-<div align="center">
-  <b>Maintained by <a href="https://github.com/cyanheads">@cyanheads</a></b>
-</div>
+[Apache 2.0](./LICENSE)

@@ -5,6 +5,8 @@
  * and per-element animation keyframes.
  * @module src/mcp-server/tools/definitions/pixoo-compose.tool
  */
+import { mkdir } from 'node:fs/promises';
+
 import type { ContentBlock } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
@@ -35,7 +37,7 @@ import {
   resolveColor,
   lerpColor,
   savePng,
-  saveAnimationPngs,
+  saveAnimationGif,
 } from '@cyanheads/pixoo-toolkit';
 
 // ---------------------------------------------------------------------------
@@ -603,15 +605,35 @@ async function composeLogic(
     canvasFrames.push(canvas);
   }
 
-  // --- Save preview if requested ---
+  // --- Save preview ---
   let outputFiles: string[] | undefined;
+  const isAnimated = canvasFrames.length > 1;
+
   if (input.output) {
+    // Explicit output path — use as-is
     const firstFrame = canvasFrames[0];
-    if (canvasFrames.length === 1 && firstFrame) {
+    if (!isAnimated && firstFrame) {
       await savePng(firstFrame, input.output);
       outputFiles = [input.output];
     } else {
-      outputFiles = await saveAnimationPngs(canvasFrames, input.output);
+      const gifPath = input.output.replace(/\.png$/i, '.gif');
+      await saveAnimationGif(canvasFrames, gifPath, input.speed);
+      outputFiles = [gifPath];
+    }
+  } else if (config.pixoo.outputDir) {
+    // Auto-save to configured output directory
+    const dir = config.pixoo.outputDir;
+    await mkdir(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const firstFrame = canvasFrames[0];
+    if (!isAnimated && firstFrame) {
+      const path = `${dir}/compose-${ts}.png`;
+      await savePng(firstFrame, path);
+      outputFiles = [path];
+    } else {
+      const path = `${dir}/compose-${ts}.gif`;
+      await saveAnimationGif(canvasFrames, path, input.speed);
+      outputFiles = [path];
     }
   }
 

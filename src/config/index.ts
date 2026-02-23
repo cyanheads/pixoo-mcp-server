@@ -231,6 +231,10 @@ const ConfigSchema = z.object({
       })
       .default(64)
       .describe('Display resolution in pixels'),
+    outputDir: z
+      .string()
+      .optional()
+      .describe('Directory for auto-saved preview images'),
   }),
   speech: z
     .object({
@@ -346,6 +350,7 @@ const parseConfig = () => {
     pixoo: {
       ip: env.PIXOO_IP,
       size: env.PIXOO_SIZE,
+      outputDir: env.PIXOO_OUTPUT_DIR,
     },
     speech:
       env.SPEECH_TTS_ENABLED || env.SPEECH_STT_ENABLED
@@ -387,22 +392,32 @@ const parseConfig = () => {
   });
   const parsedPkg = pkgSchema.parse(rawConfig.pkg);
 
+  // Derive project root from this module's URL.
+  // Bundled (dist/index.js) needs '..' ; source (src/config/index.ts) needs '../..'.
+  const projectRoot = hasFileSystemAccess
+    ? (() => {
+        const depth = import.meta.url.includes('/dist/') ? '..' : '../..';
+        const p = new URL(depth, import.meta.url).pathname;
+        return p.endsWith('/') ? p.slice(0, -1) : p;
+      })()
+    : undefined;
+
+  const resolveDir = (envValue: string | undefined, fallback: string) => {
+    if (!projectRoot) return undefined;
+    const dir = envValue ?? fallback;
+    if (dir.startsWith('/')) return dir;
+    return `${projectRoot}/${dir}`;
+  };
+
   // Now add the derived values to the main rawConfig object to be parsed
   const finalRawConfig = {
     ...rawConfig,
     pkg: parsedPkg,
-    logsPath: hasFileSystemAccess
-      ? (() => {
-          // Derive project root from this module's URL (src/config/index.ts → ../../)
-          // URL API is universal (Node, Bun, Workers) — no node:path/node:url imports needed
-          const root = new URL('../..', import.meta.url).pathname;
-          const logsDir = rawConfig.logsPath ?? 'logs';
-          if (logsDir.startsWith('/')) return logsDir;
-          return root.endsWith('/')
-            ? `${root}${logsDir}`
-            : `${root}/${logsDir}`;
-        })()
-      : undefined,
+    logsPath: resolveDir(rawConfig.logsPath, 'logs'),
+    pixoo: {
+      ...rawConfig.pixoo,
+      outputDir: resolveDir(rawConfig.pixoo.outputDir, 'output'),
+    },
     mcpServerName: env.MCP_SERVER_NAME ?? parsedPkg.name,
     mcpServerVersion: env.MCP_SERVER_VERSION ?? parsedPkg.version,
     mcpServerDescription: env.MCP_SERVER_DESCRIPTION ?? parsedPkg.description,

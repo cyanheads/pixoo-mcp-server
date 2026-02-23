@@ -4,6 +4,8 @@
  * Automatically switches the device to the custom channel before pushing.
  * @module src/mcp-server/tools/definitions/pixoo-push-image.tool
  */
+import { mkdir } from 'node:fs/promises';
+
 import type { ContentBlock } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
@@ -16,7 +18,12 @@ import type {
 } from '@/mcp-server/tools/utils/index.js';
 import { withToolAuth } from '@/mcp-server/transports/auth/lib/withAuth.js';
 import { type RequestContext, logger } from '@/utils/index.js';
-import { Channel, type PixooSize, loadImage } from '@cyanheads/pixoo-toolkit';
+import {
+  Channel,
+  type PixooSize,
+  loadImage,
+  savePng,
+} from '@cyanheads/pixoo-toolkit';
 
 // ---------------------------------------------------------------------------
 // Metadata
@@ -66,6 +73,10 @@ const OutputSchema = z
     size: z.number().describe('Display size in pixels.'),
     fit: z.string().describe('Resize mode used.'),
     kernel: z.string().describe('Interpolation kernel used.'),
+    outputFile: z
+      .string()
+      .optional()
+      .describe('Path of the auto-saved preview PNG.'),
   })
   .describe('Result after pushing image to device.');
 
@@ -100,11 +111,22 @@ async function pushImageLogic(
 
   await client.push(canvas);
 
+  // Auto-save preview if output directory is configured
+  let outputFile: string | undefined;
+  if (config.pixoo.outputDir) {
+    const dir = config.pixoo.outputDir;
+    await mkdir(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    outputFile = `${dir}/push-image-${ts}.png`;
+    await savePng(canvas, outputFile);
+  }
+
   return {
     path: input.path,
     size,
     fit: input.fit,
     kernel: input.kernel,
+    outputFile,
   };
 }
 

@@ -6,10 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ## [0.3.1] - 2026-02-23
 
+### Added
+
+- Added `example-output/hello_from_claude.png` hero image to README header.
+- Added Example Output reference link to README.
+- Added npm keywords: `animation`, `claude`, `divoom-pixoo`, `iot`, `sprite`.
+
 ### Changed
 
 - Renamed npm package from `pixoo-mcp-server` to `@cyanheads/pixoo-mcp-server` (scoped package). Legacy `pixoo-mcp-server` bin entry preserved for backward compatibility.
 - Rewrote `README.md` — expanded tools table with annotations, added Streamable HTTP config, server features section, project structure table, security overview, testing and contributing sections.
+- Unified project description across `package.json`, `server.json`, and README to "Compose and push pixel art, animations, and text to Divoom Pixoo LED matrices via MCP."
 - Corrected `.env.example` log level values to match Pino levels (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`).
 - Updated `server.json` npm identifiers to scoped package name.
 

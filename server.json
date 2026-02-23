@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/pixoo-mcp-server",
-  "description": "MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays over the local network.",
+  "description": "Compose and push pixel art, animations, and text to Divoom Pixoo LED matrices via MCP.",
   "repository": {
     "url": "https://github.com/cyanheads/pixoo-mcp-server",
     "source": "github"

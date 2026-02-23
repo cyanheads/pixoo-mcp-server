@@ -2,7 +2,7 @@
   "name": "@cyanheads/pixoo-mcp-server",
   "version": "0.3.1",
   "mcpName": "io.github.cyanheads/pixoo-mcp-server",
-  "description": "MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays over the local network.",
+  "description": "Compose and push pixel art, animations, and text to Divoom Pixoo LED matrices via MCP.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -113,7 +113,11 @@
     "vitest": "^4.0.18"
   },
   "keywords": [
+    "animation",
+    "claude",
     "divoom",
+    "divoom-pixoo",
+    "iot",
     "led-matrix",
     "mcp",
     "mcp-server",
@@ -123,6 +127,7 @@
     "pixoo-64",
     "rgb-display",
     "smart-display",
+    "sprite",
     "typescript"
   ],
   "author": "cyanheads <casey@caseyjhand.com> (https://github.com/cyanheads)",

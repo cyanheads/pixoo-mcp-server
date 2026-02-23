@@ -1,15 +1,15 @@
 {
-  "name": "mcp-ts-template",
-  "version": "2.9.6",
-  "mcpName": "io.github.cyanheads/mcp-ts-template",
-  "description": "TypeScript template for MCP servers with declarative tools/resources, pluggable auth, multi-backend storage, OpenTelemetry observability, and Cloudflare Workers support.",
+  "name": "pixoo-mcp-server",
+  "version": "0.1.0",
+  "mcpName": "io.github.cyanheads/pixoo-mcp-server",
+  "description": "MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays over the local network.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
   "bin": {
-    "mcp-ts-template": "dist/index.js"
+    "pixoo-mcp-server": "dist/index.js"
   },
   "exports": {
     ".": {
@@ -22,12 +22,12 @@
   "sideEffects": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cyanheads/mcp-ts-template.git"
+    "url": "git+https://github.com/cyanheads/pixoo-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/cyanheads/mcp-ts-template/issues"
+    "url": "https://github.com/cyanheads/pixoo-mcp-server/issues"
   },
-  "homepage": "https://github.com/cyanheads/mcp-ts-template#readme",
+  "homepage": "https://github.com/cyanheads/pixoo-mcp-server#readme",
   "scripts": {
     "build": "bun build ./src/index.ts --outdir ./dist --target node --external pino --external pino-pretty",
     "build:worker": "bun build ./src/worker.ts --outdir ./dist --target bun --no-external",
@@ -52,7 +52,7 @@
     "fetch-spec": "bun run scripts/fetch-openapi-spec.ts",
     "format": "bunx prettier --write \"**/*.{ts,js,json,md,html,css}\"",
     "prepare": "bunx husky",
-    "inspector": "bunx mcp-inspector --config mcp.json --server mcp-ts-template",
+    "inspector": "bunx mcp-inspector --config mcp.json --server pixoo-mcp-server",
     "test": "bunx vitest run",
     "test:conformance": "bunx vitest run --config vitest.conformance.ts",
     "test:fuzz": "bunx vitest run fuzz",
@@ -112,29 +112,19 @@
     "vitest": "^4.0.18"
   },
   "keywords": [
-    "agent",
-    "ai",
-    "ai-agent",
-    "authentication",
-    "cloudflare-workers",
-    "declarative-tools",
-    "dependency-injection",
-    "error-handling",
-    "hono",
-    "llm-integration",
+    "divoom",
+    "led-matrix",
     "mcp",
-    "model-context-protocol",
     "mcp-server",
-    "elicitation",
-    "observability",
-    "opentelemetry",
-    "otel",
-    "server-template",
-    "template",
-    "typescript",
-    "zod"
+    "model-context-protocol",
+    "pixel-art",
+    "pixoo",
+    "pixoo-64",
+    "rgb-display",
+    "smart-display",
+    "typescript"
   ],
-  "author": "cyanheads <casey@caseyjhand.com> (https://github.com/cyanheads/mcp-ts-template#readme)",
+  "author": "cyanheads <casey@caseyjhand.com> (https://github.com/cyanheads/pixoo-mcp-server#readme)",
   "license": "Apache-2.0",
   "funding": [
     {
@@ -155,7 +145,7 @@
     "ignores": [
       "bun",
       "repomix",
-      "mcp-ts-template"
+      "pixoo-mcp-server"
     ]
   },
   "publishConfig": {

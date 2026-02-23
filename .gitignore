@@ -181,6 +181,7 @@ docs/api/
 # APPLICATION SPECIFIC
 # =============================================================================
 .storage/
+output/
 repomix-output*
 duckdata/
 .claude

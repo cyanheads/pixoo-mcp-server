@@ -1,6 +1,6 @@
 # Agent Protocol
 
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Project:** pixoo-mcp-server
 **Updated:** 2026-02-22
 
@@ -20,9 +20,7 @@
 
 **Decoupled storage.** Never access persistence backends directly. Always use DI-injected `StorageService`. It provides built-in validation, opaque cursor pagination, and parallel batch operations. All inputs (tenant IDs, keys, prefixes) are validated before reaching providers.
 
-**Local/edge runtime parity.** All features work with local transports (`stdio`/`http`) and Worker bundle (`build:worker` + `wrangler`). Guard non-portable deps. Prefer runtime-agnostic abstractions (Hono + `@hono/mcp`, Fetch APIs).
-
-**Elicitation for missing input.** Use `sdkContext.elicitInput()` for missing params. See `template-madlibs-elicitation.tool.ts`.
+**Elicitation for missing input.** Use `sdkContext.elicitInput()` for missing params via `sdkContext.elicitInput()`.
 
 ---
 
@@ -42,12 +40,12 @@
 
 Four tools, defined in `src/mcp-server/tools/definitions/`:
 
-| Tool               | File                       | Annotations                          | Maps To                                                                                              |
-| :----------------- | :------------------------- | :----------------------------------- | :--------------------------------------------------------------------------------------------------- |
-| `pixoo_compose`    | `pixoo-compose.tool.ts`    | `destructiveHint: true`              | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `renderSprite`, `push`/`pushAnimation` |
-| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true`              | `loadImage`, `push`                                                                                  |
-| `pixoo_text`       | `pixoo-text.tool.ts`       | `destructiveHint: true`              | `sendText`, `clearText` (device-side `Draw/SendHttpText`)                                            |
-| `pixoo_control`    | `pixoo-control.tool.ts`    | `idempotentHint: true`               | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock`                                  |
+| Tool               | File                       | Annotations             | Maps To                                                                                                |
+| :----------------- | :------------------------- | :---------------------- | :----------------------------------------------------------------------------------------------------- |
+| `pixoo_compose`    | `pixoo-compose.tool.ts`    | `destructiveHint: true` | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `renderSprite`, `push`/`pushAnimation` |
+| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true` | `loadImage`, `push`                                                                                    |
+| `pixoo_text`       | `pixoo-text.tool.ts`       | `destructiveHint: true` | `sendText`, `clearText` (device-side `Draw/SendHttpText`)                                              |
+| `pixoo_control`    | `pixoo-control.tool.ts`    | `idempotentHint: true`  | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock`                                    |
 
 Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `Custom` channel before pushing.
 
@@ -144,7 +142,7 @@ See [docs/tree.md](docs/tree.md) for the complete visual tree. Respect the estab
 
 ## Adding a Tool
 
-Template: [template-echo-message.tool.ts](src/mcp-server/tools/definitions/template-echo-message.tool.ts)
+Example: [pixoo-control.tool.ts](src/mcp-server/tools/definitions/pixoo-control.tool.ts)
 
 **Steps:**
 
@@ -173,7 +171,7 @@ Export a single `const` of type `ToolDefinition<InputSchema, OutputSchema>` with
 
 ```ts
 import { withToolAuth } from '@/mcp-server/transports/auth/lib/withAuth.js';
-logic: withToolAuth(['tool:echo:read'], yourLogic),
+logic: withToolAuth(['tool:pixoo:read'], yourLogic),
 ```
 
 ---
@@ -184,7 +182,7 @@ Task tools enable long-running async operations using the MCP Tasks API — a "c
 
 > Tasks API is part of the [MCP spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) as an experimental capability and may change.
 
-Template: [template-async-countdown.task-tool.ts](src/mcp-server/tools/definitions/template-async-countdown.task-tool.ts)
+See the MCP Tasks API docs for the full pattern.
 
 **Steps:**
 
@@ -223,8 +221,6 @@ Template: [template-async-countdown.task-tool.ts](src/mcp-server/tools/definitio
 
 Prompts are reusable message templates that clients can discover and invoke. Simpler than tools — no `logic`/`appContext`/`sdkContext`, no auth wrappers.
 
-Template: [code-review.prompt.ts](src/mcp-server/prompts/definitions/code-review.prompt.ts)
-
 **Steps:**
 
 1. Create `src/mcp-server/prompts/definitions/[your-prompt-name].prompt.ts` (kebab-case)
@@ -238,8 +234,6 @@ Template: [code-review.prompt.ts](src/mcp-server/prompts/definitions/code-review
 ---
 
 ## Adding a Resource
-
-Template: [echo.resource.ts](src/mcp-server/resources/definitions/echo.resource.ts)
 
 Export a single `const` of type `ResourceDefinition<ParamsSchema, OutputSchema>` with:
 
@@ -308,7 +302,7 @@ From `@/utils/index.js`:
 - `markdown()`, `diffFormatter`, `tableFormatter`, `treeFormatter`
 - `ErrorHandler.tryCatch` (for services/setup code only — NOT tool/resource logic)
 
-**Response formatters:** Simple: `[{ type: 'text', text: lines.join('\n') }]`. Complex: `markdown()` helper, `diffFormatter`, `tableFormatter`, `treeFormatter` (see `template-echo-message.tool.ts`).
+**Response formatters:** Simple: `[{ type: 'text', text: lines.join('\n') }]`. Complex: `markdown()` helper, `diffFormatter`, `tableFormatter`, `treeFormatter`.
 
 ### Utils Modules
 
@@ -348,9 +342,8 @@ From `@/utils/index.js`:
 - `createMcpServerInstance` (`server.ts`): initializes context, creates server with declared capabilities (`logging`, `resources`/`tools`/`prompts` with `listChanged`, `tasks` with list/cancel/requests)
 - Elicitation, sampling, and roots are SDK context features available to tool logic via `sdkContext`, not declared server capabilities
 - `TransportManager` (`transports/manager.ts`): resolves factory, instantiates transport, handles lifecycle
-- Worker (`worker.ts`): Cloudflare adapter with `serverless` flag
 
-**Local/edge parity:** stdio and HTTP transports work identically. Worker: `build:worker` + `wrangler dev --local` must succeed. `wrangler.toml`: `compatibility_date` >= `2025-09-01`, `nodejs_compat`.
+**Transports:** stdio and HTTP work identically. Worker builds are not a target (device is local network, `sharp` doesn't work in Workers).
 
 ---
 

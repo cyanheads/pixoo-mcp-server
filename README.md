@@ -1,7 +1,7 @@
 <div align="center">
   <h1>pixoo-mcp-server</h1>
   <p><b>MCP server for pushing visual content to Divoom Pixoo RGB LED matrix displays (16x16, 32x32, 64x64) over the local network.</b>
-  <div>4 Tools • 2 Resources • 1 Prompt</div>
+  <div>4 Tools</div>
   </p>
 </div>
 

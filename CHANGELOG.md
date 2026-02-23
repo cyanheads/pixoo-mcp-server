@@ -20,6 +20,14 @@ All notable changes to this project will be documented in this file.
 
 - Updated `docs/tree.md` to reflect current project structure.
 - Normalized quote style in `smithery.yaml`.
+- Updated `CLAUDE.md` — version bump, removed worker/edge parity references, pointed template references to pixoo tools.
+
+### Removed
+
+- Removed 7 template tool definitions and their tests (echo, cat-fact, image-test, madlibs-elicitation, code-review-sampling, async-countdown, data-explorer).
+- Removed template resource definitions (echo, data-explorer-ui) and their tests.
+- Removed template prompt definition (code-review) and its test.
+- Removed unused `@modelcontextprotocol/ext-apps` dependency.
 
 ---
 

@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-02-23 06:21:10
+Generated on: 2026-02-23
 
 ```
 pixoo-mcp-server/
@@ -55,15 +55,12 @@ pixoo-mcp-server/
 │   ├── mcp-server/
 │   │   ├── prompts/
 │   │   │   ├── definitions/
-│   │   │   │   ├── code-review.prompt.ts
 │   │   │   │   └── index.ts
 │   │   │   ├── utils/
 │   │   │   │   └── promptDefinition.ts
 │   │   │   └── prompt-registration.ts
 │   │   ├── resources/
 │   │   │   ├── definitions/
-│   │   │   │   ├── data-explorer-ui.app-resource.ts
-│   │   │   │   ├── echo.resource.ts
 │   │   │   │   └── index.ts
 │   │   │   ├── utils/
 │   │   │   │   ├── resourceDefinition.ts
@@ -82,13 +79,10 @@ pixoo-mcp-server/
 │   │   ├── tools/
 │   │   │   ├── definitions/
 │   │   │   │   ├── index.ts
-│   │   │   │   ├── template-async-countdown.task-tool.ts
-│   │   │   │   ├── template-cat-fact.tool.ts
-│   │   │   │   ├── template-code-review-sampling.tool.ts
-│   │   │   │   ├── template-data-explorer.app-tool.ts
-│   │   │   │   ├── template-echo-message.tool.ts
-│   │   │   │   ├── template-image-test.tool.ts
-│   │   │   │   └── template-madlibs-elicitation.tool.ts
+│   │   │   │   ├── pixoo-compose.tool.ts
+│   │   │   │   ├── pixoo-control.tool.ts
+│   │   │   │   ├── pixoo-push-image.tool.ts
+│   │   │   │   └── pixoo-text.tool.ts
 │   │   │   ├── utils/
 │   │   │   │   ├── index.ts
 │   │   │   │   ├── toolDefinition.ts
@@ -253,15 +247,11 @@ pixoo-mcp-server/
 │   │   └── index.ts
 │   ├── mcp-server/
 │   │   ├── prompts/
-│   │   │   ├── definitions/
-│   │   │   │   └── code-review.prompt.test.ts
 │   │   │   ├── utils/
 │   │   │   │   └── promptDefinition.test.ts
 │   │   │   └── prompt-registration.test.ts
 │   │   ├── resources/
 │   │   │   ├── definitions/
-│   │   │   │   ├── data-explorer-ui.app-resource.test.ts
-│   │   │   │   ├── echo.resource.test.ts
 │   │   │   │   └── index.test.ts
 │   │   │   ├── schemas/
 │   │   │   │   ├── __snapshots__/
@@ -282,14 +272,7 @@ pixoo-mcp-server/
 │   │   │       └── taskToolDefinition.test.ts
 │   │   ├── tools/
 │   │   │   ├── definitions/
-│   │   │   │   ├── index.test.ts
-│   │   │   │   ├── template-async-countdown.task-tool.test.ts
-│   │   │   │   ├── template-cat-fact.tool.test.ts
-│   │   │   │   ├── template-code-review-sampling.tool.test.ts
-│   │   │   │   ├── template-data-explorer.app-tool.test.ts
-│   │   │   │   ├── template-echo-message.tool.test.ts
-│   │   │   │   ├── template-image-test.tool.test.ts
-│   │   │   │   └── template-madlibs-elicitation.tool.test.ts
+│   │   │   │   └── index.test.ts
 │   │   │   ├── fuzz/
 │   │   │   │   └── tool-input-fuzz.test.ts
 │   │   │   ├── schemas/

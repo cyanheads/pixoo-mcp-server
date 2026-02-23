@@ -42,12 +42,12 @@
 
 Four tools, defined in `src/mcp-server/tools/definitions/`:
 
-| Tool               | File                       | Annotations                                                   | Maps To                                                                                                  |
-| :----------------- | :------------------------- | :------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------- |
-| `pixoo_compose`    | `pixoo-compose.tool.ts`    | `destructiveHint: true`                                       | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `buildAnimation`, `push`/`pushAnimation` |
-| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true`                                       | `loadImage`, `push`                                                                                      |
-| `pixoo_text`       | `pixoo-text.tool.ts`       | `destructiveHint: true`                                       | `sendText`, `clearText` (device-side `Draw/SendHttpText`)                                                |
-| `pixoo_control`    | `pixoo-control.tool.ts`    | `readOnlyHint: true` (when no params), `idempotentHint: true` | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock`                                      |
+| Tool               | File                       | Annotations                          | Maps To                                                                                              |
+| :----------------- | :------------------------- | :----------------------------------- | :--------------------------------------------------------------------------------------------------- |
+| `pixoo_compose`    | `pixoo-compose.tool.ts`    | `destructiveHint: true`              | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `renderSprite`, `push`/`pushAnimation` |
+| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true`              | `loadImage`, `push`                                                                                  |
+| `pixoo_text`       | `pixoo-text.tool.ts`       | `destructiveHint: true`              | `sendText`, `clearText` (device-side `Draw/SendHttpText`)                                            |
+| `pixoo_control`    | `pixoo-control.tool.ts`    | `idempotentHint: true`               | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock`                                  |
 
 Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `Custom` channel before pushing.
 
@@ -282,6 +282,7 @@ Tokens live in `src/container/core/tokens.ts`.
 
 | Service           | Token                   | Resolution                                 | Notes                         |
 | :---------------- | :---------------------- | :----------------------------------------- | :---------------------------- |
+| `PixooClient`     | `PixooClientToken`      | `container.resolve(PixooClientToken)`      | Device communication          |
 | `ILlmProvider`    | `LlmProvider`           | `container.resolve(LlmProvider)`           |                               |
 | `StorageService`  | `StorageService`        | `container.resolve(StorageService)`        | Requires `context.tenantId`   |
 | `RateLimiter`     | `RateLimiterService`    | `container.resolve(RateLimiterService)`    |                               |

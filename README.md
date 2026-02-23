@@ -21,12 +21,12 @@ Built on [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit
 
 ## Tools
 
-| Tool | Description |
-|:--|:--|
-| **`pixoo_compose`** | Compose a scene from layered elements (text, images, sprites, shapes, pixel art) and push to device — static or animated. |
-| **`pixoo_push_image`** | Load a single image file, resize to display grid, push. |
-| **`pixoo_text`** | Push native on-device scrolling text via hardware rendering. |
-| **`pixoo_control`** | Read or change device settings (brightness, screen, channel, clock face). |
+| Tool                   | Description                                                                                                               |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------ |
+| **`pixoo_compose`**    | Compose a scene from layered elements (text, images, sprites, shapes, pixel art) and push to device — static or animated. |
+| **`pixoo_push_image`** | Load a single image file, resize to display grid, push.                                                                   |
+| **`pixoo_text`**       | Push native on-device scrolling text via hardware rendering.                                                              |
+| **`pixoo_control`**    | Read or change device settings (brightness, screen, channel, clock face).                                                 |
 
 ## Getting Started
 
@@ -70,13 +70,13 @@ Copy `.env.example` to `.env` and set your device IP:
 cp .env.example .env
 ```
 
-| Variable | Description | Default |
-|:--|:--|:--|
-| **`PIXOO_IP`** | IP address of the Pixoo device on the local network | **(required)** |
-| `PIXOO_SIZE` | Display resolution: `16`, `32`, or `64` | `64` |
-| `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
-| `MCP_HTTP_PORT` | HTTP server port | `3010` |
-| `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `debug` |
+| Variable             | Description                                         | Default        |
+| :------------------- | :-------------------------------------------------- | :------------- |
+| **`PIXOO_IP`**       | IP address of the Pixoo device on the local network | **(required)** |
+| `PIXOO_SIZE`         | Display resolution: `16`, `32`, or `64`             | `64`           |
+| `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`                        | `stdio`        |
+| `MCP_HTTP_PORT`      | HTTP server port                                    | `3010`         |
+| `MCP_LOG_LEVEL`      | Log level (`debug`, `info`, `warn`, `error`)        | `debug`        |
 
 ### Running
 
@@ -109,9 +109,20 @@ The primary tool. Compose a scene from layered elements and push to the device.
   "background": "black",
   "elements": [
     { "type": "rect", "x": 0, "y": 0, "w": 64, "h": 20, "color": "#1a1a2e" },
-    { "type": "text", "text": "Hello!", "x": 0, "y": 6, "color": "white", "font": "standard", "centered": true },
     {
-      "type": "bitmap", "x": 28, "y": 40, "scale": 2,
+      "type": "text",
+      "text": "Hello!",
+      "x": 0,
+      "y": 6,
+      "color": "white",
+      "font": "standard",
+      "centered": true
+    },
+    {
+      "type": "bitmap",
+      "x": 28,
+      "y": 40,
+      "scale": 2,
       "palette": ["", "#ff4488", "#cc2266"],
       "data": ["0120210", "1111111", "1111111", "0111110", "0011100", "0001000"]
     }
@@ -125,11 +136,25 @@ The primary tool. Compose a scene from layered elements and push to the device.
 
 ```json
 {
-  "frames": 10, "speed": 150,
-  "elements": [{
-    "type": "text", "text": "Hello", "x": 0, "y": 2, "color": "#ffffff", "centered": true,
-    "animate": { "color": [[0, "#ffffff"], [5, "#ff8800"], [9, "#ffffff"]] }
-  }]
+  "frames": 10,
+  "speed": 150,
+  "elements": [
+    {
+      "type": "text",
+      "text": "Hello",
+      "x": 0,
+      "y": 2,
+      "color": "#ffffff",
+      "centered": true,
+      "animate": {
+        "color": [
+          [0, "#ffffff"],
+          [5, "#ff8800"],
+          [9, "#ffffff"]
+        ]
+      }
+    }
+  ]
 }
 ```
 

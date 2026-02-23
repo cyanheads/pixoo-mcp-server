@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.2.0] - 2026-02-22
+
+### Added
+
+- Integrated `@cyanheads/pixoo-toolkit` (v0.3.2) as the core device communication and rendering library.
+- Added `pixoo` config block (`PIXOO_IP`, `PIXOO_SIZE`) with Zod validation in `src/config/index.ts`.
+- Registered `PixooClientToken` as a DI-managed lazy singleton in `src/container/`.
+- Implemented `pixoo_compose` tool — compose layered scenes (text, images, sprites, shapes, bitmaps, pixels) with multi-frame animation and per-element keyframes.
+- Implemented `pixoo_push_image` tool — load and push a single image file to the display.
+- Implemented `pixoo_text` tool — native on-device scrolling text overlays via `Draw/SendHttpText`.
+- Implemented `pixoo_control` tool — read/change device settings (brightness, screen, channel, clock face).
+
+### Changed
+
+- Updated `docs/tree.md` to reflect current project structure.
+- Normalized quote style in `smithery.yaml`.
+
+---
+
 ## [0.1.0] - 2026-02-22
 
 ### Added

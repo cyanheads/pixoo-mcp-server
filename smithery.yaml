@@ -7,12 +7,12 @@ startCommand:
     properties:
       PIXOO_IP:
         type: string
-        description: "IP address of the Pixoo device on the local network."
+        description: 'IP address of the Pixoo device on the local network.'
       PIXOO_SIZE:
         type: integer
         enum: [16, 32, 64]
         default: 64
-        description: "Display resolution (16, 32, or 64)."
+        description: 'Display resolution (16, 32, or 64).'
       MCP_LOG_LEVEL:
         type: string
         default: 'info'

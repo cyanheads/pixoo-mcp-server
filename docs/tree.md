@@ -1,23 +1,15 @@
-# mcp-ts-template - Directory Structure
+# pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-02-18 14:11:47
+Generated on: 2026-02-23 06:21:10
 
 ```
-mcp-ts-template/
+pixoo-mcp-server/
 ├── .github/
-│   ├── codeql/
-│   │   └── codeql-config.yml
-│   ├── workflows/
-│   │   └── ci.yml
 │   └── FUNDING.yml
 ├── .husky/
 │   └── pre-commit
-├── .storage/
 ├── .vscode/
 │   └── settings.json
-├── changelog/
-│   ├── archive1.md
-│   └── archive2.md
 ├── docs/
 │   ├── mcp-specification/
 │   │   └── 2025-06-18/
@@ -38,9 +30,8 @@ mcp-ts-template/
 │   ├── mcp-apps.md
 │   ├── mcp-elicitation-summary.md
 │   ├── mcp-sdk-changes.md
+│   ├── pixoo-mcp-server.md
 │   └── publishing-mcp-server-registry.md
-├── schemas/
-│   └── cloudflare-d1-schema.sql
 ├── scripts/
 │   ├── clean.ts
 │   ├── devcheck.ts
@@ -136,7 +127,6 @@ mcp-ts-template/
 │   │   │   ├── core/
 │   │   │   │   ├── GraphService.ts
 │   │   │   │   └── IGraphProvider.ts
-│   │   │   ├── providers/
 │   │   │   ├── index.ts
 │   │   │   └── types.ts
 │   │   ├── llm/

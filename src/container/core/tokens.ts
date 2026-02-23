@@ -13,6 +13,7 @@ import type { IStorageProvider } from '@/storage/core/IStorageProvider.js';
 import type { ILlmProvider } from '@/services/llm/core/ILlmProvider.js';
 import type { RateLimiter } from '@/utils/security/rateLimiter.js';
 import type { TransportManager } from '@/mcp-server/transports/manager.js';
+import type { PixooClient } from '@cyanheads/pixoo-toolkit';
 import type { SpeechService as SpeechServiceClass } from '@/services/speech/index.js';
 import type { TaskManager } from '@/mcp-server/tasks/core/taskManager.js';
 import type { allToolDefinitions } from '@/mcp-server/tools/definitions/index.js';
@@ -40,6 +41,9 @@ export const SupabaseAdminClient = token<SupabaseClient<Database>>(
 export const LlmProvider = token<ILlmProvider>('ILlmProvider');
 export const RateLimiterService = token<RateLimiter>('RateLimiterService');
 export const SpeechService = token<SpeechServiceClass>('SpeechService');
+
+// --- Device tokens ---
+export const PixooClientToken = token<PixooClient>('PixooClient');
 
 // --- MCP server tokens ---
 export const CreateMcpServerInstance = token<() => Promise<McpServer>>(

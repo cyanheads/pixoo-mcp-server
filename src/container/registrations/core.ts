@@ -12,12 +12,14 @@ import {
   AppConfig,
   LlmProvider,
   Logger,
+  PixooClientToken,
   RateLimiterService,
   SpeechService,
   StorageProvider,
   StorageService,
   SupabaseAdminClient,
 } from '@/container/core/tokens.js';
+import { PixooClient } from '@cyanheads/pixoo-toolkit';
 import { OpenRouterProvider } from '@/services/llm/providers/openrouter.provider.js';
 import { SpeechService as SpeechServiceClass } from '@/services/speech/index.js';
 import { StorageService as StorageServiceClass } from '@/storage/core/StorageService.js';
@@ -38,6 +40,12 @@ export const registerCoreServices = () => {
 
   container.registerValue(AppConfig, config);
   container.registerValue(Logger, logger);
+
+  // Pixoo client — lazy singleton, communicates with device over local network
+  container.registerSingleton(PixooClientToken, (c) => {
+    const cfg = c.resolve(AppConfig);
+    return new PixooClient(cfg.pixoo.ip, { size: cfg.pixoo.size });
+  });
 
   // Supabase client — lazy singleton, resolved on first use
   container.registerSingleton(SupabaseAdminClient, (c) => {

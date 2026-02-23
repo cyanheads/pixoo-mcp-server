@@ -219,6 +219,19 @@ const ConfigSchema = z.object({
       )
       .default('INFO'),
   }),
+  pixoo: z.object({
+    ip: z
+      .string()
+      .min(1, 'PIXOO_IP is required')
+      .describe('Device IP on local network'),
+    size: z.coerce
+      .number()
+      .refine((n): n is 16 | 32 | 64 => [16, 32, 64].includes(n), {
+        message: 'PIXOO_SIZE must be 16, 32, or 64',
+      })
+      .default(64)
+      .describe('Display resolution in pixels'),
+  }),
   speech: z
     .object({
       tts: z
@@ -329,6 +342,10 @@ const parseConfig = () => {
       metricsEndpoint: env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
       samplingRatio: env.OTEL_TRACES_SAMPLER_ARG,
       logLevel: env.OTEL_LOG_LEVEL,
+    },
+    pixoo: {
+      ip: env.PIXOO_IP,
+      size: env.PIXOO_SIZE,
     },
     speech:
       env.SPEECH_TTS_ENABLED || env.SPEECH_STT_ENABLED

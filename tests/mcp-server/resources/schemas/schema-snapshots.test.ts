@@ -9,6 +9,13 @@ import { z } from 'zod';
 import { allResourceDefinitions } from '@/mcp-server/resources/definitions/index.js';
 
 describe('Resource Schema Snapshots', () => {
+  if (allResourceDefinitions.length === 0) {
+    it('no resource definitions registered (skipped)', () => {
+      expect(allResourceDefinitions).toHaveLength(0);
+    });
+    return;
+  }
+
   for (const resource of allResourceDefinitions) {
     describe(`Resource: ${resource.name}`, () => {
       it('paramsSchema JSON output should be stable', () => {

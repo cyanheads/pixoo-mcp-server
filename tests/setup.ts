@@ -11,6 +11,12 @@ if (typeof process !== 'undefined' && process.env && !process.env.NODE_ENV) {
   process.env.NODE_ENV = 'test';
 }
 
+// Provide default env vars required by config validation so unit tests
+// can import tool modules without a real device or .env file.
+if (typeof process !== 'undefined' && process.env) {
+  process.env.PIXOO_IP ??= '127.0.0.1';
+}
+
 // Pre-mock modules that are imported before tests call vi.mock.
 // Skip these mocks for integration tests (so we exercise the real stack).
 //

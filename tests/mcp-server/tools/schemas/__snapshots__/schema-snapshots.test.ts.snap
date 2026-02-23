@@ -1,534 +1,1137 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`Tool Schema Snapshots > Tool: template_async_countdown > inputSchema JSON output should be stable 1`] = `
+exports[`Tool Schema Snapshots > Tool: pixoo_compose > inputSchema JSON output should be stable 1`] = `
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
+  "description": "Compose a scene from layered elements and push to the Pixoo device.",
   "properties": {
-    "message": {
-      "description": "Optional message to include in the final result",
+    "background": {
+      "default": "black",
+      "description": "Canvas fill color before drawing elements. Default: 'black'.",
       "type": "string",
     },
-    "seconds": {
-      "description": "Number of seconds to count down (1-60)",
-      "maximum": 60,
-      "minimum": 1,
-      "type": "integer",
-    },
-    "simulateFailure": {
-      "description": "If true, simulates a failure at 50% progress (for testing)",
-      "type": "boolean",
-    },
-  },
-  "required": [
-    "seconds",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_async_countdown > outputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "properties": {
-    "completedAt": {
-      "description": "ISO timestamp when countdown ended",
-      "type": "string",
-    },
-    "duration": {
-      "description": "Actual duration in milliseconds",
-      "type": "number",
-    },
-    "message": {
-      "description": "Completion or cancellation message",
-      "type": "string",
-    },
-    "progress": {
-      "description": "Final progress percentage (0-100)",
-      "type": "number",
-    },
-    "startedAt": {
-      "description": "ISO timestamp when countdown started",
-      "type": "string",
-    },
-    "success": {
-      "description": "Whether the countdown completed successfully",
-      "type": "boolean",
-    },
-    "wasCancelled": {
-      "description": "Whether the task was cancelled",
-      "type": "boolean",
-    },
-  },
-  "required": [
-    "success",
-    "message",
-    "startedAt",
-    "completedAt",
-    "duration",
-    "progress",
-    "wasCancelled",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_cat_fact > inputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Parameters for fetching a random cat fact.",
-  "properties": {
-    "maxLength": {
-      "description": "Optional: The maximum character length of the cat fact to retrieve.",
-      "maximum": 9007199254740991,
-      "minimum": 1,
-      "type": "integer",
-    },
-  },
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_cat_fact > outputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Cat fact tool response payload.",
-  "properties": {
-    "fact": {
-      "description": "The retrieved cat fact.",
-      "type": "string",
-    },
-    "length": {
-      "description": "The character length of the cat fact.",
-      "maximum": 9007199254740991,
-      "minimum": -9007199254740991,
-      "type": "integer",
-    },
-    "requestedMaxLength": {
-      "description": "The maximum length that was requested for the fact.",
-      "maximum": 9007199254740991,
-      "minimum": -9007199254740991,
-      "type": "integer",
-    },
-    "timestamp": {
-      "description": "ISO 8601 timestamp of when the response was generated.",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      "type": "string",
-    },
-  },
-  "required": [
-    "fact",
-    "length",
-    "timestamp",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_code_review_sampling > inputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Request an LLM-powered code review via sampling.",
-  "properties": {
-    "code": {
-      "description": "The code snippet to review.",
-      "maxLength": 10000,
-      "minLength": 1,
-      "type": "string",
-    },
-    "focus": {
-      "default": "general",
-      "description": "The focus area for the code review.",
-      "enum": [
-        "security",
-        "performance",
-        "style",
-        "general",
-      ],
-      "type": "string",
-    },
-    "language": {
-      "description": "Programming language of the code (e.g., "typescript", "python").",
-      "type": "string",
-    },
-    "maxTokens": {
-      "default": 500,
-      "description": "Maximum tokens for the LLM response.",
-      "maximum": 2000,
-      "minimum": 100,
-      "type": "integer",
-    },
-  },
-  "required": [
-    "code",
-    "focus",
-    "maxTokens",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_code_review_sampling > outputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Code review tool response payload.",
-  "properties": {
-    "code": {
-      "description": "The original code snippet.",
-      "type": "string",
-    },
-    "focus": {
-      "description": "The review focus area.",
-      "type": "string",
-    },
-    "language": {
-      "description": "The programming language.",
-      "type": "string",
-    },
-    "review": {
-      "description": "The LLM-generated code review summary.",
-      "type": "string",
-    },
-    "tokenUsage": {
-      "additionalProperties": false,
-      "description": "Token usage information.",
-      "properties": {
-        "actual": {
-          "description": "Actual tokens used (if available).",
-          "type": "number",
-        },
-        "requested": {
-          "description": "Requested max tokens.",
-          "type": "number",
-        },
-      },
-      "required": [
-        "requested",
-      ],
-      "type": "object",
-    },
-  },
-  "required": [
-    "code",
-    "focus",
-    "review",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_data_explorer > inputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Parameters for generating sample sales data.",
-  "properties": {
-    "rowCount": {
-      "default": 20,
-      "description": "Number of sample rows to generate (5–100).",
-      "maximum": 100,
-      "minimum": 5,
-      "type": "integer",
-    },
-  },
-  "required": [
-    "rowCount",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_data_explorer > outputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Sales data explorer response payload.",
-  "properties": {
-    "generatedAt": {
-      "description": "ISO 8601 timestamp when data was generated.",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      "type": "string",
-    },
-    "rows": {
-      "description": "Generated sales data rows.",
+    "elements": {
+      "description": "Ordered list of elements to draw (back-to-front).",
       "items": {
-        "additionalProperties": false,
-        "properties": {
-          "date": {
-            "description": "Sale date (YYYY-MM-DD).",
-            "type": "string",
+        "description": "A visual element to compose onto the canvas.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "centered": {
+                "default": false,
+                "description": "Center text horizontally on canvas (ignores x).",
+                "type": "boolean",
+              },
+              "color": {
+                "default": "white",
+                "description": "Text color (hex or named).",
+                "type": "string",
+              },
+              "font": {
+                "default": "standard",
+                "description": "Bitmap font: 'standard' (5x7) or 'compact' (3x5).",
+                "enum": [
+                  "standard",
+                  "compact",
+                ],
+                "type": "string",
+              },
+              "scale": {
+                "default": 1,
+                "description": "Pixel scale factor.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "text": {
+                "description": "Text to render.",
+                "type": "string",
+              },
+              "type": {
+                "const": "text",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+              "x": {
+                "default": 0,
+                "description": "X position.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y": {
+                "default": 0,
+                "description": "Y position.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "type",
+              "text",
+              "x",
+              "y",
+              "color",
+              "font",
+              "scale",
+              "centered",
+              "visible",
+            ],
+            "type": "object",
           },
-          "id": {
-            "description": "Unique row identifier.",
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "fit": {
+                "default": "contain",
+                "description": "Resize mode.",
+                "enum": [
+                  "contain",
+                  "cover",
+                  "fill",
+                ],
+                "type": "string",
+              },
+              "height": {
+                "description": "Target height. Defaults to canvas size.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "kernel": {
+                "default": "nearest",
+                "description": "Interpolation kernel.",
+                "enum": [
+                  "nearest",
+                  "lanczos3",
+                  "mitchell",
+                ],
+                "type": "string",
+              },
+              "path": {
+                "description": "Absolute path to image file.",
+                "minLength": 1,
+                "type": "string",
+              },
+              "type": {
+                "const": "image",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+              "width": {
+                "description": "Target width. Defaults to canvas size.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "x": {
+                "default": 0,
+                "description": "X offset on canvas.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y": {
+                "default": 0,
+                "description": "Y offset on canvas.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "type",
+              "path",
+              "x",
+              "y",
+              "fit",
+              "kernel",
+              "visible",
+            ],
+            "type": "object",
           },
-          "product": {
-            "description": "Product name.",
-            "type": "string",
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "bodyColor": {
+                "description": "Override body color (hex or named).",
+                "type": "string",
+              },
+              "cols": {
+                "description": "Number of columns in the sprite grid.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "darkColor": {
+                "description": "Override dark/eye color (hex or named).",
+                "type": "string",
+              },
+              "path": {
+                "description": "Absolute path to sprite sheet PNG.",
+                "minLength": 1,
+                "type": "string",
+              },
+              "rows": {
+                "description": "Number of rows in the sprite grid.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "scale": {
+                "description": "Pixel scale factor.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "type": {
+                "const": "sprite",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+              "x": {
+                "description": "X offset (default: centered).",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y": {
+                "default": 0,
+                "description": "Y offset.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "type",
+              "path",
+              "cols",
+              "rows",
+              "y",
+              "visible",
+            ],
+            "type": "object",
           },
-          "region": {
-            "description": "Sales region name.",
-            "type": "string",
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "color": {
+                "default": "white",
+                "description": "Color.",
+                "type": "string",
+              },
+              "fill": {
+                "default": true,
+                "description": "Filled (true) or stroked (false).",
+                "type": "boolean",
+              },
+              "h": {
+                "description": "Height.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "type": {
+                "const": "rect",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+              "w": {
+                "description": "Width.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "x": {
+                "description": "X position.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y": {
+                "description": "Y position.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "type",
+              "x",
+              "y",
+              "w",
+              "h",
+              "color",
+              "fill",
+              "visible",
+            ],
+            "type": "object",
           },
-          "revenue": {
-            "description": "Revenue in USD.",
-            "type": "number",
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "color": {
+                "default": "white",
+                "description": "Color.",
+                "type": "string",
+              },
+              "cx": {
+                "description": "Center X.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "cy": {
+                "description": "Center Y.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "fill": {
+                "default": true,
+                "description": "Filled (true) or stroked (false).",
+                "type": "boolean",
+              },
+              "radius": {
+                "description": "Radius.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "type": {
+                "const": "circle",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "type",
+              "cx",
+              "cy",
+              "radius",
+              "color",
+              "fill",
+              "visible",
+            ],
+            "type": "object",
           },
-          "units": {
-            "description": "Units sold.",
-            "maximum": 9007199254740991,
-            "minimum": -9007199254740991,
-            "type": "integer",
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "color": {
+                "default": "white",
+                "description": "Color.",
+                "type": "string",
+              },
+              "type": {
+                "const": "line",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+              "x0": {
+                "description": "Start X.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "x1": {
+                "description": "End X.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y0": {
+                "description": "Start Y.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y1": {
+                "description": "End Y.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "type",
+              "x0",
+              "y0",
+              "x1",
+              "y1",
+              "color",
+              "visible",
+            ],
+            "type": "object",
           },
-        },
-        "required": [
-          "id",
-          "region",
-          "product",
-          "units",
-          "revenue",
-          "date",
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "data": {
+                "description": "Row strings. Each character is a palette index (0–9, a–z).",
+                "items": {
+                  "type": "string",
+                },
+                "minItems": 1,
+                "type": "array",
+              },
+              "palette": {
+                "description": "Color palette. Index 0 = first char in row strings. Empty string = transparent.",
+                "items": {
+                  "type": "string",
+                },
+                "minItems": 1,
+                "type": "array",
+              },
+              "scale": {
+                "default": 1,
+                "description": "Pixel scale multiplier.",
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer",
+              },
+              "type": {
+                "const": "bitmap",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+              "x": {
+                "default": 0,
+                "description": "X offset.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+              "y": {
+                "default": 0,
+                "description": "Y offset.",
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer",
+              },
+            },
+            "required": [
+              "type",
+              "x",
+              "y",
+              "palette",
+              "data",
+              "scale",
+              "visible",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "animate": {
+                "additionalProperties": {
+                  "description": "Array of [frame, value] keyframe pairs.",
+                  "items": {
+                    "items": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer",
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                          },
+                          {
+                            "type": "string",
+                          },
+                          {
+                            "type": "boolean",
+                          },
+                        ],
+                      },
+                    ],
+                    "type": "array",
+                  },
+                  "type": "array",
+                },
+                "description": "Animate element properties across frames. Keys are property names, values are keyframe arrays. Numbers interpolate linearly, colors lerp, booleans snap.",
+                "propertyNames": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
+              "data": {
+                "description": "Array of individual pixels to set.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "description": "Pixel color.",
+                      "type": "string",
+                    },
+                    "x": {
+                      "description": "Pixel X.",
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer",
+                    },
+                    "y": {
+                      "description": "Pixel Y.",
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer",
+                    },
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "color",
+                  ],
+                  "type": "object",
+                },
+                "minItems": 1,
+                "type": "array",
+              },
+              "type": {
+                "const": "pixels",
+                "type": "string",
+              },
+              "visible": {
+                "default": true,
+                "description": "Whether to render this element.",
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "type",
+              "data",
+              "visible",
+            ],
+            "type": "object",
+          },
         ],
-        "type": "object",
+      },
+      "minItems": 1,
+      "type": "array",
+    },
+    "frames": {
+      "default": 1,
+      "description": "Frame count for animation (1 = static). Max 40.",
+      "maximum": 40,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "output": {
+      "description": "Absolute path to save a preview PNG. If omitted, no preview is saved.",
+      "type": "string",
+    },
+    "push": {
+      "default": true,
+      "description": "Push to device. Set false to only save a preview PNG.",
+      "type": "boolean",
+    },
+    "speed": {
+      "default": 150,
+      "description": "Animation frame duration in ms.",
+      "maximum": 9007199254740991,
+      "minimum": 10,
+      "type": "integer",
+    },
+  },
+  "required": [
+    "background",
+    "elements",
+    "frames",
+    "speed",
+    "push",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Tool Schema Snapshots > Tool: pixoo_compose > outputSchema JSON output should be stable 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Result of the compose operation.",
+  "properties": {
+    "frames": {
+      "description": "Number of frames rendered.",
+      "type": "number",
+    },
+    "outputFiles": {
+      "description": "Paths of saved preview PNGs.",
+      "items": {
+        "type": "string",
       },
       "type": "array",
     },
-    "summary": {
-      "additionalProperties": false,
-      "description": "Aggregate summary of the dataset.",
-      "properties": {
-        "totalRevenue": {
-          "description": "Sum of all revenue.",
-          "type": "number",
-        },
-        "totalRows": {
-          "description": "Total number of rows.",
-          "maximum": 9007199254740991,
-          "minimum": -9007199254740991,
-          "type": "integer",
-        },
-        "totalUnits": {
-          "description": "Sum of all units sold.",
-          "maximum": 9007199254740991,
-          "minimum": -9007199254740991,
-          "type": "integer",
-        },
-      },
-      "required": [
-        "totalRows",
-        "totalRevenue",
-        "totalUnits",
-      ],
-      "type": "object",
+    "pushed": {
+      "description": "Whether the result was pushed to the device.",
+      "type": "boolean",
     },
   },
   "required": [
-    "rows",
-    "generatedAt",
-    "summary",
+    "frames",
+    "pushed",
   ],
   "type": "object",
 }
 `;
 
-exports[`Tool Schema Snapshots > Tool: template_echo_message > inputSchema JSON output should be stable 1`] = `
+exports[`Tool Schema Snapshots > Tool: pixoo_control > inputSchema JSON output should be stable 1`] = `
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
-  "description": "Echo a message with optional formatting and repetition.",
+  "description": "Read or change Pixoo device settings.",
   "properties": {
-    "includeTimestamp": {
-      "default": false,
-      "description": "Whether to include an ISO 8601 timestamp in the response.",
+    "brightness": {
+      "description": "Display brightness (0–100).",
+      "maximum": 100,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "channel": {
+      "description": "Active channel ('faces' | 'cloud' | 'visualizer' | 'custom').",
+      "enum": [
+        "faces",
+        "cloud",
+        "visualizer",
+        "custom",
+      ],
+      "type": "string",
+    },
+    "clock_face_id": {
+      "description": "Clock face ID (only applies on faces channel).",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "screen": {
+      "description": "Turn display on or off ('on' | 'off').",
+      "enum": [
+        "on",
+        "off",
+      ],
+      "type": "string",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`Tool Schema Snapshots > Tool: pixoo_control > outputSchema JSON output should be stable 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Current device config after applying any changes.",
+  "properties": {
+    "applied": {
+      "description": "List of settings that were changed.",
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "brightness": {
+      "description": "Current brightness (0–100).",
+      "type": "number",
+    },
+    "channel": {
+      "description": "Current active channel name.",
+      "type": "string",
+    },
+    "channelIndex": {
+      "description": "Current active channel index.",
+      "type": "number",
+    },
+    "clockId": {
+      "description": "Current clock face ID.",
+      "type": "number",
+    },
+    "screenOn": {
+      "description": "Whether the display is on.",
       "type": "boolean",
     },
-    "message": {
-      "description": "The message to echo back. To trigger a test error, provide 'TRIGGER_ERROR'.",
-      "maxLength": 1000,
+  },
+  "required": [
+    "brightness",
+    "channel",
+    "channelIndex",
+    "screenOn",
+    "clockId",
+    "applied",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Tool Schema Snapshots > Tool: pixoo_push_image > inputSchema JSON output should be stable 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Push a single image to the Pixoo display.",
+  "properties": {
+    "fit": {
+      "default": "contain",
+      "description": "Resize mode: 'contain' (default, fit within bounds), 'cover' (fill and crop), 'fill' (stretch).",
+      "enum": [
+        "contain",
+        "cover",
+        "fill",
+      ],
+      "type": "string",
+    },
+    "kernel": {
+      "default": "nearest",
+      "description": "Resize interpolation: 'nearest' (default, pixel art), 'lanczos3' (photos), 'mitchell' (balanced).",
+      "enum": [
+        "nearest",
+        "lanczos3",
+        "mitchell",
+      ],
+      "type": "string",
+    },
+    "path": {
+      "description": "Absolute path to image file (PNG, JPEG, WebP, GIF, AVIF, TIFF, SVG).",
       "minLength": 1,
       "type": "string",
     },
-    "mode": {
-      "default": "standard",
-      "description": "How to format the message ('standard' | 'uppercase' | 'lowercase').",
-      "enum": [
-        "standard",
-        "uppercase",
-        "lowercase",
-      ],
-      "type": "string",
-    },
-    "repeat": {
-      "default": 1,
-      "description": "Number of times to repeat the formatted message.",
-      "maximum": 5,
-      "minimum": 1,
-      "type": "integer",
-    },
   },
   "required": [
-    "message",
-    "mode",
-    "repeat",
-    "includeTimestamp",
+    "path",
+    "fit",
+    "kernel",
   ],
   "type": "object",
 }
 `;
 
-exports[`Tool Schema Snapshots > Tool: template_echo_message > outputSchema JSON output should be stable 1`] = `
+exports[`Tool Schema Snapshots > Tool: pixoo_push_image > outputSchema JSON output should be stable 1`] = `
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
-  "description": "Echo tool response payload.",
+  "description": "Result after pushing image to device.",
   "properties": {
-    "formattedMessage": {
-      "description": "The message after applying the specified formatting.",
+    "fit": {
+      "description": "Resize mode used.",
       "type": "string",
     },
-    "mode": {
-      "description": "The formatting mode that was applied.",
+    "kernel": {
+      "description": "Interpolation kernel used.",
+      "type": "string",
+    },
+    "path": {
+      "description": "Path of the image that was loaded.",
+      "type": "string",
+    },
+    "size": {
+      "description": "Display size in pixels.",
+      "type": "number",
+    },
+  },
+  "required": [
+    "path",
+    "size",
+    "fit",
+    "kernel",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Tool Schema Snapshots > Tool: pixoo_text > inputSchema JSON output should be stable 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Push scrolling text overlay to the Pixoo device.",
+  "properties": {
+    "align": {
+      "default": "left",
+      "description": "Text alignment ('left' | 'center' | 'right').",
       "enum": [
-        "standard",
-        "uppercase",
-        "lowercase",
+        "left",
+        "center",
+        "right",
       ],
       "type": "string",
     },
-    "originalMessage": {
-      "description": "The original message provided in the input.",
+    "clear": {
+      "default": false,
+      "description": "If true, clears the text overlay at the given ID instead of setting it.",
+      "type": "boolean",
+    },
+    "color": {
+      "default": "white",
+      "description": "Text color (hex '#RRGGBB' or named color).",
       "type": "string",
     },
-    "repeatCount": {
-      "description": "The number of times the message was repeated.",
+    "direction": {
+      "default": "left",
+      "description": "Scroll direction ('left' | 'right').",
+      "enum": [
+        "left",
+        "right",
+      ],
+      "type": "string",
+    },
+    "font": {
+      "default": 0,
+      "description": "Device font ID (0–114). Notable: 18 = arrow glyphs, 20 = °C/°F symbols.",
+      "maximum": 114,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "id": {
+      "default": 0,
+      "description": "Text overlay ID (0–19). Use different IDs to stack multiple overlays.",
+      "maximum": 19,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "speed": {
+      "default": 50,
+      "description": "Scroll speed (higher = faster).",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "text": {
+      "description": "Text string to display.",
+      "minLength": 1,
+      "type": "string",
+    },
+    "width": {
+      "description": "Scrolling area width in pixels. Defaults to display size.",
       "maximum": 9007199254740991,
       "minimum": 1,
       "type": "integer",
     },
-    "repeatedMessage": {
-      "description": "The final message repeated the requested number of times.",
-      "type": "string",
+    "x": {
+      "default": 0,
+      "description": "X position in pixels.",
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
     },
-    "timestamp": {
-      "description": "Optional ISO 8601 timestamp of when the response was generated.",
-      "format": "date-time",
-      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      "type": "string",
+    "y": {
+      "default": 0,
+      "description": "Y position in pixels.",
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
     },
   },
   "required": [
-    "originalMessage",
-    "formattedMessage",
-    "repeatedMessage",
-    "mode",
-    "repeatCount",
+    "text",
+    "id",
+    "x",
+    "y",
+    "direction",
+    "font",
+    "speed",
+    "color",
+    "align",
+    "clear",
   ],
   "type": "object",
 }
 `;
 
-exports[`Tool Schema Snapshots > Tool: template_image_test > inputSchema JSON output should be stable 1`] = `
+exports[`Tool Schema Snapshots > Tool: pixoo_text > outputSchema JSON output should be stable 1`] = `
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
-  "description": "Parameters for fetching a random image.",
+  "description": "Result of the text overlay operation.",
   "properties": {
-    "trigger": {
-      "default": true,
-      "description": "A trigger to invoke the tool and fetch a new cat image.",
-      "type": "boolean",
-    },
-  },
-  "required": [
-    "trigger",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_image_test > outputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Image tool response payload.",
-  "properties": {
-    "data": {
-      "description": "Base64 encoded image data.",
+    "action": {
+      "description": "Whether text was set or cleared.",
+      "enum": [
+        "set",
+        "cleared",
+      ],
       "type": "string",
     },
-    "mimeType": {
-      "description": "The MIME type of the image (e.g., 'image/jpeg').",
+    "id": {
+      "description": "Text overlay slot used.",
+      "type": "number",
+    },
+    "text": {
+      "description": "Text that was displayed.",
       "type": "string",
     },
   },
   "required": [
-    "data",
-    "mimeType",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_madlibs_elicitation > inputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "Inputs for the Mad Libs game. Any missing fields will be elicited.",
-  "properties": {
-    "adjective": {
-      "description": "An adjective for the story.",
-      "type": "string",
-    },
-    "noun": {
-      "description": "A noun for the story.",
-      "type": "string",
-    },
-    "verb": {
-      "description": "A verb (past tense) for the story.",
-      "type": "string",
-    },
-  },
-  "type": "object",
-}
-`;
-
-exports[`Tool Schema Snapshots > Tool: template_madlibs_elicitation > outputSchema JSON output should be stable 1`] = `
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "additionalProperties": false,
-  "description": "The completed Mad Libs story and the words used.",
-  "properties": {
-    "adjective": {
-      "description": "The adjective used in the story.",
-      "type": "string",
-    },
-    "noun": {
-      "description": "The noun used in the story.",
-      "type": "string",
-    },
-    "story": {
-      "description": "The final, generated Mad Libs story.",
-      "type": "string",
-    },
-    "verb": {
-      "description": "The verb used in the story.",
-      "type": "string",
-    },
-  },
-  "required": [
-    "story",
-    "noun",
-    "verb",
-    "adjective",
+    "id",
+    "action",
   ],
   "type": "object",
 }

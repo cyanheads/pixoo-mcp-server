@@ -8,9 +8,8 @@ import { describe, it, expect } from 'vitest';
 import { allResourceDefinitions } from '@/mcp-server/resources/definitions/index.js';
 
 describe('Resource Definitions Barrel Export', () => {
-  it('should export a non-empty array of resource definitions', () => {
+  it('should export an array of resource definitions', () => {
     expect(allResourceDefinitions).toBeInstanceOf(Array);
-    expect(allResourceDefinitions.length).toBeGreaterThan(0);
   });
 
   it('should have unique resource names', () => {

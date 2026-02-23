@@ -11,6 +11,7 @@ import * as tokens from '@/container/core/tokens.js';
 const ALL_TOKEN_NAMES = [
   'AppConfig',
   'Logger',
+  'PixooClientToken',
   'StorageService',
   'StorageProvider',
   'SupabaseAdminClient',

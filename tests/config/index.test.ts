@@ -49,6 +49,7 @@ describe('config parsing', () => {
     delete process.env.OPENROUTER_APP_NAME;
     delete process.env.LOGS_DIR;
     process.env.LLM_DEFAULT_TEMPERATURE = '0.7';
+    process.env.PIXOO_IP ??= '127.0.0.1';
 
     const parsed = parseConfig();
 
@@ -66,7 +67,7 @@ describe('config parsing', () => {
     expect(parsed.openTelemetry.logLevel).toBe('WARN');
     expect(parsed.openTelemetry.samplingRatio).toBe(0.5);
     expect(parsed.openrouterAppUrl).toBe('https://app.example.com');
-    expect(parsed.openrouterAppName).toBe('mcp-ts-template');
+    expect(parsed.openrouterAppName).toBe('pixoo-mcp-server');
     expect(parsed.llmDefaultTemperature).toBeCloseTo(0.7);
   });
 

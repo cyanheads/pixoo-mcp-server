@@ -46,6 +46,18 @@ const LOGIC_SKIP = new Set([
   'template_code_review_sampling', // requires sdkContext.createMessage (sampling)
   'template_madlibs_elicitation', // requires sdkContext.elicitInput (elicitation)
   'template_data_explorer', // app-tool, non-deterministic output (Math.random)
+  'pixoo_compose', // requires DI (PixooClientToken, AppConfig) + device
+  'pixoo_push_image', // requires DI (PixooClientToken, AppConfig) + device
+  'pixoo_text', // requires DI (PixooClientToken, AppConfig) + device
+  'pixoo_control', // requires DI (PixooClientToken) + device
+]);
+
+/**
+ * Tools excluded from schema fuzzing (Layer 1).
+ * These use Zod discriminatedUnion or other constructs the fuzzer can't generate valid inputs for.
+ */
+const SCHEMA_SKIP = new Set([
+  'pixoo_compose', // discriminatedUnion elements + .min(1) constraint
 ]);
 
 // ─── Test Fixtures ───────────────────────────────────────────────────────────
@@ -79,22 +91,23 @@ const taskTools = allToolDefinitions.filter(isTaskToolDefinition);
 
 describe('Tool Input Fuzz Tests', () => {
   describe('Layer 1: Schema Parsing', () => {
-    describe.each(regularTools.map((t) => [t.name, t] as const))(
-      '%s',
-      (_name, tool) => {
-        it('inputSchema.safeParse succeeds for all generated inputs', () => {
-          const arb = fuzz(tool.inputSchema);
+    describe.each(
+      regularTools
+        .filter((t) => !SCHEMA_SKIP.has(t.name))
+        .map((t) => [t.name, t] as const),
+    )('%s', (_name, tool) => {
+      it('inputSchema.safeParse succeeds for all generated inputs', () => {
+        const arb = fuzz(tool.inputSchema);
 
-          fc.assert(
-            fc.property(arb, (input) => {
-              const parsed = tool.inputSchema.safeParse(input);
-              expect(parsed.success).toBe(true);
-            }),
-            { numRuns: NUM_RUNS },
-          );
-        });
-      },
-    );
+        fc.assert(
+          fc.property(arb, (input) => {
+            const parsed = tool.inputSchema.safeParse(input);
+            expect(parsed.success).toBe(true);
+          }),
+          { numRuns: NUM_RUNS },
+        );
+      });
+    });
 
     describe.each(taskTools.map((t) => [t.name, t] as const))(
       '%s (task tool)',
@@ -118,6 +131,13 @@ describe('Tool Input Fuzz Tests', () => {
 
   describe('Layer 2: Logic Invariants', () => {
     const fuzzableTools = regularTools.filter((t) => !LOGIC_SKIP.has(t.name));
+
+    if (fuzzableTools.length === 0) {
+      it('no fuzzable tools registered (all skipped)', () => {
+        expect(fuzzableTools).toHaveLength(0);
+      });
+      return;
+    }
 
     describe.each(fuzzableTools.map((t) => [t.name, t] as const))(
       '%s',

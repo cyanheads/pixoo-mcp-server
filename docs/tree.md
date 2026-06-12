@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-06-12 07:44:15
+Generated on: 2026-06-12 10:06:22
 
 ```text
 pixoo-mcp-server/
@@ -125,26 +125,61 @@ pixoo-mcp-server/
 │   └── tool-defs-analysis/
 │       └── SKILL.md
 ├── src/
+│   ├── config/
+│   │   └── server-config.ts
 │   ├── mcp-server/
 │   │   ├── prompts/
 │   │   │   └── definitions/
-│   │   │       └── echo.prompt.ts
 │   │   ├── resources/
 │   │   │   └── definitions/
-│   │   │       ├── echo-app-ui.app-resource.ts
-│   │   │       └── echo.resource.ts
+│   │   │       ├── pixoo-design-guide.resource.ts
+│   │   │       ├── pixoo-device-status.resource.ts
+│   │   │       ├── pixoo-icons.resource.ts
+│   │   │       └── pixoo-themes.resource.ts
 │   │   └── tools/
 │   │       └── definitions/
-│   │           ├── echo-app.app-tool.ts
-│   │           └── echo.tool.ts
+│   │           ├── pixoo-compose-scene.tool.ts
+│   │           ├── pixoo-control-device.tool.ts
+│   │           ├── pixoo-design-brief.tool.ts
+│   │           ├── pixoo-discover-devices.tool.ts
+│   │           ├── pixoo-display-text.tool.ts
+│   │           ├── pixoo-overlay-text.tool.ts
+│   │           └── pixoo-push-image.tool.ts
+│   ├── renderer/
+│   │   ├── icons.ts
+│   │   ├── keyframes.ts
+│   │   ├── preview.ts
+│   │   ├── scene-renderer.ts
+│   │   ├── text-engine.ts
+│   │   └── themes.ts
+│   ├── services/
+│   │   └── pixoo/
+│   │       └── pixoo-service.ts
 │   └── index.ts
 ├── tests/
 │   ├── prompts/
-│   │   └── echo.prompt.test.ts
+│   ├── renderer/
+│   │   ├── icons.test.ts
+│   │   ├── keyframes.test.ts
+│   │   ├── preview.test.ts
+│   │   ├── scene-renderer.test.ts
+│   │   ├── text-engine.test.ts
+│   │   └── themes.test.ts
 │   ├── resources/
-│   │   └── echo.resource.test.ts
+│   │   ├── pixoo-device-status.resource.test.ts
+│   │   ├── pixoo-icons.resource.test.ts
+│   │   └── pixoo-themes.resource.test.ts
+│   ├── services/
+│   │   └── pixoo/
+│   │       └── pixoo-service.test.ts
 │   └── tools/
-│       └── echo.tool.test.ts
+│       ├── pixoo-compose-scene.tool.test.ts
+│       ├── pixoo-control-device.tool.test.ts
+│       ├── pixoo-design-brief.tool.test.ts
+│       ├── pixoo-discover-devices.tool.test.ts
+│       ├── pixoo-display-text.tool.test.ts
+│       ├── pixoo-overlay-text.tool.test.ts
+│       └── pixoo-push-image.tool.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitignore
@@ -159,6 +194,7 @@ pixoo-mcp-server/
 ├── LICENSE
 ├── manifest.json
 ├── package.json
+├── README.md
 ├── server.json
 ├── tsconfig.build.json
 ├── tsconfig.json

@@ -5,16 +5,16 @@
  */
 
 import { createApp } from '@cyanheads/mcp-ts-core';
-import { pixooDesignGuideResource } from './mcp-server/resources/definitions/pixoo-design-guide.resource.js';
 // Resources
+import { pixooDesignGuideResource } from './mcp-server/resources/definitions/pixoo-design-guide.resource.js';
 import { pixooDeviceStatusResource } from './mcp-server/resources/definitions/pixoo-device-status.resource.js';
 import { pixooIconsResource } from './mcp-server/resources/definitions/pixoo-icons.resource.js';
 import { pixooThemesResource } from './mcp-server/resources/definitions/pixoo-themes.resource.js';
+// Tools
 import { pixooComposeScene } from './mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
 import { pixooControlDevice } from './mcp-server/tools/definitions/pixoo-control-device.tool.js';
 import { pixooDesignBrief } from './mcp-server/tools/definitions/pixoo-design-brief.tool.js';
 import { pixooDiscoverDevices } from './mcp-server/tools/definitions/pixoo-discover-devices.tool.js';
-// Tools
 import { pixooDisplayText } from './mcp-server/tools/definitions/pixoo-display-text.tool.js';
 import { pixooOverlayText } from './mcp-server/tools/definitions/pixoo-overlay-text.tool.js';
 import { pixooPushImage } from './mcp-server/tools/definitions/pixoo-push-image.tool.js';

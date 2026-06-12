@@ -9,7 +9,7 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { loadImage, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
-import { getPixooService } from '@/services/pixoo/pixoo-service.js';
+import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 export const pixooPushImage = tool('pixoo_push_image', {
   title: 'pixoo_push_image',
@@ -18,7 +18,9 @@ export const pixooPushImage = tool('pixoo_push_image', {
   annotations: { idempotentHint: true, destructiveHint: false, openWorldHint: true },
 
   input: z.object({
-    source: z.string().describe('Absolute local file path or https URL of the image to display.'),
+    source: z
+      .string()
+      .describe('Absolute local file path or https (not http) URL of the image to display.'),
     fit: z
       .enum(['contain', 'cover', 'fill'])
       .default('contain')
@@ -106,9 +108,17 @@ export const pixooPushImage = tool('pixoo_push_image', {
     const size = cfg.pixooSize as PixooSize;
 
     let localPath = input.source;
+    let tmpPathToCleanup: string | undefined;
 
     // Handle URL: fetch to temp file
     if (input.source.startsWith('https://') || input.source.startsWith('http://')) {
+      if (!input.source.startsWith('https://')) {
+        throw ctx.fail(
+          'asset_not_found',
+          `Only https URLs are supported. Received: "${input.source}".`,
+          { url: input.source },
+        );
+      }
       ctx.log.info('Fetching image from URL', { url: input.source });
       const resp = await fetch(input.source);
       if (!resp.ok) {
@@ -118,11 +128,29 @@ export const pixooPushImage = tool('pixoo_push_image', {
           { url: input.source, status: resp.status },
         );
       }
+      // Cap response size at 10 MB before buffering
+      const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+      const contentLength = Number(resp.headers.get('content-length') ?? 0);
+      if (contentLength > MAX_IMAGE_BYTES) {
+        throw ctx.fail(
+          'asset_not_found',
+          `Image response too large (${contentLength} bytes; limit: ${MAX_IMAGE_BYTES}).`,
+          { url: input.source, contentLength },
+        );
+      }
       const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.byteLength > MAX_IMAGE_BYTES) {
+        throw ctx.fail(
+          'asset_not_found',
+          `Image response too large (${buf.byteLength} bytes; limit: ${MAX_IMAGE_BYTES}).`,
+          { url: input.source, byteLength: buf.byteLength },
+        );
+      }
       const { default: sharp } = await import('sharp');
-      const tmpPath = `/tmp/pixoo-img-${Date.now()}.png`;
+      const tmpPath = `/tmp/pixoo-img-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
       await sharp(buf).png().toFile(tmpPath);
       localPath = tmpPath;
+      tmpPathToCleanup = tmpPath;
     } else {
       // Verify local file exists
       try {
@@ -136,18 +164,17 @@ export const pixooPushImage = tool('pixoo_push_image', {
       }
     }
 
-    ctx.log.info('Loading and resizing image', {
-      path: localPath,
-      fit: input.fit,
-      kernel: input.kernel,
-    });
+    ctx.log.info('Loading and resizing image', { fit: input.fit, kernel: input.kernel });
 
-    // Load and resize
+    // Load and resize (then clean up temp file if one was written)
     const canvas = await loadImage(localPath, {
       size,
       fit: input.fit,
       kernel: input.kernel,
     });
+    if (tmpPathToCleanup) {
+      fs.unlink(tmpPathToCleanup).catch(() => undefined);
+    }
 
     // Encode preview
     const previewBlock = encodePreviewBlock(canvas);
@@ -159,7 +186,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
 
     // Push
     let pushed = false;
-    let deviceState: import('@/services/pixoo/pixoo-service.js').DeviceStateSnapshot | undefined;
+    let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
       const svc = getPixooService();
       deviceState = await svc.pushFrame(canvas, ctx);

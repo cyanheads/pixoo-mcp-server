@@ -3,6 +3,7 @@
  * @module renderer/scene-renderer
  */
 
+import * as fs from 'node:fs/promises';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import {
   Canvas,
@@ -207,9 +208,16 @@ export async function preloadAssets(elements: SceneElement[]): Promise<AssetCach
       if (el.type === 'image') {
         const source = el.source;
         if (!cache.images.has(source)) {
-          // Fetch URL to temp file if it's https
+          // Fetch URL to temp file (https only)
           let localPath = source;
+          let tmpPathToCleanup: string | undefined;
           if (source.startsWith('https://') || source.startsWith('http://')) {
+            if (!source.startsWith('https://')) {
+              throw invalidParams(
+                `Only https URLs are supported for image elements. Received: "${source}"`,
+                { reason: 'asset_not_found' },
+              );
+            }
             const { default: sharp } = await import('sharp');
             const resp = await fetch(source);
             if (!resp.ok) {
@@ -217,10 +225,26 @@ export async function preloadAssets(elements: SceneElement[]): Promise<AssetCach
                 reason: 'asset_not_found',
               });
             }
+            // Cap response size at 10 MB before buffering
+            const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+            const contentLength = Number(resp.headers.get('content-length') ?? 0);
+            if (contentLength > MAX_IMAGE_BYTES) {
+              throw invalidParams(
+                `Image response too large (${contentLength} bytes; limit: ${MAX_IMAGE_BYTES})`,
+                { reason: 'asset_not_found' },
+              );
+            }
             const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.byteLength > MAX_IMAGE_BYTES) {
+              throw invalidParams(
+                `Image response too large (${buf.byteLength} bytes; limit: ${MAX_IMAGE_BYTES})`,
+                { reason: 'asset_not_found' },
+              );
+            }
             const tmpPath = `/tmp/pixoo-img-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
             await sharp(buf).png().toFile(tmpPath);
             localPath = tmpPath;
+            tmpPathToCleanup = tmpPath;
           }
           const loadOpts: Parameters<typeof loadImage>[1] = {
             fit: el.fit ?? 'contain',
@@ -231,6 +255,9 @@ export async function preloadAssets(elements: SceneElement[]): Promise<AssetCach
           if (el.w !== undefined) loadOpts.width = el.w;
           if (el.h !== undefined) loadOpts.height = el.h;
           const canvas = await loadImage(localPath, loadOpts);
+          if (tmpPathToCleanup) {
+            fs.unlink(tmpPathToCleanup).catch(() => undefined);
+          }
           cache.images.set(source, canvas);
         }
       } else if (el.type === 'sprite') {
@@ -322,8 +349,8 @@ export function renderElement(
     ),
   );
 
-  const dxAnim = Number(getKeyframeValue(kf ?? {}, 'dx', frameIdx, 0));
-  const dyAnim = Number(getKeyframeValue(kf ?? {}, 'dy', frameIdx, 0));
+  const dxAnim = Number(getKeyframeValue(kf, 'dx', frameIdx, 0));
+  const dyAnim = Number(getKeyframeValue(kf, 'dy', frameIdx, 0));
   const dx = (el.dx ?? 0) + dxAnim;
   const dy = (el.dy ?? 0) + dyAnim;
 
@@ -580,7 +607,7 @@ export function renderElement(
 
     case 'pixels': {
       for (const pt of el.data) {
-        const colorAnim = String(getKeyframeValue(kf ?? {}, 'color', frameIdx, pt.color));
+        const colorAnim = String(getKeyframeValue(kf, 'color', frameIdx, pt.color));
         const c = resolveColor(colorAnim);
         target.setPixel(pt.x + dx, pt.y + dy, c);
       }

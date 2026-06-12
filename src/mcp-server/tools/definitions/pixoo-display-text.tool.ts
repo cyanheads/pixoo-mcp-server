@@ -24,7 +24,7 @@ import {
   type TextStyle,
 } from '@/renderer/text-engine.js';
 import { THEMES, type ThemeName } from '@/renderer/themes.js';
-import { getPixooService } from '@/services/pixoo/pixoo-service.js';
+import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 const StyleSchema = z
   .object({
@@ -367,7 +367,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
     // Push
     let pushed = false;
-    let deviceState: import('@/services/pixoo/pixoo-service.js').DeviceStateSnapshot | undefined;
+    let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
       const svc = getPixooService();
       ctx.log.info('Pushing display_text to device', { textLength: combinedText.length });

@@ -192,7 +192,7 @@ export class PixooService {
       this.lastPushTime = Date.now();
 
       // Read back device state (degrade gracefully on failure)
-      return await this.readStateAfterPush(ctx);
+      return await this.getStatus(ctx);
     } finally {
       resolve();
     }
@@ -222,11 +222,6 @@ export class PixooService {
         }
       }
     }
-  }
-
-  /** Read device state post-push, degrading gracefully. */
-  private readStateAfterPush(ctx: Context): Promise<DeviceStateSnapshot> {
-    return this.getStatus(ctx);
   }
 
   /** Set brightness on the device. */

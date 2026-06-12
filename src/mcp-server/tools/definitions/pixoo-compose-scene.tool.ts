@@ -3,8 +3,9 @@
  * @module mcp-server/tools/definitions/pixoo-compose-scene.tool
  */
 
+import * as path from 'node:path';
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { Canvas, NAMED_COLORS, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { ICONS } from '@/renderer/icons.js';
@@ -15,7 +16,7 @@ import {
   savePngPreview,
 } from '@/renderer/preview.js';
 import { type BackgroundSpec, renderScene } from '@/renderer/scene-renderer.js';
-import { getPixooService } from '@/services/pixoo/pixoo-service.js';
+import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 // --- Shared sub-schemas ---
 
@@ -240,7 +241,7 @@ const PixelsElementSchema = z.object({
 
 const ImageElementSchema = z.object({
   type: z.literal('image').describe('Image element (local path or https URL).'),
-  source: z.string().describe('Absolute local file path or https URL.'),
+  source: z.string().describe('Absolute local file path or https (not http) URL.'),
   x: z.number().int().optional().describe('X offset on canvas (default: 0).'),
   y: z.number().int().optional().describe('Y offset on canvas (default: 0).'),
   w: z.number().int().optional().describe('Target width (default: canvas width).'),
@@ -529,17 +530,24 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
 
     // Handle explicit output path
     if (input.output) {
+      // Normalize the path and verify it is absolute with no traversal
+      const resolvedOutput = path.resolve(input.output);
+      if (!path.isAbsolute(resolvedOutput) || resolvedOutput !== path.normalize(resolvedOutput)) {
+        throw invalidParams(
+          `Invalid output path: "${input.output}". Must be an absolute path with no traversal segments.`,
+        );
+      }
       const firstFrame = renderedFrames[0];
       if (firstFrame) {
         const { savePng } = await import('@cyanheads/pixoo-toolkit');
-        await savePng(firstFrame, input.output);
-        outputFiles.push(input.output);
+        await savePng(firstFrame, resolvedOutput);
+        outputFiles.push(resolvedOutput);
       }
     }
 
     // Push
     let pushed = false;
-    let deviceState: import('@/services/pixoo/pixoo-service.js').DeviceStateSnapshot | undefined;
+    let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
       const svc = getPixooService();
       if (isAnimation) {

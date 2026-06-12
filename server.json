@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/pixoo-mcp-server",
-  "description": "Compose and push pixel art, animations, and text to Divoom Pixoo LED matrices via MCP.",
+  "description": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network.",
   "repository": {
     "url": "https://github.com/cyanheads/pixoo-mcp-server",
     "source": "github"
   },
-  "version": "0.3.1",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pixoo-mcp-server",
-      "runtimeHint": "bun",
-      "version": "0.3.1",
+      "runtimeHint": "node",
+      "version": "0.1.0",
       "packageArguments": [
         {
           "type": "positional",
@@ -25,19 +25,6 @@
         }
       ],
       "environmentVariables": [
-        {
-          "name": "PIXOO_IP",
-          "description": "IP address of the Pixoo device on the local network.",
-          "format": "string",
-          "isRequired": true
-        },
-        {
-          "name": "PIXOO_SIZE",
-          "description": "Display resolution: 16, 32, or 64.",
-          "format": "string",
-          "isRequired": false,
-          "default": "64"
-        },
         {
           "name": "MCP_LOG_LEVEL",
           "description": "Sets the minimum log level for output (e.g., 'debug', 'info', 'warn').",
@@ -54,8 +41,8 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pixoo-mcp-server",
-      "runtimeHint": "bun",
-      "version": "0.3.1",
+      "runtimeHint": "node",
+      "version": "0.1.0",
       "packageArguments": [
         {
           "type": "positional",
@@ -67,19 +54,6 @@
         }
       ],
       "environmentVariables": [
-        {
-          "name": "PIXOO_IP",
-          "description": "IP address of the Pixoo device on the local network.",
-          "format": "string",
-          "isRequired": true
-        },
-        {
-          "name": "PIXOO_SIZE",
-          "description": "Display resolution: 16, 32, or 64.",
-          "format": "string",
-          "isRequired": false,
-          "default": "64"
-        },
         {
           "name": "MCP_HTTP_HOST",
           "description": "The hostname for the HTTP server.",
@@ -93,6 +67,20 @@
           "format": "string",
           "isRequired": false,
           "default": "3010"
+        },
+        {
+          "name": "MCP_HTTP_ENDPOINT_PATH",
+          "description": "The endpoint path for the MCP server.",
+          "format": "string",
+          "isRequired": false,
+          "default": "/mcp"
+        },
+        {
+          "name": "MCP_AUTH_MODE",
+          "description": "Authentication mode to use: 'none', 'jwt', or 'oauth'.",
+          "format": "string",
+          "isRequired": false,
+          "default": "none"
         },
         {
           "name": "MCP_LOG_LEVEL",

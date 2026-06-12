@@ -1,456 +1,408 @@
-# Agent Protocol
+# Developer Protocol
 
-**Version:** 0.3.1
-**Project:** pixoo-mcp-server
-**Updated:** 2026-02-23
+**Server:** pixoo-mcp-server
+**Version:** 0.1.0
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.10.6`
+**Engines:** Bun ≥1.3.0, Node ≥24.0.0
+**MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
+**Zod:** ^4.4.3
 
-> **Symlink note:** `AGENTS.md` is a symlink to `CLAUDE.md`. Only edit the root `CLAUDE.md`.
+> **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
-> **Developer note:** Never assume. Read related files and docs before making changes. Read full file content for context. Never edit a file before reading it.
+---
+
+## First Session
+
+This project was just scaffolded with `bunx @cyanheads/mcp-ts-core init`. You're holding a production-grade MCP framework with the hard parts already solved — error handling, telemetry, auth, transport, validation, lifecycle. What's missing is the **domain**. Your job: design the tool, resource, and service surface with the user, then implement it as small pure handlers that throw — the framework catches, classifies, and instruments the rest. Design before code; the user's first messages set direction, so wait for them before scaffolding definitions.
+
+> **Remove this section** from CLAUDE.md / AGENTS.md after completing these steps. The skills and conventions below remain — this block is one-time onboarding only.
+
+1. **Get your bearings.** Take stock of the project tree, the skills in `skills/`, and the tools/MCP servers available. Light tool use is fine for context-building — you're mapping the territory, not committing yet.
+2. **Read the framework docs** — `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` (builders, Context, errors, exports, conventions)
+3. **Run the `setup` skill** — read `skills/setup/SKILL.md` and follow its checklist (project orientation, agent protocol file selection, echo definition cleanup, skill sync)
+4. **Design the server** — read `skills/design-mcp-server/SKILL.md` and work through it with the user to map the domain into tools, resources, and services before scaffolding
+
+---
+
+## What's Next?
+
+When the user asks what's next or needs direction, suggest options based on the current project state. Common next steps:
+
+1. **Re-run the `setup` skill** — ensures CLAUDE.md, skills, structure, and metadata are populated and up to date with the current codebase
+2. **Run the `design-mcp-server` skill** — if the tool/resource surface hasn't been mapped yet, work through domain design
+3. **Add tools/resources/prompts** — scaffold new definitions using the `add-tool`, `add-app-tool`, `add-resource`, `add-prompt` skills
+4. **Add services** — scaffold domain service integrations using the `add-service` skill
+5. **Add tests** — scaffold tests for existing definitions using the `add-test` skill
+6. **Field-test definitions** — exercise tools/resources/prompts with real inputs using the `field-test` skill, get a report of issues and pain points
+7. **Run `devcheck`** — lint, format, typecheck, and security audit
+8. **Run the `security-pass` skill** — audit handlers for MCP-specific security gaps: output injection, scope blast radius, input sinks, tenant isolation
+9. **Run the `polish-docs-meta` skill** — finalize README, CHANGELOG, metadata, and agent protocol for shipping
+10. **Run the `maintenance` skill** — investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest`
+
+Tailor suggestions to what's actually missing or stale — don't recite the full list every time.
 
 ---
 
 ## Core Rules
 
-**Logic throws, handlers catch.** Implement pure, stateless logic in `ToolDefinition`/`ResourceDefinition` `logic` functions. No `try...catch` in logic. Throw `new McpError(...)` with appropriate `JsonRpcErrorCode` on failure. Handlers (`createMcpToolHandler`, `resourceHandlerFactory`) create `RequestContext`, measure execution, format responses, and catch errors.
-
-**Full-stack observability.** OpenTelemetry is preconfigured. Logs and errors auto-correlate to traces. `measureToolExecution` records duration, success, payload sizes, error codes. No manual instrumentation — use provided utilities and structured logging. No direct `console` calls; use the logger.
-
-**Structured, traceable operations.** Logic receives `appContext` (logging/tracing) and `sdkContext` (Elicitation, Sampling, Roots). Pass the same `appContext` through the call stack. Use global `logger` with `appContext` in every log.
-
-**Decoupled storage.** Never access persistence backends directly. Always use DI-injected `StorageService`. It provides built-in validation, opaque cursor pagination, and parallel batch operations. All inputs (tenant IDs, keys, prefixes) are validated before reaching providers.
-
-**Elicitation for missing input.** Use `sdkContext.elicitInput()` for missing params via `sdkContext.elicitInput()`.
+- **Logic throws, framework catches.** Tool/resource handlers are pure — throw on failure, no `try/catch`. Plain `Error` is fine; the framework catches, classifies, and formats. Use error factories (`notFound()`, `validationError()`, etc.) when the error code matters.
+- **Use `ctx.log`** for request-scoped logging. No `console` calls.
+- **Use `ctx.state`** for tenant-scoped storage. Never access persistence directly.
+- **Check `ctx.elicit`** for presence before calling.
+- **Secrets in env vars only** — never hardcoded.
+- **Close the loop on issues.** When implementing work tracked by a GitHub issue, comment on the issue with what landed and close it. Do both — a comment without a close leaves stale issues open; a close without a comment leaves no record of what shipped. The comment is for future readers — state the concrete changes, not the conversation that produced them.
 
 ---
 
-## Pixoo Integration
+## Patterns
 
-**Design doc:** [docs/pixoo-mcp-server.md](docs/pixoo-mcp-server.md) — full tool specs, element types, animation system, device quirks.
-
-**Toolkit dependency:** [`@cyanheads/pixoo-toolkit`](https://github.com/cyanheads/pixoo-toolkit) provides all device communication and rendering primitives. **Read the toolkit's CLAUDE.md at `/Users/casey/Developer/github/pixoo-toolkit/CLAUDE.md` for the full API reference** — Canvas, PixooClient, fonts, image loading, sprites, animation, colors, SVG paths.
-
-**Config env vars:** `PIXOO_IP` (required — device IP on local network), `PIXOO_SIZE` (optional — `16` | `32` | `64`, default `64`), `PIXOO_OUTPUT_DIR` (optional — auto-save preview directory, default `output/`). Added to `src/config/index.ts` as a `pixoo: { ip, size, outputDir }` block.
-
-**Service pattern:** `PixooClient` from the toolkit is registered as a DI singleton token (`PixooClientToken` in `tokens.ts`). Tools resolve it via `container.resolve(PixooClientToken)`. No wrapper interface — the toolkit's client is the abstraction.
-
-**Worker builds are not a target.** The device is on a local network; `sharp` (required for image/sprite ops) doesn't work in Workers. All development/testing targets local `stdio`/`http` transports.
-
-### Tools
-
-Four tools, defined in `src/mcp-server/tools/definitions/`:
-
-| Tool               | File                       | Annotations             | Maps To                                                                                                |
-| :----------------- | :------------------------- | :---------------------- | :----------------------------------------------------------------------------------------------------- |
-| `pixoo_compose`    | `pixoo-compose.tool.ts`    | `destructiveHint: true` | Canvas primitives, `drawText`, `loadImage`, `downsampleSprite`, `renderSprite`, `push`/`pushAnimation` |
-| `pixoo_push_image` | `pixoo-push-image.tool.ts` | `destructiveHint: true` | `loadImage`, `push`                                                                                    |
-| `pixoo_text`       | `pixoo-text.tool.ts`       | `destructiveHint: true` | `sendText`, `clearText` (device-side `Draw/SendHttpText`)                                              |
-| `pixoo_control`    | `pixoo-control.tool.ts`    | `idempotentHint: true`  | `getConfig`, `setChannel`, `setBrightness`, `setScreen`, `setClock`                                    |
-
-Both `pixoo_compose` and `pixoo_push_image` auto-switch the device to the `Custom` channel before pushing.
-
-### `pixoo_compose` — Element Rendering Pipeline
-
-The compose tool accepts a declarative JSON structure: `{ background, elements[], frames, speed, push, output }`.
-
-**Rendering order:** Back-to-front. For each frame:
-
-1. Create `Canvas`, fill with `background` color
-2. For each element, resolve animated properties for this frame index
-3. If `visible === false`, skip
-4. Dispatch to renderer by `type`:
-
-| Type     | Renderer                            | Async | Notes                                                               |
-| :------- | :---------------------------------- | :---- | :------------------------------------------------------------------ |
-| `text`   | `drawText` / `drawTextCentered`     | No    | `font`: `'standard'` → `FONT_5x7`, `'compact'` → `FONT_3x5`         |
-| `image`  | `loadImage`                         | Yes   | Pre-load once, `blit` per frame. `fit`/`kernel` options.            |
-| `sprite` | `downsampleSprite` + `renderSprite` | Yes   | Pre-load once, render per frame. `bodyColor`/`darkColor` overrides. |
-| `rect`   | `fillRect` / `drawRect`             | No    | `fill: true` (default) → filled, `false` → stroked                  |
-| `circle` | `fillCircle` / `drawCircle`         | No    | Same fill logic                                                     |
-| `line`   | `drawLine`                          | No    |                                                                     |
-| `bitmap` | Manual `setPixel` loop              | No    | Palette indices in row strings, `scale` multiplier                  |
-| `pixels` | Batch `setPixel`                    | No    | Array of `{ x, y, color }`                                          |
-
-**Async asset pre-loading:** Before the frame loop, scan elements for `image` and `sprite` types. `loadImage`/`downsampleSprite` once, store results. In the frame loop, blit cached results with per-frame position/visibility.
-
-**Animation keyframes:** When `frames > 1`, elements can include `animate: { prop: [[frame, value], ...] }`. Interpolation rules:
-
-- **Numbers** — linear lerp between surrounding keyframes
-- **Colors** (hex strings) — `lerpColor` between resolved RGB values
-- **Booleans/other** — snap at keyframe (hold previous value until keyframe frame)
-- Before first keyframe: hold first value. After last: hold last value.
-
-Utility: a shared `interpolateKeyframes(keyframes, frame)` function handles all types.
-
-**Output:** Static → `client.push(canvas)`. Animated → `client.pushAnimation(frames, speed)`. If `output` path specified → `savePng` / `saveAnimationGif`. Auto-saves to `pixoo.outputDir` when configured. If `push: false` → skip device push, only save preview.
-
-### `pixoo_text` — Parameter Mapping
-
-| Spec Param                              | Toolkit Param   | Mapping                                           |
-| :-------------------------------------- | :-------------- | :------------------------------------------------ |
-| `direction` (`'left'`/`'right'`)        | `dir`           | `'left'` → `0`, `'right'` → `1`                   |
-| `align` (`'left'`/`'center'`/`'right'`) | `align`         | `'left'` → `1`, `'center'` → `2`, `'right'` → `3` |
-| `clear: true`                           | `clearText(id)` | Clears overlay at given `id` instead of setting   |
-
-### Device Quirks
-
-- **GIF ID reset** before each push — `PixooClient.push()` handles automatically
-- **~1 push/sec** recommended — device freezes after ~300 rapid pushes
-- **Channel must be `custom`** (index 3) for pushed content to display
-- **`Draw/CommandList` cannot batch `Draw/SendHttpGif`** — frames must be sent individually
-- **Text overlays persist** across channel switches — must explicitly `clearText(id)` to remove
-- **Max ~40 frames** before device instability
-- **~5s "Loading.." overlay** when a new animation starts
-
----
-
-## Directory Structure
-
-See [docs/tree.md](docs/tree.md) for the complete visual tree. Respect the established layout — new services go in `src/services/`, new tools in `src/mcp-server/tools/definitions/`, etc. Don't create top-level directories or put code in non-standard locations.
-
-| Directory                               | Purpose                                                                                                                                                                                                           |
-| :-------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/mcp-server/tools/definitions/`     | **Tool definitions.** `[tool-name].tool.ts`. Variants: `.task-tool.ts` (async tasks), `.app-tool.ts` (UI-enabled).                                                                                                |
-| `src/mcp-server/resources/definitions/` | **Resource definitions.** `[resource-name].resource.ts`. Variant: `.app-resource.ts` (linked UI).                                                                                                                 |
-| `src/mcp-server/prompts/definitions/`   | **Prompt definitions.** `[prompt-name].prompt.ts`.                                                                                                                                                                |
-| `src/mcp-server/tools/utils/`           | Shared tool infrastructure (`ToolDefinition`, `toolHandlerFactory`).                                                                                                                                              |
-| `src/mcp-server/resources/utils/`       | Shared resource utilities (`ResourceDefinition`, resource handler factory).                                                                                                                                       |
-| `src/mcp-server/prompts/utils/`         | Shared prompt utilities (`PromptDefinition` type).                                                                                                                                                                |
-| `src/mcp-server/roots/`                 | Roots capability registration. Tracks client-provided root URIs via `RootsRegistry`.                                                                                                                              |
-| `src/mcp-server/tasks/`                 | Tasks API infrastructure (experimental). `TaskManager`, `TaskToolDefinition`, SDK type re-exports. Task tool definitions go in `tools/definitions/` with `.task-tool.ts` suffix.                                  |
-| `src/mcp-server/transports/`            | Transport implementations: `http/` (Hono + `@hono/mcp` Streamable HTTP), `stdio/` (MCP spec stdio), `auth/` (strategies and helpers). HTTP can enforce JWT/OAuth. Stdio should not implement HTTP-based auth.     |
-| `src/config/`                           | Zod-validated config from environment variables. Derives `serviceName`/`version` from `package.json`.                                                                                                             |
-| `src/types-global/`                     | Global type definitions shared across the codebase (error types, etc.).                                                                                                                                           |
-| `src/services/`                         | External service integrations. Each domain (e.g. `llm/`, `speech/`, `graph/`) contains: `core/` (interfaces, orchestrators), `providers/` (implementations), `types.ts`, `index.ts`. Use DI for all service deps. |
-| `src/storage/`                          | Storage abstractions and provider implementations (in-memory, filesystem, supabase, cloudflare).                                                                                                                  |
-| `src/container/`                        | Dependency injection (custom typed container). `Token<T>` phantom branding, service registration/resolution. Zero external deps.                                                                                  |
-| `src/utils/`                            | Global utilities: logging, performance, parsing, network, security, formatting, telemetry. Error handling is at `src/utils/internal/error-handler/`.                                                              |
-| `tests/`                                | Unit/integration tests. Mirrors `src/` layout. Includes compliance suites.                                                                                                                                        |
-
-**File suffix conventions:**
-
-| Suffix             | Meaning                                                 |
-| :----------------- | :------------------------------------------------------ |
-| `.tool.ts`         | Standard tool                                           |
-| `.task-tool.ts`    | Async task tool                                         |
-| `.app-tool.ts`     | UI-enabled tool (MCP Apps, links to `.app-resource.ts`) |
-| `.resource.ts`     | Standard resource                                       |
-| `.app-resource.ts` | UI resource linked to an app tool                       |
-| `.prompt.ts`       | Prompt template                                         |
-
----
-
-## Adding a Tool
-
-Example: [pixoo-control.tool.ts](src/mcp-server/tools/definitions/pixoo-control.tool.ts)
-
-**Steps:**
-
-1. Create `src/mcp-server/tools/definitions/[your-tool-name].tool.ts` (kebab-case)
-2. Define metadata: `TOOL_NAME` (snake_case), `TOOL_TITLE`, `TOOL_DESCRIPTION` (LLM-facing), `TOOL_ANNOTATIONS` (readOnly/idempotent hints)
-3. Create `InputSchema`/`OutputSchema` as `z.object()` — all fields need `.describe()`
-4. Implement logic: pure function `async (input, appContext, sdkContext) => result` — no try/catch, throw `McpError` on failure
-5. (Optional) Add response formatter: `(result) => ContentBlock[]`
-6. Apply auth: wrap with `withToolAuth(['tool:name:read'], yourLogic)`
-7. Export the `ToolDefinition` combining metadata, schemas, logic, formatter
-8. Register in `allToolDefinitions` in [index.ts](src/mcp-server/tools/definitions/index.ts)
-9. Run `bun run devcheck`
-10. Smoke-test with `bun run dev:stdio` or `dev:http`
-
-**Definition structure:**
-
-Export a single `const` of type `ToolDefinition<InputSchema, OutputSchema>` with:
-
-- `name`, `title` (opt), `description` — clear, LLM-facing
-- `inputSchema`/`outputSchema` as `z.object()` — all fields need `.describe()`
-- `logic` — pure business logic. `async (input, appContext, sdkContext) => { ... }`
-- `annotations` (opt) — UI hints: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`
-- `responseFormatter` (opt) — map result to `ContentBlock[]`. Default: JSON string.
-
-**Auth wrapper:**
+### Tool
 
 ```ts
-import { withToolAuth } from '@/mcp-server/transports/auth/lib/withAuth.js';
-logic: withToolAuth(['tool:pixoo:read'], yourLogic),
+import { tool, z } from '@cyanheads/mcp-ts-core';
+
+export const searchItems = tool('search_items', {
+  description: 'Search inventory items by query.',
+  annotations: { readOnlyHint: true },
+  input: z.object({
+    query: z.string().describe('Search terms'),
+    limit: z.number().default(10).describe('Max results'),
+  }),
+  output: z.object({
+    items: z.array(z.object({
+      id: z.string().describe('Item ID'),
+      name: z.string().describe('Item name'),
+    })).describe('Matching items'),
+  }),
+  auth: ['inventory:read'],
+
+  async handler(input, ctx) {
+    const items = await findItems(input.query, input.limit);
+    ctx.log.info('Search completed', { query: input.query, count: items.length });
+    return { items };
+  },
+
+  // format() populates content[] — the markdown twin of structuredContent.
+  // Different clients read different surfaces (Claude Code → structuredContent,
+  // Claude Desktop → content[]); both must carry the same data.
+  // Enforced at lint time: every field in `output` must appear in the rendered text.
+  format: (result) => [{
+    type: 'text',
+    text: result.items.map(i => `**${i.id}**: ${i.name}`).join('\n'),
+  }],
+});
+```
+
+### Resource
+
+```ts
+import { resource, z } from '@cyanheads/mcp-ts-core';
+import { notFound } from '@cyanheads/mcp-ts-core/errors';
+
+export const itemData = resource('inventory://{itemId}', {
+  description: 'Fetch an inventory item by ID.',
+  params: z.object({ itemId: z.string().describe('Item identifier') }),
+  auth: ['inventory:read'],
+  async handler(params, ctx) {
+    const item = await ctx.state.get(`item:${params.itemId}`);
+    if (!item) throw notFound(`Item ${params.itemId} not found`, { itemId: params.itemId });
+    return item;
+  },
+});
+```
+
+### Prompt
+
+```ts
+import { prompt, z } from '@cyanheads/mcp-ts-core';
+
+export const reviewCode = prompt('review_code', {
+  description: 'Review code for issues and best practices.',
+  args: z.object({
+    code: z.string().describe('Code to review'),
+    language: z.string().optional().describe('Programming language'),
+  }),
+  generate: (args) => [
+    { role: 'user', content: { type: 'text', text: `Review this ${args.language ?? ''} code:\n${args.code}` } },
+  ],
+});
+```
+
+### Server config
+
+```ts
+// src/config/server-config.ts — lazy-parsed, separate from framework config
+import { z } from '@cyanheads/mcp-ts-core';
+import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
+
+const ServerConfigSchema = z.object({
+  apiKey: z.string().describe('External API key'),
+  maxResults: z.coerce.number().default(100),
+  verboseLogging: z.stringbool().default(false).describe('Enable verbose logging'),
+});
+
+let _config: z.infer<typeof ServerConfigSchema> | undefined;
+export function getServerConfig() {
+  _config ??= parseEnvConfig(ServerConfigSchema, {
+    apiKey: 'MY_API_KEY',
+    maxResults: 'MY_MAX_RESULTS',
+    verboseLogging: 'MY_VERBOSE_LOGGING',
+  });
+  return _config;
+}
+```
+
+`parseEnvConfig` maps Zod schema paths → env var names so errors name the variable (`MY_API_KEY`) not the path (`apiKey`). Throws `ConfigurationError`, which the framework prints as a clean startup banner.
+
+For env booleans use `z.stringbool()`, never `z.coerce.boolean()` — `Boolean("false")` is `true`, so a coerced flag can't be disabled through the environment. `z.stringbool()` parses `true/false/1/0/yes/no/on/off` and rejects anything else, so `=false` actually disables.
+
+### Server identity and instructions
+
+`createApp()` accepts optional identity fields forwarded to the SDK's `initialize` response and the server manifest (`/.well-known/mcp.json`):
+
+```ts
+await createApp({
+  name: 'my-mcp-server',
+  title: 'My Server',                         // human-readable display name
+  websiteUrl: 'https://github.com/owner/repo', // canonical homepage URL
+  description: 'One-line description.',        // wins over MCP_SERVER_DESCRIPTION
+  icons: [{ src: 'https://example.com/icon.png', sizes: ['48x48'], mimeType: 'image/png' }],
+  instructions: 'Use shortcut alpha for the most common case.', // session-level context
+});
+```
+
+`instructions` is optional server-level orientation, sent on every `initialize` as session-level context. Use it for deployment guidance (connection aliases, regional notes, scope hints) instead of repeating the same context across tool descriptions. Client adoption is uneven, but there's no downside when set.
+
+---
+
+## Context
+
+Handlers receive a unified `ctx` object. Key properties:
+
+| Property | Description |
+|:---------|:------------|
+| `ctx.log` | Request-scoped logger — `.debug()`, `.info()`, `.notice()`, `.warning()`, `.error()`. Auto-correlates requestId, traceId, tenantId. |
+| `ctx.state` | Tenant-scoped KV — `.get(key)`, `.set(key, value, { ttl? })`, `.delete(key)`, `.list(prefix, { cursor, limit })`. Accepts any serializable value. |
+| `ctx.elicit` | Ask user for structured input — form call `(message, schema)` or `.url(message, url)` for an external link. **Check for presence first:** `if (ctx.elicit) { ... }` |
+| `ctx.signal` | `AbortSignal` for cancellation. |
+| `ctx.progress` | Task progress (present when `task: true`) — `.setTotal(n)`, `.increment()`, `.update(message)`. |
+| `ctx.requestId` | Unique request ID. |
+| `ctx.tenantId` | Tenant ID from JWT or `'default'` for stdio. |
+
+---
+
+## Errors
+
+Handlers throw — the framework catches, classifies, and formats.
+
+**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, recovery, retryable? }]` on `tool()` / `resource()` to receive `ctx.fail(reason, …)` typed against the reason union. TypeScript catches typos at compile time, `data.reason` is auto-populated for observability, linter enforces conformance against the handler body. `recovery` is required descriptive metadata for the agent's next move (≥ 5 words, lint-validated); for the wire `data.recovery.hint` (mirrored into `content[]` text), pass explicitly at the throw site when dynamic context matters: `ctx.fail('reason', msg, { recovery: { hint: '...' } })`. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`) bubble freely and don't need declaring.
+
+```ts
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+
+errors: [
+  { reason: 'no_match', code: JsonRpcErrorCode.NotFound,
+    when: 'No item matched the query',
+    recovery: 'Broaden the query or check the spelling and try again.' },
+],
+async handler(input, ctx) {
+  const item = await db.find(input.id);
+  if (!item) throw ctx.fail('no_match', `No item ${input.id}`);
+  return item;
+}
+```
+
+**Declare contracts inline on each tool.** The contract is part of the tool's public surface — one file should give the full picture. Don't extract a shared `errors[]` constant; per-tool repetition is the intended cost of locality.
+
+**Fallback (no contract entry fits):** throw via factories or plain `Error`.
+
+```ts
+// Error factories — explicit code
+import { notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+throw notFound('Item not found', { itemId });
+throw serviceUnavailable('API unavailable', { url }, { cause: err });
+
+// Plain Error — framework auto-classifies from message patterns
+throw new Error('Item not found');           // → NotFound
+throw new Error('Invalid query format');     // → ValidationError
+
+// McpError — when no factory exists for the code
+import { McpError, JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+throw new McpError(JsonRpcErrorCode.DatabaseError, 'Connection failed', { pool: 'primary' });
+```
+
+See framework CLAUDE.md and the `api-errors` skill for the full auto-classification table, all available factories, and the contract reference.
+
+---
+
+## Structure
+
+```text
+src/
+  index.ts                              # createApp() entry point
+  config/
+    server-config.ts                    # Server-specific env vars (Zod schema)
+  services/
+    [domain]/
+      [domain]-service.ts               # Domain service (init/accessor pattern)
+      types.ts                          # Domain types
+  mcp-server/
+    tools/definitions/
+      [tool-name].tool.ts               # Tool definitions
+    resources/definitions/
+      [resource-name].resource.ts       # Resource definitions
+    prompts/definitions/
+      [prompt-name].prompt.ts           # Prompt definitions
 ```
 
 ---
 
-## Adding a Task Tool
+## Naming
 
-Task tools enable long-running async operations using the MCP Tasks API — a "call-now, fetch-later" pattern where clients poll for status and retrieve results.
-
-> Tasks API is part of the [MCP spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) as an experimental capability and may change.
-
-See the MCP Tasks API docs for the full pattern.
-
-**Steps:**
-
-1. Create `src/mcp-server/tools/definitions/[name].task-tool.ts` (note the `.task-tool.ts` suffix)
-2. Define `InputSchema` and optional `OutputSchema`
-3. Implement task handlers:
-   ```typescript
-   taskHandlers: {
-     createTask: async (args, extra) => {
-       const task = await extra.taskStore.createTask({ ttl: 120000, pollInterval: 1000 });
-       startBackgroundWork(task.taskId, args, extra.taskStore);
-       return { task };
-     },
-     getTask: async (_args, extra) => {
-       return await extra.taskStore.getTask(extra.taskId);
-     },
-     getTaskResult: async (_args, extra) => {
-       return await extra.taskStore.getTaskResult(extra.taskId) as CallToolResult;
-     }
-   }
-   ```
-4. Set execution mode: `execution: { taskSupport: 'required' }` or `'optional'`
-5. Export as `TaskToolDefinition` (import from `@/mcp-server/tasks/index.js`)
-6. Register in `allToolDefinitions` in [index.ts](src/mcp-server/tools/definitions/index.ts)
-
-**Key concepts:**
-
-- `RequestTaskStore` provides `createTask`, `getTask`, `storeTaskResult`, `getTaskResult`, `updateTaskStatus`
-- Background work updates status via `taskStore.updateTaskStatus(taskId, 'working', 'message...')`
-- Terminal states: `completed`, `failed`, `cancelled` — use `storeTaskResult` for completion
-- Task tools are auto-detected by `isTaskToolDefinition()` and registered via `server.experimental.tasks.registerToolTask()`
+| What | Convention | Example |
+|:-----|:-----------|:--------|
+| Files | kebab-case with suffix | `search-docs.tool.ts` |
+| Tool/resource/prompt names | snake_case | `search_docs` |
+| Directories | kebab-case | `src/services/doc-search/` |
+| Descriptions | Single string or template literal, no `+` concatenation | `'Search items by query and filter.'` |
 
 ---
 
-## Adding a Prompt
+## Skills
 
-Prompts are reusable message templates that clients can discover and invoke. Simpler than tools — no `logic`/`appContext`/`sdkContext`, no auth wrappers.
+Skills are modular instructions in `skills/` at the project root. Read them directly when a task matches — e.g., `skills/add-tool/SKILL.md` when adding a tool.
 
-**Steps:**
+**Agent skill directory:** Copy skills into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). Skills then load as context without referencing `skills/` paths. After framework updates, run the `maintenance` skill — Phase B re-syncs the agent directory.
 
-1. Create `src/mcp-server/prompts/definitions/[your-prompt-name].prompt.ts` (kebab-case)
-2. Define metadata: `PROMPT_NAME` (snake_case), `PROMPT_DESCRIPTION` (user-facing)
-3. (Optional) Create `ArgumentsSchema` as `z.object()` — all fields need `.describe()`
-4. Implement `generate`: `(args) => PromptMessage[]` — returns array of `{ role, content }` messages (can be `async`)
-5. Export: `export const myPrompt: PromptDefinition<typeof ArgumentsSchema> = { name, description, argumentsSchema, generate }`
-6. Register in `allPromptDefinitions` in [index.ts](src/mcp-server/prompts/definitions/index.ts)
-7. Run `bun run devcheck`
+Available skills:
 
----
+| Skill | Purpose |
+|:------|:--------|
+| `setup` | Post-init project orientation |
+| `design-mcp-server` | Design tool surface, resources, and services for a new server |
+| `add-tool` | Scaffold a new tool definition |
+| `add-app-tool` | Scaffold an MCP App tool + paired UI resource |
+| `add-resource` | Scaffold a new resource definition |
+| `add-prompt` | Scaffold a new prompt definition |
+| `add-service` | Scaffold a new service integration |
+| `add-test` | Scaffold test file for a tool, resource, or service |
+| `field-test` | Exercise tools/resources/prompts with real inputs, verify behavior, report issues |
+| `tool-defs-analysis` | Read-only audit of MCP definition language across the surface — voice, leaks, defaults, recovery hints, output descriptions |
+| `security-pass` | Audit server for MCP-flavored security gaps: output injection, scope blast radius, input sinks, tenant isolation |
+| `code-simplifier` | Post-session cleanup against `git diff` — modernize syntax, consolidate duplication, align with the codebase |
+| `devcheck` | Lint, format, typecheck, audit |
+| `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
+| `git-wrapup` | Land working-tree changes as a versioned commit + annotated tag — version bump, changelog, verify, tag. Local only. |
+| `release-and-publish` | Push + npm + MCP Registry + GH Release + Docker. Picks up from `git-wrapup` |
+| `maintenance` | Investigate changelogs, adopt upstream changes, sync skills to agent dirs |
+| `orchestrations` | Chain task skills into a gated multi-phase pipeline — build-out, QA-fix, update-ship — when you can spawn sub-agents |
+| `report-issue-framework` | File a bug or feature request against `@cyanheads/mcp-ts-core` via `gh` CLI |
+| `report-issue-local` | File a bug or feature request against this server's own repo via `gh` CLI |
+| `api-auth` | Auth modes, scopes, JWT/OAuth |
+| `api-canvas` | DataCanvas: register tabular data, run SQL, export, plus the `spillover()` helper for big result sets — Tier 3 opt-in |
+| `api-config` | AppConfig, parseConfig, env vars |
+| `api-context` | Context interface, logger, state, progress |
+| `api-errors` | McpError, JsonRpcErrorCode, error patterns |
+| `api-linter` | Definition linter rule catalog — invoked by `bun run lint:mcp` and `devcheck` |
+| `api-services` | LLM, Speech, Graph services |
+| `api-testing` | createMockContext, test patterns |
+| `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
+| `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
+| `api-workers` | Cloudflare Workers runtime |
 
-## Adding a Resource
+**Chaining skills into pipelines.** When the user wants a multi-phase effort — build this server out, QA-and-fix the surface, update-and-ship — *and you can spawn sub-agents*, `skills/orchestrations/SKILL.md` sequences the task skills above into a gated pipeline with verification at each step. Read it to drive the run. Optional: skip it if you can't orchestrate sub-agents, and ignore it entirely if you were *spawned* as one — you've already been scoped to a single phase.
 
-Export a single `const` of type `ResourceDefinition<ParamsSchema, OutputSchema>` with:
-
-- `name`, `title` (opt), `description` — clear, LLM-facing
-- `uriTemplate` (e.g. `echo://{message}`), `paramsSchema`/`outputSchema`
-- `mimeType` (opt), `examples` (opt), `list()` (opt) for discovery
-- `logic`: `(uri: URL, params, context: RequestContext) => result` (can be `async`)
-- `annotations` (opt), `responseFormatter` (opt)
-
-**Auth:** wrap with `withResourceAuth`.
-
-**Register** in `allResourceDefinitions` in [index.ts](src/mcp-server/resources/definitions/index.ts).
-
-**Note:** `list()` has a different signature from `logic`: `(extra: RequestHandlerExtra) => ListResourcesResult` — receives `extra._meta?.cursor` for pagination, not `RequestContext`.
-
-**Pagination:** Resources returning large lists must implement pagination per [MCP spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/utils/pagination). Use `extractCursor(meta)`, `paginateArray(...)` from `@/utils/index.js`. Storage providers: use `encodeCursor`/`decodeCursor` from `@/storage/core/storageValidation.js` for tenant-bound cursors. Cursors are opaque; invalid cursors throw `JsonRpcErrorCode.InvalidParams` (-32602). Include `nextCursor` only when more results exist.
-
----
-
-## Adding a Service
-
-All services live in `src/services/[service-name]/` with `core/` (interfaces), `providers/` (implementations), `types.ts`, `index.ts`. See [docs/tree.md](docs/tree.md).
-
-**Patterns:**
-
-- Single-provider (e.g. LLM) — inject via constructor
-- Multi-provider (e.g. Speech) — create orchestrator for routing/aggregation
-
-**Provider requirements:** implement `I<Service>Provider`, add `healthCheck()`, throw `McpError` on failure, name as `<name>.provider.ts`. Register in `registrations/core.ts` via `container.registerSingleton(token, factory)`.
-
-**Sequence:** directory structure, interface, providers, types, barrel export, DI token in `tokens.ts`, register in `registrations/core.ts`.
-
----
-
-## Services & Utilities
-
-### DI-Managed Services
-
-Tokens live in `src/container/core/tokens.ts`.
-
-| Service           | Token                   | Resolution                                 | Notes                         |
-| :---------------- | :---------------------- | :----------------------------------------- | :---------------------------- |
-| `PixooClient`     | `PixooClientToken`      | `container.resolve(PixooClientToken)`      | Device communication          |
-| `ILlmProvider`    | `LlmProvider`           | `container.resolve(LlmProvider)`           |                               |
-| `StorageService`  | `StorageService`        | `container.resolve(StorageService)`        | Requires `context.tenantId`   |
-| `RateLimiter`     | `RateLimiterService`    | `container.resolve(RateLimiterService)`    |                               |
-| `Logger`          | `Logger`                | `container.resolve(Logger)`                | Pino-backed singleton         |
-| App Config        | `AppConfig`             | `container.resolve(AppConfig)`             |                               |
-| Supabase Client   | `SupabaseAdminClient`   | `container.resolve(SupabaseAdminClient)`   | Only when needed              |
-| Transport Manager | `TransportManagerToken` | `container.resolve(TransportManagerToken)` |                               |
-| `SpeechService`   | `SpeechService`         | `container.resolve(SpeechService)`         | TTS/STT provider orchestrator |
-| `TaskManager`     | `TaskManagerToken`      | `container.resolve(TaskManagerToken)`      | For MCP Tasks API             |
-
-### Storage
-
-`STORAGE_PROVIDER_TYPE` = `in-memory` | `filesystem` | `supabase` | `cloudflare-r2` | `cloudflare-kv` | `cloudflare-d1`
-
-Use DI-injected `StorageService`. Features: input validation, parallel batch ops (`getMany`/`setMany`/`deleteMany`), secure tenant-bound pagination, TTL support. See [storage docs](src/storage/README.md).
-
-### Directly Imported Utilities
-
-From `@/utils/index.js`:
-
-- `logger`, `requestContextService`, `sanitization`, `fetchWithTimeout`, `measureToolExecution`
-- `pdfParser`, `frontmatterParser`
-- `markdown()`, `diffFormatter`, `tableFormatter`, `treeFormatter`
-- `ErrorHandler.tryCatch` (for services/setup code only — NOT tool/resource logic)
-
-**Response formatters:** Simple: `[{ type: 'text', text: lines.join('\n') }]`. Complex: `markdown()` helper, `diffFormatter`, `tableFormatter`, `treeFormatter`.
-
-### Utils Modules
-
-| Module        | Key Exports                                                                                                           |
-| :------------ | :-------------------------------------------------------------------------------------------------------------------- |
-| `parsing/`    | `csvParser`, `yamlParser`, `xmlParser`, `jsonParser`, `pdfParser`, `frontmatterParser` (handles LLM `<think>` blocks) |
-| `formatting/` | `MarkdownBuilder`, `markdown()` helper, `diffFormatter`, `tableFormatter`, `treeFormatter`                            |
-| `security/`   | `sanitization`, `rateLimiter`, `idGenerator`                                                                          |
-| `network/`    | `fetchWithTimeout`                                                                                                    |
-| `scheduling/` | `scheduler` (node-cron wrapper)                                                                                       |
-| `internal/`   | `logger`, `requestContextService`, `ErrorHandler`, `performance`                                                      |
-| `telemetry/`  | OpenTelemetry instrumentation                                                                                         |
-
----
-
-## Auth
-
-**HTTP mode:** `MCP_AUTH_MODE` = `none` | `jwt` | `oauth`
-
-- JWT: local secret (`MCP_AUTH_SECRET_KEY`), dev bypasses if missing
-- OAuth: JWKS verification (`OAUTH_ISSUER_URL`, `OAUTH_AUDIENCE`, opt `OAUTH_JWKS_URI`)
-- Claims: `clientId` (cid/client_id), `scopes` (scp/scope), `sub`, `tenantId` (tid → context.tenantId)
-- Wrap logic with `withToolAuth`/`withResourceAuth` (defaults allowed if auth disabled)
-
-**STDIO mode:** No HTTP auth. Host handles authorization.
-
-**Endpoints:**
-
-- Unprotected: `/healthz`, `GET /mcp`
-- Protected (when auth enabled): `POST /mcp`, `OPTIONS /mcp`
-- CORS: `MCP_ALLOWED_ORIGINS` or `*`
-
----
-
-## Transports & Lifecycle
-
-- `createMcpServerInstance` (`server.ts`): initializes context, creates server with declared capabilities (`logging`, `resources`/`tools`/`prompts` with `listChanged`, `tasks` with list/cancel/requests)
-- Elicitation, sampling, and roots are SDK context features available to tool logic via `sdkContext`, not declared server capabilities
-- `TransportManager` (`transports/manager.ts`): resolves factory, instantiates transport, handles lifecycle
-
-**Transports:** stdio and HTTP work identically. Worker builds are not a target (device is local network, `sharp` doesn't work in Workers).
-
----
-
-## Code Style
-
-- **JSDoc:** `@fileoverview` and `@module` required
-- **Validation:** Zod schemas, all fields need `.describe()`
-- **Logging:** include `RequestContext`, use `logger.{debug|info|notice|warning|error|crit|emerg}`
-- **Errors:** logic throws `McpError`, handlers catch. `ErrorHandler.tryCatch` for services only.
-- **Secrets:** `src/config/index.ts` only
-- **Rate limiting:** DI-injected `RateLimiter`
-- **Telemetry:** auto-init, no manual spans
-- **Imports:** barrel exports (`index.ts`) for module public APIs (e.g. `@/utils/index.js`, `definitions/index.ts`). Cross-module imports use the public barrel, not internal files.
-
----
-
-## Git Commits
-
-Use plain strings for commit messages. Never use heredoc syntax (`cat <<'EOF'`) or command substitution (`$(...)`) in commit messages.
-
-**Correct:**
-
-```bash
-git commit -m "feat(auth): add JWT validation middleware
-
-- Implemented token verification with exp claim validation
-- Added support for RS256 and HS256 algorithms
-- Includes comprehensive error handling"
-```
-
-**Wrong:**
-
-```bash
-# Do not use cat/heredoc/command substitution
-git commit -m "$(cat <<'EOF'
-feat(auth): add JWT validation
-EOF
-)"
-```
-
-**Format:** [Conventional Commits](https://www.conventionalcommits.org/):
-
-| Prefix             | Use                                |
-| :----------------- | :--------------------------------- |
-| `feat(scope):`     | New feature                        |
-| `fix(scope):`      | Bug fix                            |
-| `refactor(scope):` | Code refactoring                   |
-| `chore(scope):`    | Maintenance (deps, config)         |
-| `docs(scope):`     | Documentation                      |
-| `test(scope):`     | Test additions/updates             |
-| `build(scope):`    | Build system or dependency changes |
-
-Group related changes into atomic commits. Use `filesToStage` to control which files are included.
+When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
 
 ---
 
 ## Commands
 
-| Command                    | Purpose                                                                                                             |
-| :------------------------- | :------------------------------------------------------------------------------------------------------------------ |
-| `bun run rebuild`          | Clean, rebuild, clear logs (after dep changes)                                                                      |
-| `bun run devcheck`         | **Use often.** Lint, format, typecheck, security (opt-out: `--no-fix`, `--no-lint`, `--no-audit`; opt-in: `--test`) |
-| `bun run test`             | Unit/integration tests                                                                                              |
-| `bun run dev:stdio/http`   | Development mode                                                                                                    |
-| `bun run start:stdio/http` | Production mode (after build)                                                                                       |
-| `bun run build:worker`     | Cloudflare Worker bundle                                                                                            |
+**Runtime:** Scripts use Bun's native TypeScript execution — `bun run <cmd>` is the standard invocation. `npm run <cmd>` also works (npm delegates to bun).
+
+| Command | Purpose |
+|:--------|:--------|
+| `npm run build` | Compile TypeScript |
+| `npm run rebuild` | Clean + build |
+| `npm run clean` | Remove build artifacts |
+| `npm run devcheck` | Lint + format + typecheck + security + changelog sync |
+| `bun run audit:refresh` | Delete `bun.lock`, reinstall, and re-run `bun audit`. Use when `devcheck` flags a transitive advisory — Bun's `update` is sticky on transitive resolutions, so the advisory may be a stale-lockfile false positive. If it survives the refresh, it's real. |
+| `npm run tree` | Generate directory structure doc |
+| `npm run format` | Auto-fix formatting (safe fixes only) |
+| `npm run format:unsafe` | Also apply Biome's unsafe autofixes — review the diff; they can change behavior |
+| `npm test` | Run tests |
+| `npm run start:stdio` | Production mode (stdio) |
+| `npm run start:http` | Production mode (HTTP) |
+| `npm run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |
+| `npm run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
+| `npm run bundle` | Build, pack, and clean a `.mcpb` for one-click Claude Desktop install |
 
 ---
 
-## Configuration
+## Bundling
 
-All config validated via Zod in `src/config/index.ts`. Config module derives `mcpServerName`/`mcpServerVersion` from `package.json` (overridable via `MCP_SERVER_NAME`/`MCP_SERVER_VERSION` env vars).
+`npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips dependency-shipped agent docs (`node_modules/**` `skills/`, `.claude/`, `.agents/`, `SKILL.md`) that root-anchored `.mcpbignore` patterns cannot reach. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
 
-| Category  | Key Variables                                                                                                      |
-| :-------- | :----------------------------------------------------------------------------------------------------------------- |
-| **Pixoo** | **`PIXOO_IP`** (required), `PIXOO_SIZE` (`16`\|`32`\|`64`, default `64`), `PIXOO_OUTPUT_DIR` (auto-save dir)       |
-| Transport | `MCP_TRANSPORT_TYPE` (`stdio`\|`http`), `MCP_HTTP_PORT`, `MCP_HTTP_HOST`, `MCP_HTTP_ENDPOINT_PATH`                 |
-| Auth      | `MCP_AUTH_MODE` (`none`\|`jwt`\|`oauth`), `MCP_AUTH_SECRET_KEY`, `OAUTH_*`                                         |
-| Storage   | `STORAGE_PROVIDER_TYPE` (`in-memory`\|`filesystem`\|`supabase`\|`cloudflare-r2`\|`cloudflare-kv`\|`cloudflare-d1`) |
-| LLM       | `OPENROUTER_API_KEY`, `OPENROUTER_APP_URL/NAME`, `LLM_DEFAULT_*`                                                   |
-| Telemetry | `OTEL_ENABLED`, `OTEL_SERVICE_NAME/VERSION`, `OTEL_EXPORTER_OTLP_*`                                                |
+**Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match.
+
+**README install badges** (Claude Desktop `.mcpb`, Cursor, VS Code) and the `base64` / `encodeURIComponent` config-generation commands are ship-time concerns — run the `polish-docs-meta` skill, which carries the badge format, layout, and generation snippets in `skills/polish-docs-meta/references/readme.md`.
 
 ---
 
-## Multi-Tenancy
+## Changelog
 
-`StorageService` requires `context.tenantId` (throws if missing).
+Directory-based, grouped by minor series via the `.x` semver-wildcard convention. Source of truth: `changelog/<major.minor>.x/<version>.md` (e.g. `changelog/0.1.x/0.1.0.md`) — one file per release, shipped in the npm package. At release, author the per-version file with a concrete version and date, then run `npm run changelog:build` to regenerate the rollup. `changelog/template.md` is a **pristine format reference** — never edited or moved; read it for the frontmatter + section layout when scaffolding. `CHANGELOG.md` is a **navigation index** (header + link + summary per version), regenerated by `npm run changelog:build` — devcheck hard-fails on drift; never hand-edit it.
 
-**Tenant ID validation:** max 128 chars, alphanumeric/hyphens/underscores/dots only, start/end alphanumeric, no path traversal (`../`), no consecutive dots.
+Each per-version file opens with YAML frontmatter:
 
-**HTTP with auth:** `tenantId` auto-extracted from JWT `'tid'` claim, propagated via `requestContextService.withAuthInfo(authInfo)`. Context includes: `{ requestId, timestamp, tenantId, auth: { sub, clientId, scopes, token, tenantId } }`.
+```markdown
+---
+summary: "One-line headline, ≤350 chars"  # required — powers the rollup index
+breaking: false                            # optional — true flags breaking changes
+security: false                            # optional — true flags security fixes
+---
 
-**STDIO:** explicitly set tenant via `requestContextService.createRequestContext({ operation, tenantId })`.
+# 0.1.0 — YYYY-MM-DD
+...
+```
+
+`breaking: true` renders a `· ⚠️ Breaking` badge — use it when consumers must update code on upgrade (signature changes, removed APIs, config renames). `security: true` renders a `· 🛡️ Security` badge and pairs with a `## Security` body section. When both are set, badges render `· ⚠️ Breaking · 🛡️ Security`.
+
+`agent-notes` is an optional free-form field for maintenance agents processing the release downstream. Content here won't appear in the rendered CHANGELOG — it's consumed by agents running the `maintenance` skill. Use it for adoption instructions that don't fit the human-facing sections: new files to create, fields to populate, one-time migration steps. Omit entirely when there's nothing to say.
+
+**Section order** (Keep a Changelog): Added, Changed, Deprecated, Removed, Fixed, Security. Include only sections with entries — don't ship empty headers.
+
+**Tag annotations** render as GitHub Release bodies via `--notes-from-tag`. They must be structured markdown — never a flat comma-separated string. Subject omits the version number (GitHub prepends it). See `changelog/template.md` for the full format reference.
+
+---
+
+## Imports
+
+```ts
+// Framework — z is re-exported, no separate zod import needed
+import { tool, z } from '@cyanheads/mcp-ts-core';
+import { McpError, JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+
+// Server's own code — via path alias
+import { getMyService } from '@/services/my-domain/my-service.js';
+```
 
 ---
 
 ## Checklist
 
-- [ ] Pure logic in `*.tool.ts`/`*.resource.ts`/`*.prompt.ts` (no `try...catch`, throw `McpError`)
-- [ ] Auth applied with `withToolAuth`/`withResourceAuth`
-- [ ] Logger used with `appContext`, `StorageService` (DI) for persistence
-- [ ] `sdkContext.elicitInput()`/`createMessage()` for client interaction
-- [ ] Registered in `index.ts` barrel
-- [ ] Tests added/updated (`bun test`)
-- [ ] **`bun devcheck` passes** (lint, format, typecheck, security)
-- [ ] Smoke-tested local transports (`dev:stdio`/`http`)
-- [ ] Pixoo tools resolve `PixooClientToken` from DI (not direct instantiation)
-- [ ] `pixoo_compose`/`pixoo_push_image` auto-switch to `Custom` channel before push
-- [ ] Async assets (images, sprites) pre-loaded before frame loop in compose
-- [ ] Animation keyframes interpolate: numbers → lerp, colors → `lerpColor`, booleans → snap
+- [ ] Zod schemas: all fields have `.describe()`, only JSON-Schema-serializable types (no `z.custom()`, `z.date()`, `z.transform()`, `z.bigint()`, `z.symbol()`, `z.void()`, `z.map()`, `z.set()`, `z.function()`, `z.nan()`)
+- [ ] Optional nested objects: handler guards for empty inner values from form-based clients (`if (input.obj?.field && ...)`, not just `if (input.obj)`). When regex/length constraints matter, use `z.union([z.literal(''), z.string().regex(...).describe(...)])` — literal variants are exempt from `describe-on-fields`.
+- [ ] JSDoc `@fileoverview` + `@module` on every file
+- [ ] `ctx.log` for logging, `ctx.state` for storage
+- [ ] Handlers throw on failure — error factories or plain `Error`, no try/catch
+- [ ] `format()` renders all data the LLM needs — different clients forward different surfaces (Claude Code → `structuredContent`, Claude Desktop → `content[]`); both must carry the same data
+- [ ] If wrapping external API: raw/domain/output schemas reviewed against real upstream sparsity/nullability before finalizing required vs optional fields
+- [ ] If wrapping external API: normalization and `format()` preserve uncertainty; do not fabricate facts from missing upstream data
+- [ ] If wrapping external API: tests include at least one sparse payload case with omitted upstream fields
+- [ ] Registered in `createApp()` arrays (directly or via barrel exports)
+- [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
+- [ ] `.codex-plugin/plugin.json` populated — `name`, `version`, `description`, `repository`, `license` from `package.json`; `interface.displayName` = package name; `interface.shortDescription` from `package.json` description
+- [ ] `.codex-plugin/mcp.json` updated — server name key matches `package.json` name; env vars added for any required API keys
+- [ ] `.claude-plugin/plugin.json` populated — `name`, `version`, `description`, `repository`, `license` from `package.json`; inline `mcpServers` entry with server name key, env vars for any required API keys
+- [ ] `npm run devcheck` passes

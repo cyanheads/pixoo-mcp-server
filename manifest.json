@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "pixoo-mcp-server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays.",
   "author": { "name": "cyanheads" },
   "repository": {

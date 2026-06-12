@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-06-12 10:06:22
+Generated on: 2026-06-12 10:20:55
 
 ```text
 pixoo-mcp-server/
@@ -21,6 +21,7 @@ pixoo-mcp-server/
 │   └── settings.json
 ├── changelog/
 │   ├── 0.1.x/
+│   ├── 1.0.x/
 │   └── template.md
 ├── docs/
 │   └── design.md

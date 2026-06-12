@@ -8,7 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { loadImage, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
-import { savePngPreview } from '@/renderer/preview.js';
+import { encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
 import { getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 export const pixooPushImage = tool('pixoo_push_image', {
@@ -37,6 +37,11 @@ export const pixooPushImage = tool('pixoo_push_image', {
 
   output: z.object({
     pushed: z.boolean().describe('True when the device acknowledged the push.'),
+    previewData: z
+      .string()
+      .optional()
+      .describe('Base64-encoded PNG preview of the downsampled 64×64 result (8× upscaled, 512px).'),
+    previewMimeType: z.enum(['image/png']).optional().describe('MIME type of the preview image.'),
     deviceState: z
       .object({
         reachable: z.boolean().describe('True if device responded.'),
@@ -144,6 +149,9 @@ export const pixooPushImage = tool('pixoo_push_image', {
       kernel: input.kernel,
     });
 
+    // Encode preview
+    const previewBlock = encodePreviewBlock(canvas);
+
     // Save preview
     const outputFiles: string[] = [];
     const savedPath = await savePngPreview(canvas, `push-image-${Date.now()}`);
@@ -160,6 +168,8 @@ export const pixooPushImage = tool('pixoo_push_image', {
 
     return {
       pushed,
+      previewData: previewBlock.data,
+      previewMimeType: 'image/png' as const,
       deviceState,
       outputFiles: outputFiles.length > 0 ? outputFiles : undefined,
     };
@@ -184,6 +194,12 @@ export const pixooPushImage = tool('pixoo_push_image', {
       lines.push(`**Saved:** ${result.outputFiles.join(', ')}`);
     }
 
-    return [{ type: 'text', text: lines.join('\n') }];
+    const items: Array<
+      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+    > = [{ type: 'text', text: lines.join('\n') }];
+    if (result.previewData && result.previewMimeType) {
+      items.push({ type: 'image', data: result.previewData, mimeType: result.previewMimeType });
+    }
+    return items;
   },
 });

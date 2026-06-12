@@ -4,9 +4,10 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import type { PixooSize } from '@cyanheads/pixoo-toolkit';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { Canvas, NAMED_COLORS, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
+import { ICONS } from '@/renderer/icons.js';
 import {
   buildContactSheet,
   encodePreviewBlock,
@@ -371,6 +372,13 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .describe(
         'True when the device acknowledged the push. False when push: false or push failed.',
       ),
+    previewData: z
+      .string()
+      .optional()
+      .describe(
+        'Base64-encoded PNG preview of the rendered scene (8× upscaled, 512px). For animations: the middle frame.',
+      ),
+    previewMimeType: z.enum(['image/png']).optional().describe('MIME type of the preview image.'),
     frames: z
       .number()
       .describe('Number of frames in the rendered output (1 for static, 2–40 for animations).'),
@@ -469,23 +477,40 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       push: input.push,
     });
 
-    // Render
-    const { frames: renderedFrames, layoutEntries } = await renderScene(
-      bg,
-      // biome-ignore lint: elements are validated by zod discriminated union
-      input.elements as any,
-      input.frames,
-      size,
-    );
+    // Render — catch color/icon resolution errors and route through the error contract
+    const validColorNames = Object.keys(NAMED_COLORS).join(', ');
+    const validIconNames = Object.keys(ICONS).join(', ');
+    let renderedFrames: Awaited<ReturnType<typeof renderScene>>['frames'];
+    let layoutEntries: Awaited<ReturnType<typeof renderScene>>['layoutEntries'];
+    try {
+      ({ frames: renderedFrames, layoutEntries } = await renderScene(
+        bg,
+        // biome-ignore lint: elements are validated by zod discriminated union
+        input.elements as any,
+        input.frames,
+        size,
+      ));
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Unknown color')) {
+        throw ctx.fail(
+          'invalid_color',
+          `${err.message}. Valid named colors: ${validColorNames}. See pixoo://reference/themes for palette colors.`,
+        );
+      }
+      if (err instanceof McpError && err.data?.['reason'] === 'unknown_icon') {
+        throw ctx.fail(
+          'unknown_icon',
+          `${err.message} Valid icons: ${validIconNames}. See pixoo://reference/icons.`,
+        );
+      }
+      throw err;
+    }
 
     // Preview (returned in content[] as image block via format)
     const isAnimation = renderedFrames.length > 1;
-    if (isAnimation) {
-      buildContactSheet(renderedFrames);
-    } else {
-      const firstFrame = renderedFrames[0];
-      if (firstFrame) encodePreviewBlock(firstFrame);
-    }
+    const previewBlock = isAnimation
+      ? buildContactSheet(renderedFrames)
+      : encodePreviewBlock(renderedFrames[0] ?? new Canvas(size));
 
     // Save files
     const outputFiles: string[] = [];
@@ -530,6 +555,8 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
 
     return {
       pushed,
+      previewData: previewBlock.data,
+      previewMimeType: 'image/png' as const,
       frames: renderedFrames.length,
       layout: layoutEntries,
       deviceState,
@@ -565,6 +592,12 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       lines.push(`\n**Saved:** ${result.outputFiles.join(', ')}`);
     }
 
-    return [{ type: 'text', text: lines.join('\n') }];
+    const items: Array<
+      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+    > = [{ type: 'text', text: lines.join('\n') }];
+    if (result.previewData && result.previewMimeType) {
+      items.push({ type: 'image', data: result.previewData, mimeType: result.previewMimeType });
+    }
+    return items;
   },
 });

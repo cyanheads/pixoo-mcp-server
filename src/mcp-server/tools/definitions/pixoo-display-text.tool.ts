@@ -5,7 +5,14 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { Canvas, FONT_3x5, FONT_5x7, measureText, type PixooSize } from '@cyanheads/pixoo-toolkit';
+import {
+  Canvas,
+  FONT_3x5,
+  FONT_5x7,
+  measureText,
+  NAMED_COLORS,
+  type PixooSize,
+} from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
 import { applyBackground, type BackgroundSpec } from '@/renderer/scene-renderer.js';
@@ -131,6 +138,11 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
   output: z.object({
     pushed: z.boolean().describe('True when the device acknowledged the push.'),
+    previewData: z
+      .string()
+      .optional()
+      .describe('Base64-encoded PNG preview of the rendered frame (8× upscaled, 512px).'),
+    previewMimeType: z.enum(['image/png']).optional().describe('MIME type of the preview image.'),
     layout: z
       .array(
         z
@@ -260,64 +272,82 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     const resolvedPalette = input.style?.palette ?? defaultPalette;
     if (resolvedPalette !== undefined) style.palette = resolvedPalette;
 
-    // Build canvas
+    // Build canvas — catch resolveColor throws from background/style colors
+    const validColorNames = Object.keys(NAMED_COLORS).join(', ');
     const canvas = new Canvas(size);
-    applyBackground(canvas, bg);
-
     const layoutEntries: LayoutEntry[] = [];
+    try {
+      applyBackground(canvas, bg);
 
-    // Render text — support multi-line by stacking
-    if (lines.length === 1) {
-      const entry = renderAutoFitText(
-        canvas,
-        combinedText,
-        input.position?.x ?? 'center',
-        input.position?.y ?? 'center',
-        0,
-        0,
-        style,
-        'auto',
-        0,
-        0,
-        1,
-      );
-      layoutEntries.push(entry);
-    } else {
-      // Multi-line: stack lines vertically
-      const fontVariant = input.font === 'compact' ? 'compact' : 'standard';
-      const font = fontVariant === 'compact' ? FONT_3x5 : FONT_5x7;
-      const scale = style.scale ?? 1;
-      const lineH = font.height * scale + 1;
-      const totalH = lines.length * lineH;
-      const startY =
-        input.position?.y === 'top'
-          ? 0
-          : input.position?.y === 'bottom'
-            ? size - totalH
-            : typeof input.position?.y === 'number'
-              ? input.position.y
-              : Math.floor((size - totalH) / 2);
+      // Render text — support multi-line by stacking
+      if (lines.length === 1) {
+        const entry = renderAutoFitText(
+          canvas,
+          combinedText,
+          input.position?.x ?? 'center',
+          input.position?.y ?? 'center',
+          0,
+          0,
+          style,
+          'auto',
+          0,
+          0,
+          1,
+        );
+        layoutEntries.push(entry);
 
-      for (let li = 0; li < lines.length; li++) {
-        const lineText = lines[li] ?? '';
-        const lineW = measureText(lineText, { font, scale });
-        const lineX = resolveX(input.position?.x ?? 'center', lineW, size, 0);
-        const lineY = startY + li * lineH;
-        drawStyledText(canvas, lineText, lineX, lineY, style, fontVariant);
-        layoutEntries.push({
-          element: li,
-          type: 'text',
-          box: { x: lineX, y: lineY, w: lineW, h: font.height * scale },
-          fits: lineX + lineW <= size && lineY + font.height * scale <= size,
-          action: 'none',
-          font: fontVariant,
-          scale,
-        });
+        // When the text overflows and scrolls, frame 0 renders at x=size (off-canvas),
+        // producing a solid-background preview. Re-render the preview canvas with the
+        // text at x=0 so the preview shows legible text.
+        if (entry.action === 'scrolling') {
+          applyBackground(canvas, bg);
+          drawStyledText(canvas, combinedText, 0, entry.box.y, style, entry.font ?? 'standard');
+        }
+      } else {
+        // Multi-line: stack lines vertically
+        const fontVariant = input.font === 'compact' ? 'compact' : 'standard';
+        const font = fontVariant === 'compact' ? FONT_3x5 : FONT_5x7;
+        const scale = style.scale ?? 1;
+        const lineH = font.height * scale + 1;
+        const totalH = lines.length * lineH;
+        const startY =
+          input.position?.y === 'top'
+            ? 0
+            : input.position?.y === 'bottom'
+              ? size - totalH
+              : typeof input.position?.y === 'number'
+                ? input.position.y
+                : Math.floor((size - totalH) / 2);
+
+        for (let li = 0; li < lines.length; li++) {
+          const lineText = lines[li] ?? '';
+          const lineW = measureText(lineText, { font, scale });
+          const lineX = resolveX(input.position?.x ?? 'center', lineW, size, 0);
+          const lineY = startY + li * lineH;
+          drawStyledText(canvas, lineText, lineX, lineY, style, fontVariant);
+          layoutEntries.push({
+            element: li,
+            type: 'text',
+            box: { x: lineX, y: lineY, w: lineW, h: font.height * scale },
+            fits: lineX + lineW <= size && lineY + font.height * scale <= size,
+            action: 'none',
+            font: fontVariant,
+            scale,
+          });
+        }
       }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Unknown color')) {
+        throw ctx.fail(
+          'invalid_color',
+          `${err.message}. Valid named colors: ${validColorNames}. See pixoo://reference/themes for palette colors.`,
+        );
+      }
+      throw err;
     }
 
-    // Encode preview (returned in content[] as image block by framework via format)
-    encodePreviewBlock(canvas);
+    // Encode preview (returned in content[] as image block via format)
+    const previewBlock = encodePreviewBlock(canvas);
 
     // Optional: save preview file
     const outputFiles: string[] = [];
@@ -347,6 +377,8 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
     return {
       pushed,
+      previewData: previewBlock.data,
+      previewMimeType: 'image/png' as const,
       layout: layoutEntries,
       deviceState,
       outputFiles: outputFiles.length > 0 ? outputFiles : undefined,
@@ -382,6 +414,12 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       lines.push(`\n**Saved:** ${result.outputFiles.join(', ')}`);
     }
 
-    return [{ type: 'text', text: lines.join('\n') }];
+    const items: Array<
+      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+    > = [{ type: 'text', text: lines.join('\n') }];
+    if (result.previewData && result.previewMimeType) {
+      items.push({ type: 'image', data: result.previewData, mimeType: result.previewMimeType });
+    }
+    return items;
   },
 });

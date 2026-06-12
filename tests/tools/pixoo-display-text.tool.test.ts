@@ -202,4 +202,48 @@ describe('pixooDisplayText', () => {
     expect(text).toContain('Saved');
     expect(text).toContain('/tmp/test.png');
   });
+
+  it('scrolling layout preview is non-blank (contains non-background pixels)', async () => {
+    // A very long text forces scrolling overflow.
+    // Before the fix, frame 0 renders at x=64 (off-canvas) → solid black preview.
+    // After the fix, the preview re-renders at x=0 → text is visible.
+    const { Canvas: CVS } = await import('@cyanheads/pixoo-toolkit');
+    const { drawStyledText } = await import('@/renderer/text-engine.js');
+
+    const ctx = createMockContext();
+    const longText = 'ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const input = pixooDisplayText.input.parse({ text: longText, push: false });
+    const result = await pixooDisplayText.handler(input, ctx);
+
+    // Confirm scrolling was triggered
+    expect(result.layout[0]?.action).toBe('scrolling');
+    expect(result.previewData).toBeDefined();
+
+    // Build a reference canvas rendered at x=0 to confirm text pixels exist there
+    const refCanvas = new CVS(64);
+    drawStyledText(refCanvas, longText, 0, 28, {});
+    const refHasPixels = Array.from({ length: 64 }, (_, x) => refCanvas.getPixelRgba(x, 28)).some(
+      ([r, g, b]) => r > 0 || g > 0 || b > 0,
+    );
+    // Sanity: text at x=0 should light pixels on the reference canvas
+    expect(refHasPixels).toBe(true);
+
+    // The actual preview PNG must be larger than a trivially-blank PNG (which compresses to <200 bytes)
+    const pngBytes = Buffer.from(result.previewData!, 'base64');
+    expect(pngBytes.length).toBeGreaterThan(500);
+  });
+
+  it('invalid_color error has data.reason === "invalid_color" and names a color', async () => {
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
+    const input = pixooDisplayText.input.parse({
+      text: 'Hello',
+      style: { color: 'invalidcolorname' },
+      push: false,
+    });
+    const err = await pixooDisplayText.handler(input, ctx).catch((e) => e);
+    expect(err).toBeDefined();
+    expect(err.data?.reason).toBe('invalid_color');
+    // Message should contain at least one known color name
+    expect(err.message).toMatch(/white|black|red|green|blue/);
+  });
 });

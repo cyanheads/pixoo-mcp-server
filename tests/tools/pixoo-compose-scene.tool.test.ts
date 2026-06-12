@@ -168,4 +168,31 @@ describe('pixooComposeScene', () => {
     expect(text).toContain('Frames');
     expect(text).toContain('Layout');
   });
+
+  it('invalid_color: data.reason === "invalid_color" and message names a color', async () => {
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
+    const input = pixooComposeScene.input.parse({
+      background: '#000000',
+      elements: [{ type: 'text', text: 'Hi', color: 'notacolor' }],
+      frames: 1,
+      push: false,
+    });
+    const err = await pixooComposeScene.handler(input, ctx).catch((e) => e);
+    expect(err).toBeDefined();
+    expect(err.data?.reason).toBe('invalid_color');
+    expect(err.message).toMatch(/white|black|red|green|blue/);
+  });
+
+  it('unknown_icon: data.reason === "unknown_icon"', async () => {
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
+    const input = pixooComposeScene.input.parse({
+      background: '#000000',
+      elements: [{ type: 'icon', name: 'nonexistent_icon_xyz' }],
+      frames: 1,
+      push: false,
+    });
+    const err = await pixooComposeScene.handler(input, ctx).catch((e) => e);
+    expect(err).toBeDefined();
+    expect(err.data?.reason).toBe('unknown_icon');
+  });
 });

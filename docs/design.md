@@ -37,7 +37,7 @@ Ground-up redesign of the Pixoo MCP server on `@cyanheads/mcp-ts-core`, with `@c
 |:-----|:------------|:-----|
 | `pixoo_scene_director` | Walks the model through designing a scene: theme → layout zones → elements → motion budget → `pixoo_compose_scene` call | `subject`, `mood?`, `animate?` |
 
-Prompt is optional scope — build last, defer if the surface lands without it.
+Prompt is optional scope — deferred past 1.0: the 7-tool surface (with `pixoo_design_brief` covering orientation) shipped without it. Candidate for a follow-up release.
 
 ## Overview
 

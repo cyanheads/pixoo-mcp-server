@@ -16,6 +16,13 @@ export default mergeConfig(
   defineConfig({
     resolve: { alias },
     test: {
+      // gifenc ships only a CJS "main" (no "exports" map). When pixoo-toolkit
+      // imports it as a named ESM import in the forks pool's native-ESM context,
+      // Node can't find the named exports. Inlining it forces the transform
+      // pipeline to handle the CJS→ESM conversion so named imports resolve.
+      server: {
+        deps: { inline: ['gifenc', '@cyanheads/pixoo-toolkit'] },
+      },
       projects: [
         {
           extends: true,

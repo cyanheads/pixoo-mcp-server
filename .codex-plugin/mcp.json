@@ -1,7 +1,7 @@
 {
-  "pixoo-mcp-server": {
+  "@cyanheads/pixoo-mcp-server": {
     "command": "npx",
-    "args": ["-y", "pixoo-mcp-server"],
+    "args": ["-y", "@cyanheads/pixoo-mcp-server"],
     "env": {
       "MCP_TRANSPORT_TYPE": "stdio"
     }

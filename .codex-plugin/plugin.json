@@ -1,25 +1,25 @@
 {
-  "name": "pixoo-mcp-server",
+  "name": "@cyanheads/pixoo-mcp-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network via MCP. STDIO or Streamable HTTP.",
   "author": {
-    "name": "",
-    "email": "",
-    "url": ""
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
   },
-  "homepage": "",
-  "repository": "",
+  "homepage": "https://github.com/cyanheads/pixoo-mcp-server#readme",
+  "repository": "git+https://github.com/cyanheads/pixoo-mcp-server.git",
   "license": "Apache-2.0",
-  "keywords": ["mcp", "mcp-server", "model-context-protocol"],
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "divoom", "pixoo", "pixoo-64", "led-matrix", "pixel-art", "typescript", "bun", "stdio", "streamable-http", "ai-agent", "animation", "display"],
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "pixoo-mcp-server",
-    "shortDescription": "",
-    "longDescription": "",
-    "developerName": "",
-    "category": "",
-    "capabilities": ["Read"],
-    "websiteURL": "",
+    "shortDescription": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network via MCP.",
+    "longDescription": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on the local network. Supports device discovery, layered scene composition, text styling, image push, and live device control. Deployable as stdio or streamable HTTP.",
+    "developerName": "cyanheads",
+    "category": "hardware",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/cyanheads/pixoo-mcp-server",
     "defaultPrompt": []
   }
 }

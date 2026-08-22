@@ -3,8 +3,13 @@
 #
 # This stage installs all dependencies (including dev), builds the TypeScript
 # source code into JavaScript, and prepares the production assets.
+#
+# Pinned to $BUILDPLATFORM so a multi-arch build runs `tsc` once, natively. Only
+# `dist/` crosses into the production stage and that output is JavaScript, so it
+# is architecture-independent — emulating this stage buys nothing, and Bun 1.4
+# aborts with MemoryExhaustion under QEMU x86_64 when it is emulated.
 # ==============================================================================
-FROM oven/bun:1.4.0 AS build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS build
 
 WORKDIR /usr/src/app
 

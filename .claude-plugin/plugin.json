@@ -1,6 +1,6 @@
 {
   "name": "pixoo-mcp-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads"

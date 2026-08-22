@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.1.0](changelog/1.1.x/1.1.0.md) — 2026-08-22 · ⚠️ Breaking · 🛡️ Security
+
+SDK v2 adoption: rendered previews move from `output` to `content[]` (`previewData`/`previewMimeType` removed from 3 tools); fixes a dead path-traversal guard in `pixoo_compose_scene`'s output path (#5).
+
 ## [1.0.0](changelog/1.0.x/1.0.0.md) — 2026-06-12 · ⚠️ Breaking
 
 Ground-up 1.0 rebuild on mcp-ts-core 0.10.6 — pure renderer pipeline, 7 tools, 4 resources, 166 tests.

@@ -1,10 +1,9 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-06-12 10:20:55
+Generated on: 2026-08-22 21:44:33
 
 ```text
 pixoo-mcp-server/
-├── .claude/
 ├── .claude-plugin/
 │   └── plugin.json
 ├── .codex-plugin/
@@ -15,19 +14,24 @@ pixoo-mcp-server/
 │   │   ├── bug_report.yml
 │   │   ├── config.yml
 │   │   └── feature_request.yml
-│   └── FUNDING.yml
+│   ├── CODE_OF_CONDUCT.md
+│   ├── CONTRIBUTING.md
+│   ├── FUNDING.yml
+│   └── SECURITY.md
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
 ├── changelog/
 │   ├── 0.1.x/
 │   ├── 1.0.x/
+│   ├── 1.1.x/
 │   └── template.md
 ├── docs/
 │   └── design.md
 ├── scripts/
 │   ├── build-changelog.ts
 │   ├── build.ts
+│   ├── check-dependency-specifiers.ts
 │   ├── check-docs-sync.ts
 │   ├── check-framework-antipatterns.ts
 │   ├── check-skill-versions.ts
@@ -130,7 +134,6 @@ pixoo-mcp-server/
 │   │   └── server-config.ts
 │   ├── mcp-server/
 │   │   ├── prompts/
-│   │   │   └── definitions/
 │   │   ├── resources/
 │   │   │   └── definitions/
 │   │   │       ├── pixoo-design-guide.resource.ts
@@ -150,6 +153,7 @@ pixoo-mcp-server/
 │   │   ├── icons.ts
 │   │   ├── keyframes.ts
 │   │   ├── preview.ts
+│   │   ├── remote-image.ts
 │   │   ├── scene-renderer.ts
 │   │   ├── text-engine.ts
 │   │   └── themes.ts
@@ -158,11 +162,14 @@ pixoo-mcp-server/
 │   │       └── pixoo-service.ts
 │   └── index.ts
 ├── tests/
+│   ├── helpers/
+│   │   └── list-extra.ts
 │   ├── prompts/
 │   ├── renderer/
 │   │   ├── icons.test.ts
 │   │   ├── keyframes.test.ts
 │   │   ├── preview.test.ts
+│   │   ├── remote-image.test.ts
 │   │   ├── scene-renderer.test.ts
 │   │   ├── text-engine.test.ts
 │   │   └── themes.test.ts
@@ -183,11 +190,13 @@ pixoo-mcp-server/
 │       └── pixoo-push-image.tool.test.ts
 ├── .dockerignore
 ├── .env.example
+├── .gitattributes
 ├── .gitignore
 ├── .mcpbignore
 ├── AGENTS.md
 ├── biome.json
 ├── bun.lock
+├── bunfig.toml
 ├── CHANGELOG.md
 ├── CLAUDE.md
 ├── devcheck.config.json

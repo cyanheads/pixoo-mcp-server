@@ -3,6 +3,7 @@
 /.claude/
 /.agents/
 /skills/
+/favorites/
 /Dockerfile
 /bun.lock
 /bunfig.toml

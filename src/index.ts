@@ -39,6 +39,17 @@ await createApp({
     pixooDesignGuideResource,
   ],
   prompts: [],
+  /**
+   * The tool and resource surface is fixed at build time — nothing registers or
+   * retires a definition at runtime — so the list results are safe for shared
+   * caches to hold. Per-resource `resources/read` lifetimes are declared on the
+   * definitions themselves; the live device-status resource declares none.
+   */
+  cacheHints: {
+    'tools/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/templates/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+  },
   setup(core) {
     initPixooService(core.config, core.storage);
   },

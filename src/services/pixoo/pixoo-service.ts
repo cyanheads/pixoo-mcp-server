@@ -5,12 +5,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import {
-  invalidParams,
-  JsonRpcErrorCode,
-  McpError,
-  serviceUnavailable,
-} from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import {
   type Canvas,
@@ -93,8 +88,7 @@ export class PixooService {
     if (!this.client) {
       const cfg = getServerConfig();
       if (!cfg.pixooIp) {
-        throw new McpError(
-          JsonRpcErrorCode.InvalidParams,
+        throw invalidParams(
           'No device configured — PIXOO_IP is not set. Run pixoo_discover_devices to find your device IP.',
           {
             reason: 'no_device_configured',

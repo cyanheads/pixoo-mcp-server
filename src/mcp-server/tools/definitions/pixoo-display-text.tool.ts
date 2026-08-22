@@ -138,11 +138,6 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
   output: z.object({
     pushed: z.boolean().describe('True when the device acknowledged the push.'),
-    previewData: z
-      .string()
-      .optional()
-      .describe('Base64-encoded PNG preview of the rendered frame (8× upscaled, 512px).'),
-    previewMimeType: z.enum(['image/png']).optional().describe('MIME type of the preview image.'),
     layout: z
       .array(
         z
@@ -346,8 +341,10 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       throw err;
     }
 
-    // Encode preview (returned in content[] as image block via format)
-    const previewBlock = encodePreviewBlock(canvas);
+    // The rendered frame rides content[] as an image block. It is deliberately
+    // absent from `output` — routing it through ctx.content carries the base64
+    // once instead of duplicating it into structuredContent.
+    ctx.content.image(encodePreviewBlock(canvas).data, 'image/png');
 
     // Optional: save preview file
     const outputFiles: string[] = [];
@@ -377,8 +374,6 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
     return {
       pushed,
-      previewData: previewBlock.data,
-      previewMimeType: 'image/png' as const,
       layout: layoutEntries,
       deviceState,
       outputFiles: outputFiles.length > 0 ? outputFiles : undefined,
@@ -414,12 +409,6 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       lines.push(`\n**Saved:** ${result.outputFiles.join(', ')}`);
     }
 
-    const items: Array<
-      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-    > = [{ type: 'text', text: lines.join('\n') }];
-    if (result.previewData && result.previewMimeType) {
-      items.push({ type: 'image', data: result.previewData, mimeType: result.previewMimeType });
-    }
-    return items;
+    return [{ type: 'text', text: lines.join('\n') }];
   },
 });

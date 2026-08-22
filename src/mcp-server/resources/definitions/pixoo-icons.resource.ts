@@ -13,6 +13,26 @@ export const pixooIconsResource = resource('pixoo://reference/icons', {
     'Built-in icon names organized by category (weather, arrows, status, media). Use icon names in pixoo_compose_scene elements with type "icon". Pass name to the icon element, or browse this resource to discover available names.',
   mimeType: 'application/json',
   params: z.object({}),
+  // Compile-time constants — safe for a shared cache to hold for a day.
+  cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },
+
+  output: z.object({
+    categories: z.array(z.string()).describe('Distinct icon category names.'),
+    byCategory: z
+      .record(z.string(), z.array(z.string()))
+      .describe('Icon names grouped by category.'),
+    icons: z
+      .array(
+        z
+          .object({
+            name: z.string().describe('Icon name, usable as the icon element `name` argument.'),
+            category: z.string().describe('Category this icon belongs to.'),
+            viewBox: z.string().describe('SVG viewBox the icon path is drawn against.'),
+          })
+          .describe('A single registered icon.'),
+      )
+      .describe('Every registered icon in registry order.'),
+  }),
 
   handler(_params, _ctx) {
     const byCategory = getIconsByCategory();

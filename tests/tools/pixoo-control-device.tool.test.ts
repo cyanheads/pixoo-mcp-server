@@ -50,7 +50,7 @@ describe('pixooControlDevice', () => {
 
   it('read-only call (no params) — returns reachable:true and applied:[]', async () => {
     stubStatus();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooControlDevice.errors });
     const input = pixooControlDevice.input.parse({});
     const result = await pixooControlDevice.handler(input, ctx);
 
@@ -63,7 +63,7 @@ describe('pixooControlDevice', () => {
   it('brightness setter — applied[] contains "brightness:75"', async () => {
     stubStatus();
     stubSetters();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooControlDevice.errors });
     const input = pixooControlDevice.input.parse({ brightness: 75 });
     const result = await pixooControlDevice.handler(input, ctx);
 
@@ -73,7 +73,7 @@ describe('pixooControlDevice', () => {
   it('screen setter — applied[] contains "screen:on"', async () => {
     stubStatus();
     stubSetters();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooControlDevice.errors });
     const input = pixooControlDevice.input.parse({ screen: 'on' });
     const result = await pixooControlDevice.handler(input, ctx);
 

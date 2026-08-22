@@ -3,7 +3,7 @@
  * @module tests/tools/pixoo-compose-scene.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getContentBlocks } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
@@ -48,7 +48,7 @@ describe('pixooComposeScene', () => {
 
   it('static scene with push:true calls pushFrame and returns deviceState', async () => {
     await stubPush();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
     const input = pixooComposeScene.input.parse({
       background: '#000000',
       elements: [{ type: 'text', text: 'HI', x: 0, y: 0 }],
@@ -61,7 +61,7 @@ describe('pixooComposeScene', () => {
   });
 
   it('static scene with push:false — returns layout[] and frames:1', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
     const input = pixooComposeScene.input.parse({
       background: '#001020',
       elements: [{ type: 'text', text: 'HI', x: 0, y: 0 }],
@@ -75,10 +75,15 @@ describe('pixooComposeScene', () => {
     expect(Array.isArray(result.layout)).toBe(true);
     expect(result.layout.length).toBeGreaterThan(0);
     expect(result.deviceState).toBeUndefined();
+    // The rendered scene rides content[], never structuredContent.
+    expect(getContentBlocks(ctx)).toEqual([
+      { type: 'image', data: expect.any(String), mimeType: 'image/png' },
+    ]);
+    expect(result).not.toHaveProperty('previewData');
   });
 
   it('layout entry has required fields (element, type, box, fits, action)', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
     const input = pixooComposeScene.input.parse({
       background: '#000000',
       elements: [{ type: 'rect', x: 0, y: 0, w: 10, h: 5, color: '#ff0000' }],
@@ -98,7 +103,7 @@ describe('pixooComposeScene', () => {
 
   it('animation path (frames > 1) — returns frames count and image content block', async () => {
     await stubPushAnimation();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
     const input = pixooComposeScene.input.parse({
       background: { theme: 'midnight' },
       elements: [
@@ -138,7 +143,7 @@ describe('pixooComposeScene', () => {
   });
 
   it('gradient background resolves without throw', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
     const input = pixooComposeScene.input.parse({
       background: { gradient: { type: 'v', from: '#001020', to: '#000000' } },
       elements: [],
@@ -177,10 +182,27 @@ describe('pixooComposeScene', () => {
       frames: 1,
       push: false,
     });
-    const err = await pixooComposeScene.handler(input, ctx).catch((e) => e);
-    expect(err).toBeDefined();
-    expect(err.data?.reason).toBe('invalid_color');
-    expect(err.message).toMatch(/white|black|red|green|blue/);
+    await expect(Promise.resolve(pixooComposeScene.handler(input, ctx))).rejects.toMatchObject({
+      data: { reason: 'invalid_color' },
+      message: expect.stringMatching(/white|black|red|green|blue/),
+    });
+  });
+
+  it.each([
+    ['relative', 'relative/scene.png'],
+    ['traversal', '/tmp/../etc/scene.png'],
+  ])('invalid_output_path: a %s output path is rejected', async (_label, output) => {
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
+    const input = pixooComposeScene.input.parse({
+      background: '#000000',
+      elements: [{ type: 'rect', x: 0, y: 0, w: 4, h: 4, color: '#ffffff' }],
+      frames: 1,
+      push: false,
+      output,
+    });
+    await expect(Promise.resolve(pixooComposeScene.handler(input, ctx))).rejects.toMatchObject({
+      data: { reason: 'invalid_output_path' },
+    });
   });
 
   it('unknown_icon: data.reason === "unknown_icon"', async () => {
@@ -191,8 +213,8 @@ describe('pixooComposeScene', () => {
       frames: 1,
       push: false,
     });
-    const err = await pixooComposeScene.handler(input, ctx).catch((e) => e);
-    expect(err).toBeDefined();
-    expect(err.data?.reason).toBe('unknown_icon');
+    await expect(Promise.resolve(pixooComposeScene.handler(input, ctx))).rejects.toMatchObject({
+      data: { reason: 'unknown_icon' },
+    });
   });
 });

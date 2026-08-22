@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDeviceStatusResource } from '@/mcp-server/resources/definitions/pixoo-device-status.resource.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { listExtra } from '../helpers/list-extra.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -32,7 +33,7 @@ describe('pixooDeviceStatusResource', () => {
     initPixooService(fakeConfig, fakeStorage);
 
     const ctx = createMockContext();
-    const params = pixooDeviceStatusResource.params.parse({});
+    const params = pixooDeviceStatusResource.params!.parse({});
     const result = await pixooDeviceStatusResource.handler(params, ctx);
 
     expect(result.reachable).toBe(false);
@@ -49,7 +50,7 @@ describe('pixooDeviceStatusResource', () => {
     vi.spyOn(svc, 'getStatus').mockResolvedValue({ reachable: false });
 
     const ctx = createMockContext();
-    const params = pixooDeviceStatusResource.params.parse({});
+    const params = pixooDeviceStatusResource.params!.parse({});
     const result = await pixooDeviceStatusResource.handler(params, ctx);
 
     expect(result.configuredIp).toBe('10.0.0.1');
@@ -66,11 +67,10 @@ describe('pixooDeviceStatusResource', () => {
       channel: 'custom',
       brightness: 75,
       screenOn: true,
-      clockId: undefined,
     });
 
     const ctx = createMockContext();
-    const params = pixooDeviceStatusResource.params.parse({});
+    const params = pixooDeviceStatusResource.params!.parse({});
     const result = await pixooDeviceStatusResource.handler(params, ctx);
 
     expect(result.reachable).toBe(true);
@@ -81,7 +81,7 @@ describe('pixooDeviceStatusResource', () => {
   });
 
   it('list() returns the expected URI and metadata', async () => {
-    const listing = await pixooDeviceStatusResource.list!();
+    const listing = await pixooDeviceStatusResource.list!(listExtra());
     expect(listing.resources.length).toBe(1);
     const r = listing.resources[0]!;
     expect(r.uri).toBe('pixoo://device/status');

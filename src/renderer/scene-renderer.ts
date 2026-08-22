@@ -5,6 +5,7 @@
 
 import * as fs from 'node:fs/promises';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import type { RequestContext } from '@cyanheads/mcp-ts-core/utils';
 import {
   Canvas,
   downsampleSprite,
@@ -21,6 +22,7 @@ import {
 } from '@cyanheads/pixoo-toolkit';
 import { ICONS } from './icons.js';
 import { compileEffect, type EffectName, getKeyframeValue, type KeyframeMap } from './keyframes.js';
+import { fetchRemoteImageToTempPng, isRemoteSource } from './remote-image.js';
 import {
   drawStyledText,
   type FontVariant,
@@ -199,8 +201,16 @@ export interface AssetCache {
   sprites: Map<string, Awaited<ReturnType<typeof downsampleSprite>>>;
 }
 
-/** Preload all async assets referenced in elements. */
-export async function preloadAssets(elements: SceneElement[]): Promise<AssetCache> {
+/**
+ * Preload all async assets referenced in elements.
+ *
+ * `ctx` is threaded through so a remote image fetch correlates to the
+ * originating request in logs and traces.
+ */
+export async function preloadAssets(
+  elements: SceneElement[],
+  ctx: RequestContext,
+): Promise<AssetCache> {
   const cache: AssetCache = { images: new Map(), sprites: new Map() };
 
   await Promise.all(
@@ -208,44 +218,12 @@ export async function preloadAssets(elements: SceneElement[]): Promise<AssetCach
       if (el.type === 'image') {
         const source = el.source;
         if (!cache.images.has(source)) {
-          // Fetch URL to temp file (https only)
-          let localPath = source;
-          let tmpPathToCleanup: string | undefined;
-          if (source.startsWith('https://') || source.startsWith('http://')) {
-            if (!source.startsWith('https://')) {
-              throw invalidParams(
-                `Only https URLs are supported for image elements. Received: "${source}"`,
-                { reason: 'asset_not_found' },
-              );
-            }
-            const { default: sharp } = await import('sharp');
-            const resp = await fetch(source);
-            if (!resp.ok) {
-              throw invalidParams(`Failed to fetch image from "${source}": HTTP ${resp.status}`, {
-                reason: 'asset_not_found',
-              });
-            }
-            // Cap response size at 10 MB before buffering
-            const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-            const contentLength = Number(resp.headers.get('content-length') ?? 0);
-            if (contentLength > MAX_IMAGE_BYTES) {
-              throw invalidParams(
-                `Image response too large (${contentLength} bytes; limit: ${MAX_IMAGE_BYTES})`,
-                { reason: 'asset_not_found' },
-              );
-            }
-            const buf = Buffer.from(await resp.arrayBuffer());
-            if (buf.byteLength > MAX_IMAGE_BYTES) {
-              throw invalidParams(
-                `Image response too large (${buf.byteLength} bytes; limit: ${MAX_IMAGE_BYTES})`,
-                { reason: 'asset_not_found' },
-              );
-            }
-            const tmpPath = `/tmp/pixoo-img-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-            await sharp(buf).png().toFile(tmpPath);
-            localPath = tmpPath;
-            tmpPathToCleanup = tmpPath;
-          }
+          // The toolkit's loadImage reads from disk, so a remote source is
+          // staged to a temp PNG first and unlinked once it has been read.
+          const tmpPathToCleanup = isRemoteSource(source)
+            ? await fetchRemoteImageToTempPng(source, ctx)
+            : undefined;
+          const localPath = tmpPathToCleanup ?? source;
           const loadOpts: Parameters<typeof loadImage>[1] = {
             fit: el.fit ?? 'contain',
             kernel: el.kernel ?? 'nearest',
@@ -714,9 +692,10 @@ export async function renderScene(
   background: BackgroundSpec,
   elements: SceneElement[],
   frameCount: number,
+  ctx: RequestContext,
   size: 16 | 32 | 64 = 64,
 ): Promise<{ frames: Canvas[]; layoutEntries: LayoutEntry[] }> {
-  const assets = await preloadAssets(elements);
+  const assets = await preloadAssets(elements, ctx);
   const allLayoutEntries: LayoutEntry[] = [];
   const frames: Canvas[] = [];
 

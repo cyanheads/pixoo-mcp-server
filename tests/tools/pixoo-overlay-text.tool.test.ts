@@ -39,7 +39,7 @@ describe('pixooOverlayText', () => {
 
   it('set mode — happy path: acknowledged:true, mode:"set", correct id', async () => {
     stubSendText();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooOverlayText.errors });
     const input = pixooOverlayText.input.parse({
       mode: 'set',
       id: 0,
@@ -55,7 +55,7 @@ describe('pixooOverlayText', () => {
 
   it('clear mode — happy path: acknowledged:true, mode:"clear", correct id', async () => {
     stubClearText();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooOverlayText.errors });
     const input = pixooOverlayText.input.parse({
       mode: 'clear',
       id: 5,

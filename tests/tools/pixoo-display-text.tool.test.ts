@@ -3,7 +3,7 @@
  * @module tests/tools/pixoo-display-text.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getContentBlocks } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDisplayText } from '@/mcp-server/tools/definitions/pixoo-display-text.tool.js';
@@ -44,7 +44,7 @@ describe('pixooDisplayText', () => {
   }
 
   it('happy path: renders text with push:false — returns layout[] and pushed:false', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({
       text: 'Hello',
       push: false,
@@ -58,7 +58,7 @@ describe('pixooDisplayText', () => {
   });
 
   it('layout entry has required fields', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({ text: 'Hi', push: false });
     const result = await pixooDisplayText.handler(input, ctx);
 
@@ -76,7 +76,7 @@ describe('pixooDisplayText', () => {
 
   it('with push:true calls pushFrame and returns deviceState', async () => {
     await stubPush();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({ text: 'Hello', push: true });
     const result = await pixooDisplayText.handler(input, ctx);
 
@@ -85,7 +85,7 @@ describe('pixooDisplayText', () => {
   });
 
   it('applies theme background when theme is set', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({
       text: 'Theme test',
       theme: 'midnight',
@@ -97,7 +97,7 @@ describe('pixooDisplayText', () => {
   });
 
   it('accepts array of text lines and renders each as a layout entry', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({
       text: ['Line 1', 'Line 2'],
       push: false,
@@ -108,7 +108,7 @@ describe('pixooDisplayText', () => {
   });
 
   it('accepts custom gradient background', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({
       text: 'Gradient',
       background: { gradient: { type: 'v', from: '#001020', to: '#000000' } },
@@ -118,7 +118,7 @@ describe('pixooDisplayText', () => {
   });
 
   it('accepts style with palette, shadow, outline, scale', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({
       text: 'Styled',
       style: { palette: 'ember', shadow: true, outline: true, scale: 2 },
@@ -141,7 +141,7 @@ describe('pixooDisplayText', () => {
   });
 
   it('outputFiles is absent when PIXOO_OUTPUT_DIR is not set', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const input = pixooDisplayText.input.parse({ text: 'No output dir', push: false });
     const result = await pixooDisplayText.handler(input, ctx);
     expect(result.outputFiles).toBeUndefined();
@@ -210,14 +210,15 @@ describe('pixooDisplayText', () => {
     const { Canvas: CVS } = await import('@cyanheads/pixoo-toolkit');
     const { drawStyledText } = await import('@/renderer/text-engine.js');
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDisplayText.errors });
     const longText = 'ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ';
     const input = pixooDisplayText.input.parse({ text: longText, push: false });
     const result = await pixooDisplayText.handler(input, ctx);
 
     // Confirm scrolling was triggered
     expect(result.layout[0]?.action).toBe('scrolling');
-    expect(result.previewData).toBeDefined();
+    const [preview] = getContentBlocks(ctx);
+    expect(preview).toMatchObject({ type: 'image', mimeType: 'image/png' });
 
     // Build a reference canvas rendered at x=0 to confirm text pixels exist there
     const refCanvas = new CVS(64);
@@ -229,7 +230,7 @@ describe('pixooDisplayText', () => {
     expect(refHasPixels).toBe(true);
 
     // The actual preview PNG must be larger than a trivially-blank PNG (which compresses to <200 bytes)
-    const pngBytes = Buffer.from(result.previewData!, 'base64');
+    const pngBytes = Buffer.from((preview as { data: string }).data, 'base64');
     expect(pngBytes.length).toBeGreaterThan(500);
   });
 
@@ -240,10 +241,10 @@ describe('pixooDisplayText', () => {
       style: { color: 'invalidcolorname' },
       push: false,
     });
-    const err = await pixooDisplayText.handler(input, ctx).catch((e) => e);
-    expect(err).toBeDefined();
-    expect(err.data?.reason).toBe('invalid_color');
     // Message should contain at least one known color name
-    expect(err.message).toMatch(/white|black|red|green|blue/);
+    await expect(Promise.resolve(pixooDisplayText.handler(input, ctx))).rejects.toMatchObject({
+      data: { reason: 'invalid_color' },
+      message: expect.stringMatching(/white|black|red|green|blue/),
+    });
   });
 });

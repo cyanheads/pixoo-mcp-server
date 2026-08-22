@@ -3,6 +3,7 @@
  * @module tests/renderer/scene-renderer.test
  */
 
+import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { Canvas } from '@cyanheads/pixoo-toolkit';
 import { describe, expect, it } from 'vitest';
 import {
@@ -211,6 +212,7 @@ describe('renderScene', () => {
       '#000000',
       [{ type: 'rect', x: 0, y: 0, w: 8, h: 8, color: '#0000ff' }],
       1,
+      createMockContext(),
       64,
     );
     expect(frames).toHaveLength(1);
@@ -223,6 +225,7 @@ describe('renderScene', () => {
       '#000000',
       [{ type: 'text', text: 'GO', x: 0, y: 0 }],
       3,
+      createMockContext(),
       64,
     );
     expect(frames).toHaveLength(3);

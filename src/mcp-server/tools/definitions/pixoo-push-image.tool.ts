@@ -9,6 +9,7 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { loadImage, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
+import { fetchRemoteImageToTempPng, isRemoteSource } from '@/renderer/remote-image.js';
 import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 export const pixooPushImage = tool('pixoo_push_image', {
@@ -39,11 +40,6 @@ export const pixooPushImage = tool('pixoo_push_image', {
 
   output: z.object({
     pushed: z.boolean().describe('True when the device acknowledged the push.'),
-    previewData: z
-      .string()
-      .optional()
-      .describe('Base64-encoded PNG preview of the downsampled 64×64 result (8× upscaled, 512px).'),
-    previewMimeType: z.enum(['image/png']).optional().describe('MIME type of the preview image.'),
     deviceState: z
       .object({
         reachable: z.boolean().describe('True if device responded.'),
@@ -107,62 +103,24 @@ export const pixooPushImage = tool('pixoo_push_image', {
     const cfg = getServerConfig();
     const size = cfg.pixooSize as PixooSize;
 
-    let localPath = input.source;
+    // The toolkit's loadImage reads from disk, so a remote source is staged to a
+    // temp PNG first and unlinked once it has been read.
     let tmpPathToCleanup: string | undefined;
-
-    // Handle URL: fetch to temp file
-    if (input.source.startsWith('https://') || input.source.startsWith('http://')) {
-      if (!input.source.startsWith('https://')) {
-        throw ctx.fail(
-          'asset_not_found',
-          `Only https URLs are supported. Received: "${input.source}".`,
-          { url: input.source },
-        );
-      }
+    if (isRemoteSource(input.source)) {
       ctx.log.info('Fetching image from URL', { url: input.source });
-      const resp = await fetch(input.source);
-      if (!resp.ok) {
-        throw ctx.fail(
-          'asset_not_found',
-          `Failed to fetch image from "${input.source}": HTTP ${resp.status}.`,
-          { url: input.source, status: resp.status },
-        );
-      }
-      // Cap response size at 10 MB before buffering
-      const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-      const contentLength = Number(resp.headers.get('content-length') ?? 0);
-      if (contentLength > MAX_IMAGE_BYTES) {
-        throw ctx.fail(
-          'asset_not_found',
-          `Image response too large (${contentLength} bytes; limit: ${MAX_IMAGE_BYTES}).`,
-          { url: input.source, contentLength },
-        );
-      }
-      const buf = Buffer.from(await resp.arrayBuffer());
-      if (buf.byteLength > MAX_IMAGE_BYTES) {
-        throw ctx.fail(
-          'asset_not_found',
-          `Image response too large (${buf.byteLength} bytes; limit: ${MAX_IMAGE_BYTES}).`,
-          { url: input.source, byteLength: buf.byteLength },
-        );
-      }
-      const { default: sharp } = await import('sharp');
-      const tmpPath = `/tmp/pixoo-img-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-      await sharp(buf).png().toFile(tmpPath);
-      localPath = tmpPath;
-      tmpPathToCleanup = tmpPath;
+      tmpPathToCleanup = await fetchRemoteImageToTempPng(input.source, ctx);
     } else {
-      // Verify local file exists
       try {
-        await fs.access(localPath);
+        await fs.access(input.source);
       } catch {
         throw ctx.fail(
           'asset_not_found',
-          `Image file not found: "${localPath}". Verify the absolute path is correct.`,
-          { path: localPath },
+          `Image file not found: "${input.source}". Verify the absolute path is correct.`,
+          { path: input.source },
         );
       }
     }
+    const localPath = tmpPathToCleanup ?? input.source;
 
     ctx.log.info('Loading and resizing image', { fit: input.fit, kernel: input.kernel });
 
@@ -176,8 +134,10 @@ export const pixooPushImage = tool('pixoo_push_image', {
       fs.unlink(tmpPathToCleanup).catch(() => undefined);
     }
 
-    // Encode preview
-    const previewBlock = encodePreviewBlock(canvas);
+    // The downsampled result rides content[] as an image block. It is deliberately
+    // absent from `output` — routing it through ctx.content carries the base64 once
+    // instead of duplicating it into structuredContent.
+    ctx.content.image(encodePreviewBlock(canvas).data, 'image/png');
 
     // Save preview
     const outputFiles: string[] = [];
@@ -195,8 +155,6 @@ export const pixooPushImage = tool('pixoo_push_image', {
 
     return {
       pushed,
-      previewData: previewBlock.data,
-      previewMimeType: 'image/png' as const,
       deviceState,
       outputFiles: outputFiles.length > 0 ? outputFiles : undefined,
     };
@@ -221,12 +179,6 @@ export const pixooPushImage = tool('pixoo_push_image', {
       lines.push(`**Saved:** ${result.outputFiles.join(', ')}`);
     }
 
-    const items: Array<
-      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-    > = [{ type: 'text', text: lines.join('\n') }];
-    if (result.previewData && result.previewMimeType) {
-      items.push({ type: 'image', data: result.previewData, mimeType: result.previewMimeType });
-    }
-    return items;
+    return [{ type: 'text', text: lines.join('\n') }];
   },
 });

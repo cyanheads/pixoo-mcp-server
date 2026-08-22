@@ -113,6 +113,8 @@ export const pixooDesignGuideResource = resource('pixoo://reference/design-guide
     'Long-form 64px craft guide: legibility floors, palette discipline, layout zones, animation budget, pixel art rules, and known device behaviors. Read this before composing scenes or troubleshooting display quality.',
   mimeType: 'text/markdown',
   params: z.object({}),
+  // Compile-time constant — safe for a shared cache to hold for a day.
+  cacheHint: { ttlMs: 86_400_000, cacheScope: 'public' },
 
   handler(_params, _ctx) {
     return DESIGN_GUIDE;

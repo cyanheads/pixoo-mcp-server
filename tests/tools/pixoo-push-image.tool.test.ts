@@ -5,7 +5,7 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getContentBlocks } from '@cyanheads/mcp-ts-core/testing';
 import { Canvas, savePng } from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
@@ -56,7 +56,7 @@ describe('pixooPushImage', () => {
   }
 
   it('happy path with local fixture — push:false returns pushed:false', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooPushImage.errors });
     const input = pixooPushImage.input.parse({
       source: fixturePath,
       push: false,
@@ -65,11 +65,16 @@ describe('pixooPushImage', () => {
 
     expect(result.pushed).toBe(false);
     expect(result.deviceState).toBeUndefined();
+    // The downsampled result rides content[], never structuredContent.
+    expect(getContentBlocks(ctx)).toEqual([
+      { type: 'image', data: expect.any(String), mimeType: 'image/png' },
+    ]);
+    expect(result).not.toHaveProperty('previewData');
   });
 
   it('push:true calls pushFrame and returns deviceState', async () => {
     await stubPush();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooPushImage.errors });
     const input = pixooPushImage.input.parse({
       source: fixturePath,
       push: true,

@@ -20,6 +20,9 @@ const fakeDevices = [
 describe('pixooDiscoverDevices', () => {
   beforeEach(() => {
     resetServerConfig();
+    // A developer .env is loaded before the suite runs, so PIXOO_IP is cleared
+    // here rather than assumed absent — each case sets it explicitly.
+    delete process.env['PIXOO_IP'];
     process.env['PIXOO_SIZE'] = '64';
     process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '0';
     initPixooService(fakeConfig, fakeStorage);
@@ -39,7 +42,7 @@ describe('pixooDiscoverDevices', () => {
 
   it('happy path — returns discovered devices array', async () => {
     stubDiscovery();
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDiscoverDevices.errors });
     const input = pixooDiscoverDevices.input.parse({ timeoutMs: 1000 });
     const result = await pixooDiscoverDevices.handler(input, ctx);
 
@@ -55,7 +58,7 @@ describe('pixooDiscoverDevices', () => {
     initPixooService(fakeConfig, fakeStorage);
     stubDiscovery();
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDiscoverDevices.errors });
     const input = pixooDiscoverDevices.input.parse({ timeoutMs: 1000 });
     const result = await pixooDiscoverDevices.handler(input, ctx);
 
@@ -69,7 +72,7 @@ describe('pixooDiscoverDevices', () => {
     initPixooService(fakeConfig, fakeStorage);
     stubDiscovery();
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: pixooDiscoverDevices.errors });
     const input = pixooDiscoverDevices.input.parse({ timeoutMs: 1000 });
     const result = await pixooDiscoverDevices.handler(input, ctx);
 

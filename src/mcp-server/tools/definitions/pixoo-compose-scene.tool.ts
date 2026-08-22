@@ -5,7 +5,7 @@
 
 import * as path from 'node:path';
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams, JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { Canvas, NAMED_COLORS, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { ICONS } from '@/renderer/icons.js';
@@ -364,7 +364,10 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     output: z
       .string()
       .optional()
-      .describe('Explicit output file path for saving (overrides PIXOO_OUTPUT_DIR).'),
+      .describe(
+        'Absolute, already-normalized path to save the first frame to, in addition to the ' +
+          'PIXOO_OUTPUT_DIR auto-save when that is configured. Both paths are reported in outputFiles.',
+      ),
   }),
 
   output: z.object({
@@ -373,13 +376,6 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .describe(
         'True when the device acknowledged the push. False when push: false or push failed.',
       ),
-    previewData: z
-      .string()
-      .optional()
-      .describe(
-        'Base64-encoded PNG preview of the rendered scene (8× upscaled, 512px). For animations: the middle frame.',
-      ),
-    previewMimeType: z.enum(['image/png']).optional().describe('MIME type of the preview image.'),
     frames: z
       .number()
       .describe('Number of frames in the rendered output (1 for static, 2–40 for animations).'),
@@ -456,6 +452,13 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       when: 'Icon name not found in the registry.',
       recovery: 'Check pixoo://reference/icons for available icon names and categories.',
     },
+    {
+      reason: 'invalid_output_path',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'The output path is relative or contains traversal segments.',
+      recovery:
+        'Pass an absolute, already-normalized path (for example /tmp/scene.png), or omit output to use PIXOO_OUTPUT_DIR.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -470,6 +473,21 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       bg = { gradient: input.background.gradient };
     } else {
       bg = { theme: input.background.theme };
+    }
+
+    // Validate the requested output path before rendering: a bad path must not
+    // cost a full render, an emitted content block, and a PIXOO_OUTPUT_DIR write
+    // before it is reported. The string is checked as given — path.resolve()
+    // would silently absolutize a relative path against the process cwd and
+    // collapse traversal segments, passing everything.
+    if (
+      input.output &&
+      (!path.isAbsolute(input.output) || path.normalize(input.output) !== input.output)
+    ) {
+      throw ctx.fail(
+        'invalid_output_path',
+        `Invalid output path: "${input.output}". Must be an absolute path with no traversal segments.`,
+      );
     }
 
     ctx.log.info('Rendering scene', {
@@ -489,6 +507,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
         // biome-ignore lint: elements are validated by zod discriminated union
         input.elements as any,
         input.frames,
+        ctx,
         size,
       ));
     } catch (err) {
@@ -507,11 +526,16 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       throw err;
     }
 
-    // Preview (returned in content[] as image block via format)
+    // The rendered scene (contact sheet for animations) rides content[] as an image
+    // block. It is deliberately absent from `output` — routing it through ctx.content
+    // carries the base64 once instead of duplicating it into structuredContent.
     const isAnimation = renderedFrames.length > 1;
-    const previewBlock = isAnimation
-      ? buildContactSheet(renderedFrames)
-      : encodePreviewBlock(renderedFrames[0] ?? new Canvas(size));
+    ctx.content.image(
+      isAnimation
+        ? buildContactSheet(renderedFrames).data
+        : encodePreviewBlock(renderedFrames[0] ?? new Canvas(size)).data,
+      'image/png',
+    );
 
     // Save files
     const outputFiles: string[] = [];
@@ -528,20 +552,13 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       }
     }
 
-    // Handle explicit output path
+    // Handle explicit output path — already validated at handler entry.
     if (input.output) {
-      // Normalize the path and verify it is absolute with no traversal
-      const resolvedOutput = path.resolve(input.output);
-      if (!path.isAbsolute(resolvedOutput) || resolvedOutput !== path.normalize(resolvedOutput)) {
-        throw invalidParams(
-          `Invalid output path: "${input.output}". Must be an absolute path with no traversal segments.`,
-        );
-      }
       const firstFrame = renderedFrames[0];
       if (firstFrame) {
         const { savePng } = await import('@cyanheads/pixoo-toolkit');
-        await savePng(firstFrame, resolvedOutput);
-        outputFiles.push(resolvedOutput);
+        await savePng(firstFrame, input.output);
+        outputFiles.push(input.output);
       }
     }
 
@@ -563,8 +580,6 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
 
     return {
       pushed,
-      previewData: previewBlock.data,
-      previewMimeType: 'image/png' as const,
       frames: renderedFrames.length,
       layout: layoutEntries,
       deviceState,
@@ -600,12 +615,6 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       lines.push(`\n**Saved:** ${result.outputFiles.join(', ')}`);
     }
 
-    const items: Array<
-      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-    > = [{ type: 'text', text: lines.join('\n') }];
-    if (result.previewData && result.previewMimeType) {
-      items.push({ type: 'image', data: result.previewData, mimeType: result.previewMimeType });
-    }
-    return items;
+    return [{ type: 'text', text: lines.join('\n') }];
   },
 });

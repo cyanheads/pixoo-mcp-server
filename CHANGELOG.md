@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.1.1](changelog/1.1.x/1.1.1.md) — 2026-08-22
+
+Docker build stage pinned to $BUILDPLATFORM — 1.1.0 published no GHCR image; this restores the multi-arch (linux/amd64 + linux/arm64) publish.
+
 ## [1.1.0](changelog/1.1.x/1.1.0.md) — 2026-08-22 · ⚠️ Breaking · 🛡️ Security
 
 SDK v2 adoption: rendered previews move from `output` to `content[]` (`previewData`/`previewMimeType` removed from 3 tools); fixes a dead path-traversal guard in `pixoo_compose_scene`'s output path (#5).

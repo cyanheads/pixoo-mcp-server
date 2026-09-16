@@ -1,7 +1,7 @@
 # Developer Protocol
 
 **Server:** pixoo-mcp-server
-**Version:** 1.1.1
+**Version:** 1.1.2
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.2`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.0.0 (protocol revision 2026-07-28 alongside the 2025 era)

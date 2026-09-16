@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-08-22 21:44:33
+Generated on: 2026-09-16 09:14:26
 
 ```text
 pixoo-mcp-server/
@@ -28,23 +28,7 @@ pixoo-mcp-server/
 │   └── template.md
 ├── docs/
 │   └── design.md
-├── scripts/
-│   ├── build-changelog.ts
-│   ├── build.ts
-│   ├── check-dependency-specifiers.ts
-│   ├── check-docs-sync.ts
-│   ├── check-framework-antipatterns.ts
-│   ├── check-skill-versions.ts
-│   ├── check-skills-sync.ts
-│   ├── clean-mcpb.ts
-│   ├── clean.ts
-│   ├── devcheck.ts
-│   ├── lint-mcp.ts
-│   ├── lint-packaging.ts
-│   ├── list-skills.ts
-│   ├── release-github.ts
-│   └── tree.ts
-├── skills/
+├── framework-skills/
 │   ├── add-app-tool/
 │   │   └── SKILL.md
 │   ├── add-prompt/
@@ -115,6 +99,8 @@ pixoo-mcp-server/
 │   │   └── SKILL.md
 │   ├── release-and-publish/
 │   │   └── SKILL.md
+│   ├── release-pr-review/
+│   │   └── SKILL.md
 │   ├── report-issue-framework/
 │   │   └── SKILL.md
 │   ├── report-issue-local/
@@ -129,6 +115,22 @@ pixoo-mcp-server/
 │   │   └── SKILL.md
 │   └── tool-defs-analysis/
 │       └── SKILL.md
+├── scripts/
+│   ├── build-changelog.ts
+│   ├── build.ts
+│   ├── check-dependency-specifiers.ts
+│   ├── check-docs-sync.ts
+│   ├── check-framework-antipatterns.ts
+│   ├── check-skill-versions.ts
+│   ├── check-skills-sync.ts
+│   ├── clean-mcpb.ts
+│   ├── clean.ts
+│   ├── devcheck.ts
+│   ├── lint-mcp.ts
+│   ├── lint-packaging.ts
+│   ├── list-skills.ts
+│   ├── release-github.ts
+│   └── tree.ts
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -180,14 +182,15 @@ pixoo-mcp-server/
 │   ├── services/
 │   │   └── pixoo/
 │   │       └── pixoo-service.test.ts
-│   └── tools/
-│       ├── pixoo-compose-scene.tool.test.ts
-│       ├── pixoo-control-device.tool.test.ts
-│       ├── pixoo-design-brief.tool.test.ts
-│       ├── pixoo-discover-devices.tool.test.ts
-│       ├── pixoo-display-text.tool.test.ts
-│       ├── pixoo-overlay-text.tool.test.ts
-│       └── pixoo-push-image.tool.test.ts
+│   ├── tools/
+│   │   ├── pixoo-compose-scene.tool.test.ts
+│   │   ├── pixoo-control-device.tool.test.ts
+│   │   ├── pixoo-design-brief.tool.test.ts
+│   │   ├── pixoo-discover-devices.tool.test.ts
+│   │   ├── pixoo-display-text.tool.test.ts
+│   │   ├── pixoo-overlay-text.tool.test.ts
+│   │   └── pixoo-push-image.tool.test.ts
+│   └── index.session-mode.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitattributes

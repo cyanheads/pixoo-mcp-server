@@ -2,11 +2,9 @@
 
 Thanks for using `pixoo-mcp-server`. Bugs, feature requests, and documentation gaps all belong in an issue — that's where they get read and picked up.
 
-Open one from the **Issues** tab and pick the **Bug Report** or **Feature Request** form. Both are structured, and filling in the fields is what makes an issue actionable.
+Open one from the **Issues** tab and pick the **Bug Report** or **Feature Request** form. Both are structured, and filling in the fields is what makes an issue actionable. Anything that fits neither can be a plain issue — a half-formed idea in your own words is fine.
 
 Direct links: [Bug Report](https://github.com/cyanheads/pixoo-mcp-server/issues/new?template=bug_report.yml) · [Feature Request](https://github.com/cyanheads/pixoo-mcp-server/issues/new?template=feature_request.yml)
-
-PRs welcome; open an issue first for anything larger than a typo.
 
 ## Server bug or framework bug?
 
@@ -38,8 +36,8 @@ Do the triage first — an unverified report costs more to read than it saves to
 
 Two workflows ship with this project:
 
-- [`skills/report-issue-local/SKILL.md`](../skills/report-issue-local/SKILL.md) — filing against this repo.
-- [`skills/report-issue-framework/SKILL.md`](../skills/report-issue-framework/SKILL.md) — filing against `mcp-ts-core` when you've isolated the bug to the framework.
+- [`framework-skills/report-issue-local/SKILL.md`](../framework-skills/report-issue-local/SKILL.md) — filing against this repo.
+- [`framework-skills/report-issue-framework/SKILL.md`](../framework-skills/report-issue-framework/SKILL.md) — filing against `mcp-ts-core` when you've isolated the bug to the framework.
 
 Read the relevant one before filing on a user's behalf.
 

@@ -39,6 +39,8 @@ await createApp({
     pixooDesignGuideResource,
   ],
   prompts: [],
+  // No handler requests input mid-call, so nothing needs a 2025-era session.
+  sessionMode: 'stateless',
   /**
    * The tool and resource surface is fixed at build time — nothing registers or
    * retires a definition at runtime — so the list results are safe for shared

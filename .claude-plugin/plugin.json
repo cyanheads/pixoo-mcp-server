@@ -1,22 +1,57 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "pixoo-mcp-server",
   "version": "1.1.1",
   "description": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network via MCP. STDIO or Streamable HTTP.",
   "author": {
-    "name": "cyanheads"
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
   },
   "homepage": "https://github.com/cyanheads/pixoo-mcp-server#readme",
   "repository": "git+https://github.com/cyanheads/pixoo-mcp-server.git",
   "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "divoom",
+    "pixoo",
+    "pixoo-64",
+    "led-matrix",
+    "pixel-art",
+    "typescript",
+    "bun",
+    "stdio",
+    "streamable-http",
+    "ai-agent",
+    "animation",
+    "display"
+  ],
+  "userConfig": {
+    "pixoo_ip": {
+      "type": "string",
+      "title": "Pixoo Device IP",
+      "description": "IP address of your Pixoo display on the local network (e.g. 192.168.1.50). Required for device tools. Run pixoo_discover_devices to find it.",
+      "required": false,
+      "default": ""
+    },
+    "pixoo_size": {
+      "type": "string",
+      "title": "Pixoo Display Size",
+      "description": "Display size in pixels: 16, 32, or 64. Must match your physical device. Defaults to 64 (Pixoo-64).",
+      "required": false,
+      "default": "64"
+    }
+  },
   "mcpServers": {
     "pixoo-mcp-server": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@cyanheads/pixoo-mcp-server"
-      ],
+      "args": ["-y", "@cyanheads/pixoo-mcp-server"],
       "env": {
-        "MCP_TRANSPORT_TYPE": "stdio"
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "PIXOO_IP": "${user_config.pixoo_ip}",
+        "PIXOO_SIZE": "${user_config.pixoo_size}"
       }
     }
   }

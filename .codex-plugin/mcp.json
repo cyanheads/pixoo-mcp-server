@@ -4,6 +4,7 @@
     "args": ["-y", "@cyanheads/pixoo-mcp-server"],
     "env": {
       "MCP_TRANSPORT_TYPE": "stdio"
-    }
+    },
+    "env_vars": ["PIXOO_IP", "PIXOO_SIZE"]
   }
 }

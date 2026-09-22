@@ -56,7 +56,5 @@ await createApp({
     initPixooService(core.config, core.storage);
   },
   instructions:
-    'Pixoo LED matrix display server. Use pixoo_design_brief(topic) first to orient on craft guidelines. ' +
-    'pixoo_display_text is the 80% case for styled text. pixoo_compose_scene for layered scenes, widgets, and animations. ' +
-    'All render tools return a preview image so you can inspect the result before it hits the display.',
+    'Run pixoo_design_brief with a topic first for craft guidance and live device state, then render with pixoo_display_text for styled text or pixoo_compose_scene for layered scenes, widgets, and animations. Every render tool returns a preview image, so pass push: false to inspect a design before it reaches the Pixoo display.',
 });

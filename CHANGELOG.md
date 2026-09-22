@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.1.3](changelog/1.1.x/1.1.3.md) — 2026-09-21
+
+Errors thrown in the tool handlers now forward their declared recovery hint to callers; invalid_color hints match what resolveColor accepts; pixoo_control_device drops two error reasons it could never emit (#8). mcp-ts-core ^0.13.2 → ^0.13.6 adds a Recovery: hint on argument rejections and key normalization for tool calls.
+
 ## [1.1.2](changelog/1.1.x/1.1.2.md) — 2026-09-16
 
 @cyanheads/mcp-ts-core ^0.13.2 adoption: explicit stateless session mode, a structured -32602 argument-rejection envelope, unset-env normalization for PIXOO_* vars, and the framework skill tree moved to framework-skills/. Claude and Codex plugin manifests now forward PIXOO_IP/PIXOO_SIZE.

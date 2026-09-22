@@ -5,12 +5,17 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createMockContext, getContentBlocks } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createMockContext,
+  getContentBlocks,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { Canvas, savePng } from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooPushImage } from '@/mcp-server/tools/definitions/pixoo-push-image.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -93,6 +98,17 @@ describe('pixooPushImage', () => {
     });
     await expect(pixooPushImage.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'asset_not_found' },
+    });
+  });
+
+  it('asset_not_found forwards the declared recovery on both surfaces', async () => {
+    const result = await runToolContract(pixooPushImage, {
+      source: '/tmp/pixoo-nonexistent-file-xyz-12345.png',
+      push: false,
+    });
+    expectForwardedRecovery(result, pixooPushImage.errors, 'asset_not_found');
+    expect(result.structuredContent).toMatchObject({
+      error: { data: { path: '/tmp/pixoo-nonexistent-file-xyz-12345.png' } },
     });
   });
 

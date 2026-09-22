@@ -3,11 +3,16 @@
  * @module tests/tools/pixoo-compose-scene.tool.test
  */
 
-import { createMockContext, getContentBlocks } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createMockContext,
+  getContentBlocks,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -215,6 +220,36 @@ describe('pixooComposeScene', () => {
     });
     await expect(Promise.resolve(pixooComposeScene.handler(input, ctx))).rejects.toMatchObject({
       data: { reason: 'unknown_icon' },
+    });
+  });
+
+  describe('forwards the declared recovery on both surfaces', () => {
+    it('invalid_output_path', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [],
+        push: false,
+        output: 'relative/scene.png',
+      });
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'invalid_output_path');
+    });
+
+    it('invalid_color', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'text', text: 'Hi', color: 'notacolor' }],
+        push: false,
+      });
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'invalid_color');
+    });
+
+    it('unknown_icon', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'icon', name: 'nonexistent_icon_xyz' }],
+        push: false,
+      });
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'unknown_icon');
     });
   });
 });

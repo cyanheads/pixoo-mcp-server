@@ -3,11 +3,16 @@
  * @module tests/tools/pixoo-display-text.tool.test
  */
 
-import { createMockContext, getContentBlocks } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createMockContext,
+  getContentBlocks,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDisplayText } from '@/mcp-server/tools/definitions/pixoo-display-text.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -246,5 +251,14 @@ describe('pixooDisplayText', () => {
       data: { reason: 'invalid_color' },
       message: expect.stringMatching(/white|black|red|green|blue/),
     });
+  });
+
+  it('invalid_color forwards the declared recovery on both surfaces', async () => {
+    const result = await runToolContract(pixooDisplayText, {
+      text: 'Hello',
+      style: { color: 'invalidcolorname' },
+      push: false,
+    });
+    expectForwardedRecovery(result, pixooDisplayText.errors, 'invalid_color');
   });
 });

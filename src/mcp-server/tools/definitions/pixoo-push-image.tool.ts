@@ -78,18 +78,21 @@ export const pixooPushImage = tool('pixoo_push_image', {
       when: 'Device is not reachable.',
       retryable: true,
       recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
+      thrownBy: 'service',
     },
     {
       reason: 'device_rejected',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',
       recovery: 'Note the device error code and check the Pixoo documentation.',
+      thrownBy: 'service',
     },
     {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
+      thrownBy: 'service',
     },
     {
       reason: 'asset_not_found',
@@ -116,7 +119,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
         throw ctx.fail(
           'asset_not_found',
           `Image file not found: "${input.source}". Verify the absolute path is correct.`,
-          { path: input.source },
+          { path: input.source, ...ctx.recoveryFor('asset_not_found') },
         );
       }
     }

@@ -121,7 +121,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 - Avoid more than 3 simultaneous animated elements
 
 **Color not as expected:**
-- Use #RRGGBB hex format — named colors are case-sensitive
+- Use #RRGGBB hex, or a named color (names are case-insensitive)
 - resolveColor throws on typos; check the error message for the accepted formats
 - LEDs don't reproduce very dark colors (< #202020) well`,
 };

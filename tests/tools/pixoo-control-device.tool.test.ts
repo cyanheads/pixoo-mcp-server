@@ -92,6 +92,21 @@ describe('pixooControlDevice', () => {
     });
   });
 
+  it('a setter the device fails is left out of applied[] — the call itself resolves', async () => {
+    stubStatus({ reachable: false } as typeof fakeStatus);
+    vi.spyOn(getPixooService(), 'setBrightness').mockResolvedValue({
+      ok: false,
+      kind: 'network',
+      message: 'ECONNREFUSED',
+    } as never);
+    const ctx = createMockContext({ errors: pixooControlDevice.errors });
+    const input = pixooControlDevice.input.parse({ brightness: 50 });
+    const result = await pixooControlDevice.handler(input, ctx);
+
+    expect(result.reachable).toBe(false);
+    expect(result.applied).toEqual([]);
+  });
+
   it('format() returns text block with Device Status heading', () => {
     const output = {
       reachable: true,

@@ -65,23 +65,11 @@ export const pixooControlDevice = tool('pixoo_control_device', {
 
   errors: [
     {
-      reason: 'device_unreachable',
-      code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Device is not reachable.',
-      retryable: true,
-      recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
-    },
-    {
-      reason: 'device_rejected',
-      code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Device rejected the command.',
-      recovery: 'Check the parameter values are valid and the device is ready.',
-    },
-    {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
+      thrownBy: 'service',
     },
   ],
 

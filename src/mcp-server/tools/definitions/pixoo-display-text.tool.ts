@@ -208,25 +208,28 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       when: 'Device is not reachable over the network.',
       retryable: true,
       recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
+      thrownBy: 'service',
     },
     {
       reason: 'device_rejected',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',
       recovery: 'Note the device error code and check the Pixoo documentation.',
+      thrownBy: 'service',
     },
     {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_color',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'A color value could not be resolved.',
       recovery:
-        'Use #RRGGBB hex or a named color. See pixoo://reference/themes for palette colors.',
+        'Use a hex color (#RRGGBB or #RGB, with or without the #) or a case-insensitive named color such as white, orange, or claude. See pixoo://reference/themes for palette colors.',
     },
   ],
 
@@ -335,7 +338,8 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       if (err instanceof Error && err.message.includes('Unknown color')) {
         throw ctx.fail(
           'invalid_color',
-          `${err.message}. Valid named colors: ${validColorNames}. See pixoo://reference/themes for palette colors.`,
+          `${err.message}. Valid named colors: ${validColorNames}.`,
+          ctx.recoveryFor('invalid_color'),
         );
       }
       throw err;

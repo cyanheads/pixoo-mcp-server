@@ -99,13 +99,14 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_color',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'The color value could not be resolved.',
       recovery:
-        'Use #RRGGBB hex format (e.g. "#ff0000"). Named color strings are not supported for overlays.',
+        'Use a hex color (#RRGGBB or #RGB, with or without the #) or a case-insensitive named color such as white, orange, or claude.',
     },
   ],
 
@@ -120,11 +121,14 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       ctx.log.info('Clearing text overlay', { id: input.id });
       const result = await svc.clearText(input.id, ctx);
       if (!result.ok) {
-        throw ctx.fail(
+        const reason =
           result.kind === 'network' || result.kind === 'timeout'
             ? 'device_unreachable'
-            : 'device_rejected',
+            : 'device_rejected';
+        throw ctx.fail(
+          reason,
           `Clear overlay failed (${result.kind}): ${result.message}`,
+          ctx.recoveryFor(reason),
         );
       }
       return { acknowledged: true, mode: 'clear', id: input.id };
@@ -144,6 +148,7 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       throw ctx.fail(
         'invalid_color',
         `Invalid color "${input.color ?? '#ffffff'}": ${err instanceof Error ? err.message : String(err)}`,
+        ctx.recoveryFor('invalid_color'),
       );
     }
 
@@ -163,11 +168,14 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
     const result = await svc.sendText(sendOpts, ctx);
 
     if (!result.ok) {
-      throw ctx.fail(
+      const reason =
         result.kind === 'network' || result.kind === 'timeout'
           ? 'device_unreachable'
-          : 'device_rejected',
+          : 'device_rejected';
+      throw ctx.fail(
+        reason,
         `Set overlay failed (${result.kind}): ${result.message}`,
+        ctx.recoveryFor(reason),
       );
     }
 

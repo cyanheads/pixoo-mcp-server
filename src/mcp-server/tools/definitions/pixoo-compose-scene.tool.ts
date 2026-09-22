@@ -365,8 +365,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .string()
       .optional()
       .describe(
-        'Absolute, already-normalized path to save the first frame to, in addition to the ' +
-          'PIXOO_OUTPUT_DIR auto-save when that is configured. Both paths are reported in outputFiles.',
+        'Absolute, already-normalized path to save the first frame to, in addition to the PIXOO_OUTPUT_DIR auto-save when that is configured. Both paths are reported in outputFiles.',
       ),
   }),
 
@@ -421,30 +420,35 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       when: 'Device is not reachable over the network.',
       retryable: true,
       recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
+      thrownBy: 'service',
     },
     {
       reason: 'device_rejected',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',
       recovery: 'Note the device error code and check the Pixoo documentation.',
+      thrownBy: 'service',
     },
     {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set and push was requested.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
+      thrownBy: 'service',
     },
     {
       reason: 'asset_not_found',
       code: JsonRpcErrorCode.NotFound,
       when: 'An image or sprite path could not be read.',
       recovery: 'Verify the file path exists and is readable, or check the URL is reachable.',
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_color',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'A color value could not be resolved.',
-      recovery: 'Use #RRGGBB hex or a named color. See pixoo://reference/themes for palettes.',
+      recovery:
+        'Use a hex color (#RRGGBB or #RGB, with or without the #) or a case-insensitive named color such as white, orange, or claude. See pixoo://reference/themes for palette colors.',
     },
     {
       reason: 'unknown_icon',
@@ -487,6 +491,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       throw ctx.fail(
         'invalid_output_path',
         `Invalid output path: "${input.output}". Must be an absolute path with no traversal segments.`,
+        ctx.recoveryFor('invalid_output_path'),
       );
     }
 
@@ -514,13 +519,15 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       if (err instanceof Error && err.message.includes('Unknown color')) {
         throw ctx.fail(
           'invalid_color',
-          `${err.message}. Valid named colors: ${validColorNames}. See pixoo://reference/themes for palette colors.`,
+          `${err.message}. Valid named colors: ${validColorNames}.`,
+          ctx.recoveryFor('invalid_color'),
         );
       }
       if (err instanceof McpError && err.data?.['reason'] === 'unknown_icon') {
         throw ctx.fail(
           'unknown_icon',
-          `${err.message} Valid icons: ${validIconNames}. See pixoo://reference/icons.`,
+          `${err.message} Valid icons: ${validIconNames}.`,
+          ctx.recoveryFor('unknown_icon'),
         );
       }
       throw err;

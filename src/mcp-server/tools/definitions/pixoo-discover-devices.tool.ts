@@ -64,6 +64,7 @@ export const pixooDiscoverDevices = tool('pixoo_discover_devices', {
       retryable: true,
       recovery:
         'Ensure this server has internet access. If the device is on a different subnet, set PIXOO_IP manually.',
+      thrownBy: 'service',
     },
   ],
 

@@ -7,14 +7,34 @@
  * @module vitest.config
  */
 
+import { readFile } from 'node:fs/promises';
 import coreConfig from '@cyanheads/mcp-ts-core/vitest.config';
-import { defineConfig, mergeConfig } from 'vitest/config';
+import { defineConfig, mergeConfig, type Plugin } from 'vitest/config';
 
 const alias = { '@/': new URL('./src/', import.meta.url).pathname };
+
+/**
+ * pixoo-toolkit publishes `dist/src/*.js.map` files whose `sources` point at
+ * `../../src/*.ts`, which the package does not ship. Inlining the toolkit (below)
+ * routes it through Vite, which then warns once per file that the map points to
+ * missing sources. Loading the JS without its map comment removes the dead
+ * reference; stack traces land on the published JS, the only source there is.
+ * Remove once cyanheads/pixoo-toolkit#42 ships resolvable maps.
+ */
+const pixooToolkitWithoutSourcemaps: Plugin = {
+  name: 'pixoo-toolkit-without-sourcemaps',
+  enforce: 'pre',
+  async load(id) {
+    if (!/\/@cyanheads\/pixoo-toolkit\/dist\/.+\.js$/.test(id)) return null;
+    const code = await readFile(id, 'utf8');
+    return code.replace(/^\/\/# sourceMappingURL=.*$/m, '');
+  },
+};
 
 export default mergeConfig(
   coreConfig,
   defineConfig({
+    plugins: [pixooToolkitWithoutSourcemaps],
     resolve: { alias },
     test: {
       // gifenc ships only a CJS "main" (no "exports" map). When pixoo-toolkit

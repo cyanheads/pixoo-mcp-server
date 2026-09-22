@@ -275,7 +275,7 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `PIXOO_PUSH_MIN_INTERVAL_MS` | Minimum interval between device pushes in milliseconds. Prevents device freeze from rapid-fire commands. | `1000` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |
-| `MCP_SESSION_MODE` | HTTP session handling: `stateful`, `stateless`, or `auto`. The server declares `stateless` in source — no tool requests input mid-call — and a value set here overrides it. | `stateless` |
+| `MCP_SESSION_MODE` | HTTP session handling: `stateful`, `stateless`, or `auto` (the framework's schema default, which resolves to `stateful`). The server declares `stateless` in source — no tool requests input mid-call — and a value set here overrides it. | `stateless` |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth`. | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.). | `info` |
 | `LOGS_DIR` | Directory for log files (Node.js only). | `<project-root>/logs` |

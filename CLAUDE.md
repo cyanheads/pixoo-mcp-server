@@ -2,10 +2,10 @@
 
 **Server:** pixoo-mcp-server
 **Version:** 1.1.2
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.2`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.6`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.0.0 (protocol revision 2026-07-28 alongside the 2025 era)
-**Zod:** ^4.6.4
+**Zod:** ^4.6.5
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
@@ -165,6 +165,7 @@ Handlers receive a unified `ctx` object. Key properties used by this server:
 | `ctx.log` | Request-scoped logger — `.debug()`, `.info()`, `.notice()`, `.warning()`, `.error()`. Auto-correlates requestId, traceId, tenantId. Dual-sink: Pino **and** `notifications/message` to the client, so treat it as client-visible. |
 | `ctx.enrich` | Success-path agent context — `.notice()` / `.total()` / `.echo()` / `.truncated()`. Lands only when the definition declares an `enrichment` block. |
 | `ctx.fail` | Typed throw against the definition's `errors[]` reason union — auto-populates `data.reason`. |
+| `ctx.recoveryFor` | `{ recovery: { hint } }` for a declared reason, resolved from the contract. Pass it as `ctx.fail`'s data argument (or spread it in) to put the declared hint on the wire. |
 | `ctx.state` | Tenant-scoped KV — `.get`, `.set(key, value, { ttl? })`, `.delete`, `.getMany`, `.list`. Keys are validated; colons are not legal separators. |
 | `ctx.requestInput` / `ctx.inputs` | Multi-round-trip input. `return ctx.requestInput(...)`; read the answers with `ctx.inputs.accepted(key, schema)` on re-entry. Unused by this server. |
 | `ctx.signal` | `AbortSignal` for cancellation. Pass it to any long-running I/O. |
@@ -190,17 +191,23 @@ Pixoo-specific error reasons declared on tools:
 | `unknown_icon` | `InvalidParams` | Icon name not in registry |
 | `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable |
 
+`PixooService` and `src/renderer/` raise the device, configuration, and remote-asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked, and every such site forwards its declared recovery with `ctx.recoveryFor`. A computed reason forwards the same way (`ctx.recoveryFor(reason)`); `lint:mcp` skips a definition whose `ctx.fail` reason is non-literal, so a clean lint says nothing about those sites.
+
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 
 errors: [
   { reason: 'no_device_configured', code: JsonRpcErrorCode.InvalidParams,
-    when: 'PIXOO_IP not configured',
-    recovery: 'Run pixoo_discover_devices to find device IPs, then set PIXOO_IP.' },
-  { reason: 'device_unreachable', code: JsonRpcErrorCode.ServiceUnavailable,
-    when: 'Device network timeout or connection refused',
-    recovery: 'Check the device is on the same LAN and powered on, then retry.' },
+    when: 'PIXOO_IP is not set.',
+    recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
+    thrownBy: 'service' },
+  { reason: 'invalid_color', code: JsonRpcErrorCode.InvalidParams,
+    when: 'The color value could not be resolved.',
+    recovery: 'Use a hex color (#RRGGBB or #RGB, with or without the #) or a case-insensitive named color such as white, orange, or claude.' },
 ],
+
+// in the handler
+throw ctx.fail('invalid_color', `Invalid color "${input.color}"`, ctx.recoveryFor('invalid_color'));
 ```
 
 Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`, `RequestCancelled`) bubble freely and don't need declaring. A tool argument that fails the input schema reaches the client as `InvalidParams` (-32602) with `structuredContent.error` — assert that code, not `ValidationError`, in tests.
@@ -284,7 +291,7 @@ Available skills:
 | `code-simplifier` | Post-session cleanup against `git diff` — modernize syntax, consolidate duplication, align with the codebase |
 | `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
 | `git-wrapup` | Land working-tree changes as a commit stack — version bump, changelog, verify, commit by concern, release commit on top. No tag, no push to main; opens the release PR when the project declares release PR mode |
-| `release-pr-review` | Review pass on an open release PR — simplifier + correctness review, fixup commits autosquashed into the stack, PR body kept in sync. Release PR mode only |
+| `release-pr-review` | Review pass on an open release PR — simplifier + correctness review, fixes as ordinary commits on top of the stack, PR body kept in sync. Release PR mode only |
 | `release-and-publish` | Fast-forward merge (release PR mode) + tag + push + npm + MCP Registry + GH Release + Docker. Picks up from `git-wrapup` |
 | `maintenance` | Investigate changelogs, adopt upstream changes, sync skills to agent dirs |
 | `orchestrations` | Chain task skills into a gated multi-phase pipeline — build-out, QA-fix, update-ship — when you can spawn sub-agents |
@@ -331,6 +338,8 @@ Available skills:
 | `bun run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
 | `bun run bundle` | Build, pack, and clean a `.mcpb` for one-click Claude Desktop install |
 
+**CI is one file.** `.github/workflows/codeql.yml` is the only GitHub Actions workflow: CodeQL is GitHub-owned end to end, and the file runs only while the repo's CodeQL *default setup* is turned off. Verification — `devcheck`, tests, the release gates — runs locally; don't add a workflow that re-runs it.
+
 ---
 
 ## Bundling
@@ -348,6 +357,12 @@ Directory-based, grouped by minor series via the `.x` semver-wildcard convention
 Each per-version file opens with YAML frontmatter: `summary` (required, ≤350 chars), optional `breaking: true` for changes consumers must act on, optional `security: true` only for a security fix in this server's own source (never a dependency CVE bump — those go under `## Dependencies`).
 
 **Section order:** the Keep a Changelog sequence — Added, Changed, Deprecated, Removed, Fixed, Security — then `Dependencies` last. Include only sections with entries.
+
+---
+
+## Publishing
+
+**Every release goes through a release PR, straight-through** — `git-wrapup`'s "Release PR mode", mode `straight-through`. One run: `git-wrapup` lands the commit stack on `release/<version>`, pushes it, and opens the PR (title = the release commit subject, body = the changelog entry plus a gates section); `release-and-publish` then fast-forwards `main` locally with `git merge --ff-only`, creates the tag on `main`'s tip, pushes `main` and the tag, deletes the branch, and publishes. A caller's brief may run a given release as `gated` instead — a `release-pr-review` pass on the open PR before `release-and-publish`. **Never merge through the GitHub UI or `gh pr merge`**: squash and rebase-merge are disabled in the repo settings because both rewrite the stack (rebase-merge also strips the SSH signatures), and a merge commit breaks the linear history.
 
 ---
 

@@ -5,7 +5,13 @@
 
 import { Canvas, FONT_3x5, FONT_5x7, measureText } from '@cyanheads/pixoo-toolkit';
 import { describe, expect, it } from 'vitest';
-import { drawStyledText, renderAutoFitText, resolveX, resolveY } from '@/renderer/text-engine.js';
+import {
+  drawStyledText,
+  renderAutoFitText,
+  resolveX,
+  resolveY,
+  scrollCycle,
+} from '@/renderer/text-engine.js';
 
 // ─── resolveX / resolveY ─────────────────────────────────────────────────────
 
@@ -212,6 +218,77 @@ describe('renderAutoFitText', () => {
     expect(entry.box.y).toBeGreaterThanOrEqual(0);
   });
 
+  describe('a requested font is used as given', () => {
+    // Overflows 64px in 5×7, fits in 3×5.
+    const SHRINKABLE = 'HELLO WORLD!';
+
+    it('compact on text that fits in standard renders compact', () => {
+      const entry = renderAutoFitText(
+        new Canvas(64),
+        'HI',
+        0,
+        0,
+        0,
+        0,
+        {},
+        'auto',
+        0,
+        0,
+        1,
+        'compact',
+      );
+      expect(entry).toMatchObject({ font: 'compact', action: 'none', fits: true });
+      expect(entry.box.h).toBe(FONT_3x5.height);
+      expect(entry.box.w).toBe(measureText('HI', { font: FONT_3x5 }));
+    });
+
+    it('standard on text that only fits compact overflows in standard instead of shrinking', () => {
+      expect(measureText(SHRINKABLE, { font: FONT_5x7 })).toBeGreaterThan(64);
+      expect(measureText(SHRINKABLE, { font: FONT_3x5 })).toBeLessThanOrEqual(64);
+      const entry = renderAutoFitText(
+        new Canvas(64),
+        SHRINKABLE,
+        0,
+        0,
+        0,
+        0,
+        {},
+        'auto',
+        0,
+        0,
+        1,
+        'standard',
+      );
+      expect(entry).toMatchObject({ font: 'standard', action: 'scrolling', fits: false });
+      expect(entry.box.w).toBe(measureText(SHRINKABLE, { font: FONT_5x7 }));
+    });
+
+    it('omitting the font keeps auto-fit: the same text shrinks to compact', () => {
+      const entry = renderAutoFitText(new Canvas(64), SHRINKABLE, 0, 0, 0, 0, {}, 'auto', 0, 0, 1);
+      expect(entry).toMatchObject({ font: 'compact', action: 'shrunk-to-compact', fits: true });
+    });
+
+    it('compact that still overflows scrolls in compact', () => {
+      const wide = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      expect(measureText(wide, { font: FONT_3x5 })).toBeGreaterThan(64);
+      const entry = renderAutoFitText(
+        new Canvas(64),
+        wide,
+        0,
+        0,
+        0,
+        0,
+        {},
+        'auto',
+        0,
+        0,
+        1,
+        'compact',
+      );
+      expect(entry).toMatchObject({ font: 'compact', action: 'scrolling' });
+    });
+  });
+
   it('non-zero frameIdx shifts scroll position', () => {
     const canvas = new Canvas(64);
     const wideText = 'ABCDEFGHIJKLMNO';
@@ -223,5 +300,32 @@ describe('renderAutoFitText', () => {
       expect(e0.action).toBe('scrolling');
       expect(e5.action).toBe('scrolling');
     }
+  });
+});
+
+// ─── scrollCycle ─────────────────────────────────────────────────────────────
+
+describe('scrollCycle', () => {
+  it('moves 2px a frame while one full crossing fits in 40 frames', () => {
+    // 10px wide + 64px canvas = 74px to cross.
+    expect(scrollCycle(10, 64)).toEqual({ frames: 37, step: 2 });
+  });
+
+  it('holds the 40-frame cap at the boundary where 2px/frame just fits', () => {
+    expect(scrollCycle(16, 64)).toEqual({ frames: 40, step: 2 });
+  });
+
+  it.each([
+    [17, 27],
+    [212, 40],
+    [1000, 40],
+  ])('crosses a %ipx block completely in %i frames, with no blank tail', (width, expected) => {
+    const { frames, step } = scrollCycle(width, 64);
+    expect(frames).toBe(expected);
+    expect(frames).toBeLessThanOrEqual(40);
+    // The frame after the last one has the block fully past the left edge…
+    expect(64 - frames * step + width).toBeLessThanOrEqual(0);
+    // …while the last frame still shows part of it.
+    expect(64 - (frames - 1) * step + width).toBeGreaterThan(0);
   });
 });

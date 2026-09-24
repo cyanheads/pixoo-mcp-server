@@ -76,6 +76,28 @@ export function resolveY(
   return py + dy;
 }
 
+/** Pixels a scrolling block advances per frame while the cycle fits the frame cap. */
+const SCROLL_STEP_PX = 2;
+
+/** Device-safe animation length. */
+const MAX_SCROLL_FRAMES = 40;
+
+/**
+ * Frame count and per-frame step for one scroll cycle of a block `contentWidth` wide:
+ * it starts just past the right edge and ends once it has left through the left edge.
+ * A block too wide to cross in 40 frames at the base step moves faster instead, so the
+ * cycle always completes, and the frame count follows from the step, so the loop never
+ * cuts off mid-text or trails blank frames.
+ */
+export function scrollCycle(
+  contentWidth: number,
+  canvasWidth: number,
+): { frames: number; step: number } {
+  const distance = contentWidth + canvasWidth;
+  const step = Math.max(SCROLL_STEP_PX, Math.ceil(distance / MAX_SCROLL_FRAMES));
+  return { frames: Math.ceil(distance / step), step };
+}
+
 /** Get gradient ramp colors from a palette or explicit stop. */
 function getPaletteColors(
   palette: PaletteName | GradientStop | undefined,
@@ -178,6 +200,8 @@ export function drawStyledText(
 
 /**
  * Render text with auto-fit logic: tries standard → compact → scroll.
+ * A `fixedFont` pins the variant: the compact fallback is skipped, so text that
+ * overflows in it takes the overflow action in that font.
  * Returns the layout entry describing what was done.
  */
 export function renderAutoFitText(
@@ -192,20 +216,21 @@ export function renderAutoFitText(
   elementIdx: number | 'background',
   frameIdx: number,
   _totalFrames: number,
+  fixedFont?: FontVariant,
 ): LayoutEntry {
   const size = canvas.width;
   const scale = style.scale ?? 1;
-  let fontVariant: FontVariant = 'standard';
+  let fontVariant: FontVariant = fixedFont ?? 'standard';
   let action: LayoutEntry['action'] = 'none';
 
   const font = FONT_5x7;
   const compactFont = FONT_3x5;
-  const textOpts = { font, scale };
+  const textOpts = { font: fontVariant === 'compact' ? compactFont : font, scale };
   const textWidth = measureText(text, textOpts);
 
   let fits = textWidth <= size;
 
-  if (!fits && (overflow === 'auto' || overflow === 'shrink')) {
+  if (!fits && !fixedFont && (overflow === 'auto' || overflow === 'shrink')) {
     // Try compact font
     const compactOpts = { font: compactFont, scale };
     const compactWidth = measureText(text, compactOpts);

@@ -101,6 +101,7 @@ At typical viewing distance for a 64×64 LED display:
 ## Known Device Behaviors
 
 - **Channel must be Custom** to display pushed content. The server auto-switches when pushing.
+- **A push the panel won't show** — screen off, brightness 10 or lower, or still off Custom after a failed switch — succeeds with a notice naming the pixoo_control_device call that fixes it.
 - **getConfig() omits SelectIndex** on current Pixoo-64 firmware — use getChannel() for reliable channel reads
 - **Text overlays (pixoo_overlay_text)** persist across channel switches until explicitly cleared
 - **Discovery requires internet** — Divoom cloud endpoint even for local device control

@@ -8,7 +8,13 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { loadImage, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
-import { encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
+import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
+import {
+  autoSavePreview,
+  encodePreviewBlock,
+  type PreviewWriter,
+  savePngPreview,
+} from '@/renderer/preview.js';
 import { fetchRemoteImageToTempPng, isRemoteSource } from '@/renderer/remote-image.js';
 import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
@@ -150,18 +156,22 @@ export const pixooPushImage = tool('pixoo_push_image', {
     // instead of duplicating it into structuredContent.
     ctx.content.image(encodePreviewBlock(canvas).data, 'image/png');
 
-    // Save preview
-    const outputFiles: string[] = [];
-    const savedPath = await savePngPreview(canvas, `push-image-${Date.now()}`);
-    if (savedPath) outputFiles.push(savedPath);
+    const baseName = `push-image-${Date.now()}`;
+    const writePreview: PreviewWriter = (dir) => savePngPreview(canvas, dir, baseName);
+    const outputFiles = await autoSavePreview(writePreview);
 
-    // Push
     let pushed = false;
     let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
       const svc = getPixooService();
-      deviceState = await svc.pushFrame(canvas, ctx);
+      deviceState = await pushKeepingPreview(
+        () => svc.pushFrame(canvas, ctx),
+        outputFiles,
+        writePreview,
+      );
       pushed = true;
+      const notice = visibilityNotice(deviceState);
+      if (notice) ctx.enrich.notice(notice);
     }
 
     return {

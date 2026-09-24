@@ -5,7 +5,9 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
+  createFetchMock,
   createMockContext,
   getContentBlocks,
   runToolContract,
@@ -15,8 +17,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooPushImage } from '@/mcp-server/tools/definitions/pixoo-push-image.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
-import { expectDeviceFailure, failDevicePush } from '../helpers/device-failure.js';
+import { expectDeviceFailure, failDevicePush, stubDeviceState } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
+import { trickleRoute } from '../helpers/trickle-body.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -134,6 +137,28 @@ describe('pixooPushImage', () => {
       const result = await runToolContract(pixooPushImage, { source: fixturePath, push: true });
       expectDeviceFailure(result, pixooPushImage.errors, 'device_rejected', undefined);
     });
+  });
+
+  it('a cancelled call tears down its URL download and pushes nothing', async () => {
+    const url = 'https://images.test/slow-push.png';
+    const controller = new AbortController();
+    const { route, state } = trickleRoute(url, new Uint8Array(200 * 1024), {
+      onChunk: (n) => n === 3 && controller.abort(),
+    });
+    const http = createFetchMock([route]);
+    const client = stubDeviceState();
+    http.install();
+    try {
+      const ctx = createMockContext({ errors: pixooPushImage.errors, signal: controller.signal });
+      await expect(
+        pixooPushImage.handler(pixooPushImage.input.parse({ source: url, push: true }), ctx),
+      ).rejects.toMatchObject({ code: JsonRpcErrorCode.RequestCancelled });
+      expect(state.cancelled).toBe(true);
+      expect(state.pulled).toBeLessThan(10);
+      expect(client.push).not.toHaveBeenCalled();
+    } finally {
+      http.restore();
+    }
   });
 
   it('format() returns text block containing Pushed status', () => {

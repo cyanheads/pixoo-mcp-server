@@ -3,6 +3,9 @@
  * @module tests/tools/pixoo-compose-scene.tool.test
  */
 
+import { mkdtemp } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
@@ -10,11 +13,21 @@ import {
   getContentBlocks,
   runToolContract,
 } from '@cyanheads/mcp-ts-core/testing';
+import { Canvas, savePng } from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
+import { buildContactSheet, encodePreviewBlock } from '@/renderer/preview.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
-import { expectDeviceFailure, failDevicePush } from '../helpers/device-failure.js';
+import {
+  errorOutputFiles,
+  expectDeviceFailure,
+  failDevicePush,
+  imageKind,
+  listFiles,
+  resultText,
+  stubDeviceState,
+} from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 type SceneInput = z.input<typeof pixooComposeScene.input>;
@@ -134,6 +147,40 @@ describe('pixooComposeScene', () => {
     expect(result.frames).toBe(4);
     expect(result.pushed).toBe(true);
     expect(result.deviceState).toEqual(fakeDeviceState);
+  });
+
+  it('animation preview tiles every frame instead of showing the middle one', async () => {
+    const client = stubDeviceState();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
+    await pixooComposeScene.handler(
+      pixooComposeScene.input.parse({
+        background: '#000000',
+        elements: [{ type: 'text', text: 'HI', effect: { name: 'float', amplitude: 3 } }],
+        frames: 4,
+        push: true,
+      }),
+      ctx,
+    );
+    const frames = client.pushAnimation.mock.calls[0]?.[0] as Canvas[];
+    const [preview] = getContentBlocks(ctx) as Array<{ data: string }>;
+    for (const frame of frames) expect(preview!.data).not.toBe(encodePreviewBlock(frame).data);
+    expect(preview!.data).toBe((await buildContactSheet(frames)).data);
+  });
+
+  it('static preview is the single frame at 512px', async () => {
+    const client = stubDeviceState();
+    const ctx = createMockContext({ errors: pixooComposeScene.errors });
+    await pixooComposeScene.handler(
+      pixooComposeScene.input.parse({
+        background: '#000000',
+        elements: [{ type: 'text', text: 'HI' }],
+        push: true,
+      }),
+      ctx,
+    );
+    const frame = client.push.mock.calls[0]?.[0] as Canvas;
+    const [preview] = getContentBlocks(ctx) as Array<{ data: string }>;
+    expect(preview!.data).toBe(encodePreviewBlock(frame).data);
   });
 
   it('no_device_configured error when push:true and no PIXOO_IP', async () => {
@@ -302,6 +349,113 @@ describe('pixooComposeScene', () => {
       });
       expect(result.isError).toBe(true);
       expect(pushFrame).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('image elements fit PIXOO_SIZE', () => {
+    it.each([16, 32])('size %i: the pushed frame holds the whole image', async (size) => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-size-'));
+      const source = path.join(dir, 'quadrants.png');
+      const art = new Canvas(64);
+      art.fillRect(0, 0, 64, 32, [255, 0, 0]);
+      art.fillRect(32, 32, 32, 32, [255, 255, 0]); // bottom-right quadrant
+      await savePng(art, source);
+
+      resetServerConfig();
+      process.env['PIXOO_SIZE'] = String(size);
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'image', source }],
+        push: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const frame = client.push.mock.calls[0]?.[0] as Canvas;
+      expect(frame.width).toBe(size);
+      expect(frame.getPixelRgba(size * 0.75, size * 0.75)).toEqual([255, 255, 0, 255]);
+      expect(frame.getPixelRgba(size * 0.25, size * 0.75)).toEqual([0, 0, 0, 255]);
+      const { layout } = result.structuredContent as {
+        layout: Array<{ type: string; box: { w: number; h: number } }>;
+      };
+      expect(layout[0]).toMatchObject({ type: 'image', box: { w: size, h: size } });
+      expect(resultText(result)).toContain(`image @ (0,0) ${size}×${size}`);
+    });
+  });
+
+  describe('saved files: explicit output vs. PIXOO_OUTPUT_DIR', () => {
+    let outDir: string;
+    let target: string;
+
+    beforeEach(async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-output-'));
+      outDir = path.join(root, 'auto');
+      target = path.join(root, 'explicit.png');
+    });
+
+    afterEach(() => {
+      delete process.env['PIXOO_OUTPUT_DIR'];
+      resetServerConfig();
+    });
+
+    async function render(input: Partial<SceneInput>) {
+      const ctx = createMockContext({ errors: pixooComposeScene.errors });
+      return pixooComposeScene.handler(
+        pixooComposeScene.input.parse({
+          background: '#000000',
+          elements: [{ type: 'text', text: 'HI' }],
+          push: false,
+          ...input,
+        }),
+        ctx,
+      );
+    }
+
+    function useOutputDir() {
+      process.env['PIXOO_OUTPUT_DIR'] = outDir;
+      resetServerConfig();
+    }
+
+    it.each([
+      ['static', 1],
+      ['animated', 3],
+    ])('an explicit output replaces the auto-save (%s scene)', async (_label, frames) => {
+      useOutputDir();
+      const result = await render({ output: target, frames });
+      expect(result.outputFiles).toEqual([target]);
+      expect(await listFiles(outDir)).toEqual([]);
+      expect(await imageKind(target)).toBe('png');
+    });
+
+    it('with only PIXOO_OUTPUT_DIR, the auto-save runs', async () => {
+      useOutputDir();
+      const result = await render({});
+      expect(result.outputFiles).toHaveLength(1);
+      expect(result.outputFiles?.[0]?.startsWith(outDir)).toBe(true);
+      expect(await listFiles(outDir)).toEqual(result.outputFiles);
+    });
+
+    it('with only an explicit output, just that file is written', async () => {
+      const result = await render({ output: target });
+      expect(result.outputFiles).toEqual([target]);
+    });
+
+    it('with neither, nothing is written', async () => {
+      expect((await render({})).outputFiles).toBeUndefined();
+    });
+
+    it('a failed push names the explicit output rather than writing another copy', async () => {
+      useOutputDir();
+      failDevicePush({ ok: false, kind: 'network', message: 'connect EHOSTUNREACH' });
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'text', text: 'HI' }],
+        push: true,
+        output: target,
+      });
+      expectDeviceFailure(result, pixooComposeScene.errors, 'device_unreachable', true);
+      expect(errorOutputFiles(result)).toEqual([target]);
+      expect(await listFiles(outDir)).toEqual([]);
     });
   });
 

@@ -6,12 +6,14 @@
 import * as path from 'node:path';
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { Canvas, NAMED_COLORS, type PixooSize } from '@cyanheads/pixoo-toolkit';
+import { Canvas, NAMED_COLORS, type PixooSize, savePng } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
+import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
 import { ICONS } from '@/renderer/icons.js';
 import {
+  autoSavePreview,
   buildContactSheet,
-  encodePreviewBlock,
+  type PreviewWriter,
   saveGifPreview,
   savePngPreview,
 } from '@/renderer/preview.js';
@@ -365,7 +367,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .string()
       .optional()
       .describe(
-        'Absolute, already-normalized path to save the first frame to, in addition to the PIXOO_OUTPUT_DIR auto-save when that is configured. Both paths are reported in outputFiles.',
+        'Absolute, already-normalized path to save the first frame to as a PNG. Replaces the PIXOO_OUTPUT_DIR auto-save for this call, so outputFiles holds only this path.',
       ),
   }),
 
@@ -402,7 +404,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .array(z.string())
       .optional()
       .describe(
-        'Absolute paths to saved output files (PNG for static, GIF for animations). Present only when PIXOO_OUTPUT_DIR is configured or output is set.',
+        'Absolute paths to saved output files: the output path when set, otherwise the PIXOO_OUTPUT_DIR auto-save (PNG for static, GIF for animations). Absent when neither applies.',
       ),
   }),
 
@@ -541,56 +543,43 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       throw err;
     }
 
-    // The rendered scene (contact sheet for animations) rides content[] as an image
-    // block. It is deliberately absent from `output` — routing it through ctx.content
-    // carries the base64 once instead of duplicating it into structuredContent.
+    // The rendered scene (a grid of every frame for animations) rides content[] as an
+    // image block. It is deliberately absent from `output` — routing it through
+    // ctx.content carries the base64 once instead of duplicating it into structuredContent.
     const isAnimation = renderedFrames.length > 1;
-    ctx.content.image(
-      isAnimation
-        ? buildContactSheet(renderedFrames).data
-        : encodePreviewBlock(renderedFrames[0] ?? new Canvas(size)).data,
-      'image/png',
-    );
+    const firstFrame = renderedFrames[0] ?? new Canvas(size);
+    ctx.content.image((await buildContactSheet(renderedFrames)).data, 'image/png');
 
-    // Save files
-    const outputFiles: string[] = [];
     const baseName = `scene-${Date.now()}`;
+    const writePreview: PreviewWriter = (dir) =>
+      isAnimation
+        ? saveGifPreview(renderedFrames, input.speed, dir, baseName)
+        : savePngPreview(firstFrame, dir, baseName);
 
-    if (isAnimation) {
-      const gifPath = await saveGifPreview(renderedFrames, input.speed, baseName);
-      if (gifPath) outputFiles.push(gifPath);
-    } else {
-      const firstFrame = renderedFrames[0];
-      if (firstFrame) {
-        const pngPath = await savePngPreview(firstFrame, baseName);
-        if (pngPath) outputFiles.push(pngPath);
-      }
-    }
-
-    // Handle explicit output path — already validated at handler entry.
+    // An explicit output path (validated at handler entry) replaces the auto-save.
+    let outputFiles: string[];
     if (input.output) {
-      const firstFrame = renderedFrames[0];
-      if (firstFrame) {
-        const { savePng } = await import('@cyanheads/pixoo-toolkit');
-        await savePng(firstFrame, input.output);
-        outputFiles.push(input.output);
-      }
+      await savePng(firstFrame, input.output);
+      outputFiles = [input.output];
+    } else {
+      outputFiles = await autoSavePreview(writePreview);
     }
 
-    // Push
     let pushed = false;
     let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
       const svc = getPixooService();
-      if (isAnimation) {
-        deviceState = await svc.pushAnimation(renderedFrames, input.speed, ctx);
-      } else {
-        const firstFrame = renderedFrames[0];
-        if (firstFrame) {
-          deviceState = await svc.pushFrame(firstFrame, ctx);
-        }
-      }
+      deviceState = await pushKeepingPreview(
+        () =>
+          isAnimation
+            ? svc.pushAnimation(renderedFrames, input.speed, ctx)
+            : svc.pushFrame(firstFrame, ctx),
+        outputFiles,
+        writePreview,
+      );
       pushed = true;
+      const notice = visibilityNotice(deviceState);
+      if (notice) ctx.enrich.notice(notice);
     }
 
     return {

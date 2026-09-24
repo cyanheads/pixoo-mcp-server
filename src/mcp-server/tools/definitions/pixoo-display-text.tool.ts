@@ -14,17 +14,103 @@ import {
   type PixooSize,
 } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
-import { encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
-import { applyBackground, type BackgroundSpec } from '@/renderer/scene-renderer.js';
+import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
+import {
+  autoSavePreview,
+  buildContactSheet,
+  type PreviewWriter,
+  saveGifPreview,
+  savePngPreview,
+} from '@/renderer/preview.js';
+import {
+  type AssetCache,
+  applyBackground,
+  type BackgroundSpec,
+  renderFrame,
+  type TextElement,
+} from '@/renderer/scene-renderer.js';
 import {
   drawStyledText,
+  type FontVariant,
   type LayoutEntry,
   renderAutoFitText,
   resolveX,
+  scrollCycle,
   type TextStyle,
 } from '@/renderer/text-engine.js';
 import { THEMES, type ThemeName } from '@/renderer/themes.js';
 import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
+
+/** Frame delay for effect animations — the pixoo_compose_scene default. */
+const ANIMATION_SPEED_MS = 150;
+
+/** Length of a float or pulse loop, in frames. */
+const EFFECT_FRAMES = 20;
+
+/** Where one line of text sits in the static render. */
+interface LinePlacement {
+  font: FontVariant;
+  text: string;
+  w: number;
+  x: number;
+  y: number;
+}
+
+/** Offset of a line `lineW` wide within a block `blockW` wide. */
+function alignOffset(align: 'left' | 'center' | 'right', blockW: number, lineW: number): number {
+  if (align === 'left') return 0;
+  if (align === 'right') return blockW - lineW;
+  return Math.floor((blockW - lineW) / 2);
+}
+
+/** Text elements load no images or sprites, so every frame renders against empty caches. */
+const NO_ASSETS: AssetCache = { images: new Map(), sprites: new Map() };
+
+/** One scroll cycle: the lines move left together from just past the right edge. */
+function scrollFrames(
+  placements: LinePlacement[],
+  style: TextStyle,
+  bg: BackgroundSpec,
+  size: PixooSize,
+): Canvas[] {
+  const left = Math.min(...placements.map((p) => p.x));
+  const blockW = Math.max(...placements.map((p) => p.x + p.w)) - left;
+  const { frames, step } = scrollCycle(blockW, size);
+  return Array.from({ length: frames }, (_, i) => {
+    const elements: TextElement[] = placements.map((p) => ({
+      type: 'text',
+      text: p.text,
+      x: size - i * step + p.x - left,
+      y: p.y,
+      font: p.font,
+      style,
+    }));
+    return renderFrame(i, frames, bg, elements, NO_ASSETS, size).canvas;
+  });
+}
+
+/** A float or pulse loop: the effect compiles to keyframes, as it does on a scene element. */
+function effectFrames(
+  placements: LinePlacement[],
+  style: TextStyle,
+  bg: BackgroundSpec,
+  size: PixooSize,
+  name: 'float' | 'pulse',
+): Canvas[] {
+  const elements: TextElement[] = placements.map((p) => ({
+    type: 'text',
+    text: p.text,
+    x: p.x,
+    y: p.y,
+    font: p.font,
+    style,
+    effect: { name },
+  }));
+  return Array.from(
+    { length: EFFECT_FRAMES },
+    (_, i) => renderFrame(i, EFFECT_FRAMES, bg, elements, NO_ASSETS, size).canvas,
+  );
+}
 
 const StyleSchema = z
   .object({
@@ -58,7 +144,7 @@ const StyleSchema = z
 export const pixooDisplayText = tool('pixoo_display_text', {
   title: 'pixoo_display_text',
   description:
-    'Render styled text (theme, gradient, shadow, outline, auto-fit) onto the Pixoo display and push it. Returns the rendered frame as an image content block for immediate inspection. The primary tool for text-only display — for layers, icons, widgets, or animations use pixoo_compose_scene. Run pixoo_design_brief with topic "text" first for palette and legibility guidance.',
+    'Render styled text (theme, gradient, shadow, outline, auto-fit) onto the Pixoo display and push it, static or animated with a scroll, float, or pulse effect. Returns the render as an image content block for immediate inspection. The primary tool for text-only display — for layers, icons, widgets, or per-element motion use pixoo_compose_scene. Run pixoo_design_brief with topic "text" first for palette and legibility guidance.',
   annotations: { idempotentHint: true, destructiveHint: false },
 
   input: z.object({
@@ -93,7 +179,9 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     font: z
       .enum(['standard', 'compact'])
       .optional()
-      .describe('Font variant: standard (5×7) or compact (3×5). Auto-fit will choose if omitted.'),
+      .describe(
+        'Font variant: standard (5×7) or compact (3×5), used as given — text too wide for it overflows rather than switching font. Omitted, single-line text tries standard and falls back to compact when standard overflows; multi-line text uses standard.',
+      ),
     position: z
       .object({
         x: z
@@ -116,12 +204,14 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     align: z
       .enum(['left', 'center', 'right'])
       .optional()
-      .describe('Multi-line text alignment (default: center).'),
+      .describe(
+        'Multi-line text: align every line within the widest line, then place that block with position.x. Omit to place each line by position.x on its own.',
+      ),
     effect: z
       .enum(['none', 'auto', 'scroll', 'float', 'pulse'])
       .optional()
       .describe(
-        'Animation effect. auto = scroll only when text overflows. Produces a multi-frame result.',
+        'Animation effect. scroll runs the text across the display once, in up to 40 frames; auto scrolls only when the text is too wide to fit; float (gentle bob) and pulse (breathing brightness) loop over 20 frames. An animated result is pushed as an animation and previewed as a grid of its frames. none or omitted renders one static frame.',
       ),
     push: z
       .boolean()
@@ -138,6 +228,9 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
   output: z.object({
     pushed: z.boolean().describe('True when the device acknowledged the push.'),
+    frames: z
+      .number()
+      .describe('Number of frames rendered: 1 for static text, 2–40 when an effect animates it.'),
     layout: z
       .array(
         z
@@ -190,7 +283,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       .array(z.string())
       .optional()
       .describe(
-        'Absolute paths to saved PNG preview files. Present only when PIXOO_OUTPUT_DIR is configured.',
+        'Absolute paths to saved preview files (PNG, or GIF when an effect animates the text). Present only when PIXOO_OUTPUT_DIR is configured.',
       ),
   }),
 
@@ -280,8 +373,11 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
     // Build canvas — catch resolveColor throws from background/style colors
     const validColorNames = Object.keys(NAMED_COLORS).join(', ');
+    // The static render: one frame, and where each line sits in it. Effects animate
+    // from these placements, so an effect never changes the layout it starts from.
     const canvas = new Canvas(size);
     const layoutEntries: LayoutEntry[] = [];
+    const placements: LinePlacement[] = [];
     try {
       applyBackground(canvas, bg);
 
@@ -299,16 +395,25 @@ export const pixooDisplayText = tool('pixoo_display_text', {
           0,
           0,
           1,
+          input.font,
         );
         layoutEntries.push(entry);
+        const font = entry.font ?? 'standard';
 
         // When the text overflows and scrolls, frame 0 renders at x=size (off-canvas),
         // producing a solid-background preview. Re-render the preview canvas with the
         // text at x=0 so the preview shows legible text.
         if (entry.action === 'scrolling') {
           applyBackground(canvas, bg);
-          drawStyledText(canvas, combinedText, 0, entry.box.y, style, entry.font ?? 'standard');
+          drawStyledText(canvas, combinedText, 0, entry.box.y, style, font);
         }
+        placements.push({
+          text: combinedText,
+          x: entry.action === 'scrolling' ? 0 : entry.box.x,
+          y: entry.box.y,
+          w: entry.box.w,
+          font,
+        });
       } else {
         // Multi-line: stack lines vertically
         const fontVariant = input.font === 'compact' ? 'compact' : 'standard';
@@ -325,10 +430,16 @@ export const pixooDisplayText = tool('pixoo_display_text', {
                 ? input.position.y
                 : Math.floor((size - totalH) / 2);
 
+        const widths = lines.map((line) => measureText(line, { font, scale }));
+        const blockW = Math.max(...widths);
+        const blockX = resolveX(input.position?.x ?? 'center', blockW, size, 0);
+
         for (let li = 0; li < lines.length; li++) {
           const lineText = lines[li] ?? '';
-          const lineW = measureText(lineText, { font, scale });
-          const lineX = resolveX(input.position?.x ?? 'center', lineW, size, 0);
+          const lineW = widths[li] ?? 0;
+          const lineX = input.align
+            ? blockX + alignOffset(input.align, blockW, lineW)
+            : resolveX(input.position?.x ?? 'center', lineW, size, 0);
           const lineY = startY + li * lineH;
           drawStyledText(canvas, lineText, lineX, lineY, style, fontVariant);
           layoutEntries.push({
@@ -340,6 +451,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
             font: fontVariant,
             scale,
           });
+          placements.push({ text: lineText, x: lineX, y: lineY, w: lineW, font: fontVariant });
         }
       }
     } catch (err) {
@@ -353,39 +465,66 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       throw err;
     }
 
-    // The rendered frame rides content[] as an image block. It is deliberately
-    // absent from `output` — routing it through ctx.content carries the base64
-    // once instead of duplicating it into structuredContent.
-    ctx.content.image(encodePreviewBlock(canvas).data, 'image/png');
-
-    // Optional: save preview file
-    const outputFiles: string[] = [];
-    const savedPath = await savePngPreview(canvas, `display-text-${Date.now()}`);
-    if (savedPath) outputFiles.push(savedPath);
-
-    // Handle brightness
-    if (input.push && input.brightness !== undefined && input.brightness !== null) {
-      const svc = getPixooService();
-      const brightnessResult = await svc.setBrightness(input.brightness, ctx);
-      if (!brightnessResult.ok) {
-        ctx.enrich.notice(
-          `Brightness set to ${input.brightness} failed (${brightnessResult.kind}): ${brightnessResult.message}. Render and push will continue.`,
-        );
-      }
+    const scrolls =
+      input.effect === 'scroll' || (input.effect === 'auto' && placements.some((p) => p.w > size));
+    let frames = [canvas];
+    if (scrolls) {
+      frames = scrollFrames(placements, style, bg, size);
+      for (const entry of layoutEntries) entry.action = 'scrolling';
+    } else if (input.effect === 'float' || input.effect === 'pulse') {
+      frames = effectFrames(placements, style, bg, size, input.effect);
     }
+    const animated = frames.length > 1;
 
-    // Push
+    // The render rides content[] as an image block — the frame itself, or a grid of
+    // every frame when animated. It is deliberately absent from `output`: routing it
+    // through ctx.content carries the base64 once instead of duplicating it into
+    // structuredContent.
+    ctx.content.image((await buildContactSheet(frames)).data, 'image/png');
+
+    const baseName = `display-text-${Date.now()}`;
+    const writePreview: PreviewWriter = (dir) =>
+      animated
+        ? saveGifPreview(frames, ANIMATION_SPEED_MS, dir, baseName)
+        : savePngPreview(canvas, dir, baseName);
+    const outputFiles = await autoSavePreview(writePreview);
+
+    const notices: string[] = [];
     let pushed = false;
     let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
       const svc = getPixooService();
-      ctx.log.info('Pushing display_text to device', { textLength: combinedText.length });
-      deviceState = await svc.pushFrame(canvas, ctx);
+      deviceState = await pushKeepingPreview(
+        async () => {
+          if (input.brightness !== undefined) {
+            const brightnessResult = await svc.setBrightness(input.brightness, ctx);
+            if (!brightnessResult.ok) {
+              notices.push(
+                `Brightness set to ${input.brightness} failed (${brightnessResult.kind}): ${brightnessResult.message}. Render and push will continue.`,
+              );
+            }
+          }
+          ctx.log.info('Pushing display_text to device', {
+            textLength: combinedText.length,
+            frames: frames.length,
+          });
+          return animated
+            ? svc.pushAnimation(frames, ANIMATION_SPEED_MS, ctx)
+            : svc.pushFrame(canvas, ctx);
+        },
+        outputFiles,
+        writePreview,
+      );
       pushed = true;
+      const visibility = visibilityNotice(deviceState);
+      if (visibility) notices.push(visibility);
     }
+    // ctx.enrich.notice is last-wins, so every notice for this call lands as one string.
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     return {
       pushed,
+      frames: frames.length,
       layout: layoutEntries,
       deviceState,
       outputFiles: outputFiles.length > 0 ? outputFiles : undefined,
@@ -394,7 +533,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
   format: (result) => {
     const lines: string[] = [];
-    lines.push(`**Pushed:** ${result.pushed ? 'Yes' : 'No'}`);
+    lines.push(`**Pushed:** ${result.pushed ? 'Yes' : 'No'} | **Frames:** ${result.frames}`);
 
     if (result.deviceState) {
       const ds = result.deviceState;

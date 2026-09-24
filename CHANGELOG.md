@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.1.4](changelog/1.1.x/1.1.4.md) — 2026-09-23 · 🛡️ Security
+
+Push-capable tools now declare device_http_error and carry retryable; pixoo_compose_scene's image opacity and missing local-asset errors are fixed; pixoo_control_device no longer drops failed-setter notices; pixoo_push_image's fetch cap now holds while the body streams.
+
 ## [1.1.3](changelog/1.1.x/1.1.3.md) — 2026-09-21
 
 Errors thrown in the tool handlers now forward their declared recovery hint to callers; invalid_color hints match what resolveColor accepts; pixoo_control_device drops two error reasons it could never emit (#8). mcp-ts-core ^0.13.2 → ^0.13.6 adds a Recovery: hint on argument rejections and key normalization for tool calls.

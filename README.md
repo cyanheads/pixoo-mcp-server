@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-1.1.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pixoo-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pixoo-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pixoo-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-1.1.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pixoo-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pixoo-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pixoo-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -66,7 +66,8 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 - Up to 50 layered elements rendered back-to-front: `text`, `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image`, `sprite`
 - Background: solid color, gradient (vertical, horizontal, or radial), or named theme
 - Animation via named effect presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw per-property keyframe arrays — 1–40 frames at 10–2000ms per frame (default 150ms)
-- `image` and `sprite` elements accept an absolute local path or an https URL; a supplied `output` path must be absolute with no traversal segments
+- `image` elements accept an absolute local path or an https URL; `sprite` elements take an absolute local path; a supplied `output` path must be absolute with no traversal segments
+- `opacity` (0–100) blends any element, images included, over the layers beneath it
 - Static scenes return a PNG preview; animations return a labeled contact-sheet PNG plus a saved GIF (GIF preview is inconsistent across MCP clients)
 - Typed failures for `asset_not_found`, `invalid_color`, and `unknown_icon`, alongside the shared device-error reasons
 
@@ -74,7 +75,7 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 
 ### `pixoo_push_image` <sub>tool</sub>
 
-- Accepts an absolute local file path or an https (not http) URL
+- Accepts an absolute local file path or an https (not http) URL; a URL response is capped at 10 MB, enforced while the body streams
 - Three fit modes: `contain` (letterbox), `cover` (crop to fill), `fill` (stretch)
 - Three resize kernels: `nearest` for pixel art (default), `lanczos3` for photos, `mitchell` for a balance
 - Returns the exact resized result as an image content block before it is pushed
@@ -85,7 +86,7 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 
 - `mode: "set"` adds or updates an overlay on one of 20 independent slots (`id` 0–19); `mode: "clear"` removes it
 - 115 device-rendered font IDs (0–114); overlays persist across channel switches until explicitly cleared
-- Configurable `x`/`y` (0–64), scroll `direction` (`left`/`right`), `speed` (0–100), and `align`; color is `#RRGGBB` hex only — named colors aren't supported here
+- Configurable `x`/`y` (0–64), scroll `direction` (`left`/`right`), `speed` (0–100), and `align`; color accepts hex (`#RRGGBB` or `#RGB`) or a named color, the same as the render tools
 - Device-rendered, not previewable — for styled, previewable text use `pixoo_display_text`
 
 ---
@@ -93,7 +94,7 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 ### `pixoo_control_device` <sub>tool</sub>
 
 - Call with no params to read state only; supply any of `brightness` (0–100), `screen` (`on`/`off`), `channel` (`faces`/`cloud`/`visualizer`/`custom`), or `clockFaceId` to apply changes before the read-back
-- `applied` lists which requested settings succeeded; a failed setting is omitted from `applied` and reported via an enrichment notice instead of failing the call
+- `applied` lists which requested settings succeeded; a failed setting is omitted from `applied` and reported in a `notice` instead of failing the call — every failed setting in one call, each with its failure kind and message
 - Always returns current `reachable`, `channel`, `brightness`, `screenOn`, and `clockId` (the latter three absent when the device is unreachable)
 
 ---
@@ -162,8 +163,8 @@ Agent-friendly output:
 
 - Preview-as-content — render tools return the upscaled (8×, 512px) output as an image content block, so the calling model sees exactly what was drawn, before and after push
 - Layout transparency — every silent renderer decision (font fallback, truncation, scroll engaged, element clipped) is reported in `layout[]` so agents can inspect and refine
-- Device truth — `pushed` reflects the device ACK; `deviceState` after a push flags visibility issues (screen off, brightness ≤ 10, wrong channel) as enrichment notices rather than failures
-- Graceful degradation — render succeeds and returns the preview even when the device is unreachable, so the agent keeps its work
+- Device truth — `pushed` reflects the device ACK; `deviceState` after a push reports the channel, brightness, and screen state the device returned
+- Render without a device — `push: false` renders and returns the preview with no device reachable; a push to an unreachable device fails with a retryable `device_unreachable` error
 
 ## Getting started
 

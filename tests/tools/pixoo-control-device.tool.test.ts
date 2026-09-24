@@ -3,7 +3,7 @@
  * @module tests/tools/pixoo-control-device.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooControlDevice } from '@/mcp-server/tools/definitions/pixoo-control-device.tool.js';
@@ -105,6 +105,97 @@ describe('pixooControlDevice', () => {
 
     expect(result.reachable).toBe(false);
     expect(result.applied).toEqual([]);
+  });
+
+  describe('failed setters surface as a notice on both surfaces', () => {
+    const networkFailure = { ok: false, kind: 'network', message: 'ECONNREFUSED' } as never;
+
+    /** Text of every content block, in order — the domain block plus the enrichment trailer. */
+    function allText(result: Awaited<ReturnType<typeof runToolContract>>): string {
+      return result.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n');
+    }
+
+    it('a single failed setter lands in structuredContent.notice and the content[] trailer', async () => {
+      stubStatus({ reachable: false } as typeof fakeStatus);
+      vi.spyOn(getPixooService(), 'setBrightness').mockResolvedValue(networkFailure);
+
+      const result = await runToolContract(pixooControlDevice, { brightness: 50 });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        reachable: false,
+        applied: [],
+        notice: 'brightness:50 failed (network): ECONNREFUSED',
+      });
+      expect(allText(result)).toContain('> brightness:50 failed (network): ECONNREFUSED');
+    });
+
+    it('every failed setter is kept when several fail in one call', async () => {
+      stubStatus();
+      const svc = getPixooService();
+      vi.spyOn(svc, 'setBrightness').mockResolvedValue(networkFailure);
+      vi.spyOn(svc, 'setScreen').mockResolvedValue({
+        ok: false,
+        kind: 'device',
+        deviceCode: 1,
+        message: 'Device rejected Channel/OnOffScreen (error_code 1)',
+      } as never);
+      vi.spyOn(svc, 'setChannel').mockResolvedValue({ ok: true } as never);
+      vi.spyOn(svc, 'setClock').mockResolvedValue({
+        ok: false,
+        kind: 'timeout',
+        message: 'Request timed out',
+      } as never);
+
+      const result = await runToolContract(pixooControlDevice, {
+        brightness: 50,
+        screen: 'off',
+        channel: 'faces',
+        clockFaceId: 7,
+      });
+
+      const failures = [
+        'brightness:50 failed (network): ECONNREFUSED',
+        'screen:off failed (device): Device rejected Channel/OnOffScreen (error_code 1)',
+        'clockFace:7 failed (timeout): Request timed out',
+      ];
+      const structured = result.structuredContent as { applied: string[]; notice: string };
+      expect(structured.applied).toEqual(['channel:faces']);
+      for (const failure of failures) {
+        expect(structured.notice).toContain(failure);
+        expect(allText(result)).toContain(failure);
+      }
+      // The succeeded setter is reported as applied, not as a failure.
+      expect(structured.notice).not.toContain('channel');
+    });
+
+    it('a call where every setter succeeds carries no notice', async () => {
+      stubStatus();
+      stubSetters();
+
+      const result = await runToolContract(pixooControlDevice, {
+        brightness: 60,
+        screen: 'on',
+        channel: 'custom',
+        clockFaceId: 3,
+      });
+
+      expect(result.structuredContent).toMatchObject({
+        applied: ['brightness:60', 'screen:on', 'channel:custom', 'clockFace:3'],
+      });
+      expect(result.structuredContent).not.toHaveProperty('notice');
+      expect(allText(result)).not.toContain('failed');
+      expect(result.content).toHaveLength(1);
+    });
+
+    it('a read-only call carries no notice', async () => {
+      stubStatus();
+      const result = await runToolContract(pixooControlDevice, {});
+      expect(result.structuredContent).not.toHaveProperty('notice');
+      expect(result.content).toHaveLength(1);
+    });
   });
 
   it('format() returns text block with Device Status heading', () => {

@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import type { PixooResult } from '@cyanheads/pixoo-toolkit';
 import { getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 export const pixooControlDevice = tool('pixoo_control_device', {
@@ -63,6 +64,15 @@ export const pixooControlDevice = tool('pixoo_control_device', {
       ),
   }),
 
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Requested settings that failed, each with its failure kind and message (e.g. "brightness:80 failed (network): …"), joined by "; ". Absent when every requested setting applied.',
+      ),
+  },
+
   errors: [
     {
       reason: 'no_device_configured',
@@ -76,31 +86,29 @@ export const pixooControlDevice = tool('pixoo_control_device', {
   async handler(input, ctx) {
     const svc = getPixooService();
     const applied: string[] = [];
+    const failed: string[] = [];
+
+    const record = (setting: string, res: PixooResult) => {
+      if (res.ok) applied.push(setting);
+      else failed.push(`${setting} failed (${res.kind}): ${res.message}`);
+    };
 
     // Apply changes
     if (input.brightness !== undefined) {
-      const res = await svc.setBrightness(input.brightness, ctx);
-      if (res.ok) applied.push(`brightness:${input.brightness}`);
-      else ctx.enrich.notice(`brightness:${input.brightness} failed (${res.kind}): ${res.message}`);
+      record(`brightness:${input.brightness}`, await svc.setBrightness(input.brightness, ctx));
     }
-
     if (input.screen !== undefined) {
-      const res = await svc.setScreen(input.screen === 'on', ctx);
-      if (res.ok) applied.push(`screen:${input.screen}`);
-      else ctx.enrich.notice(`screen:${input.screen} failed (${res.kind}): ${res.message}`);
+      record(`screen:${input.screen}`, await svc.setScreen(input.screen === 'on', ctx));
     }
-
     if (input.channel) {
-      const res = await svc.setChannel(input.channel, ctx);
-      if (res.ok) applied.push(`channel:${input.channel}`);
-      else ctx.enrich.notice(`channel:${input.channel} failed (${res.kind}): ${res.message}`);
+      record(`channel:${input.channel}`, await svc.setChannel(input.channel, ctx));
+    }
+    if (input.clockFaceId !== undefined) {
+      record(`clockFace:${input.clockFaceId}`, await svc.setClock(input.clockFaceId, ctx));
     }
 
-    if (input.clockFaceId !== undefined) {
-      const res = await svc.setClock(input.clockFaceId, ctx);
-      if (res.ok) applied.push(`clockFace:${input.clockFaceId}`);
-      else ctx.enrich.notice(`clockFace:${input.clockFaceId} failed (${res.kind}): ${res.message}`);
-    }
+    // ctx.enrich.notice is last-wins, so every failure goes out in one call.
+    if (failed.length > 0) ctx.enrich.notice(failed.join('; '));
 
     // Read current state
     const state = await svc.getStatus(ctx);

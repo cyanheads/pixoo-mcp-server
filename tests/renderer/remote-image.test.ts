@@ -8,6 +8,7 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createFetchMock, createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchRemoteImageToTempPng, isRemoteSource } from '@/renderer/remote-image.js';
+import { trickleRoute } from '../helpers/trickle-body.js';
 
 /** 1×1 transparent PNG, the smallest payload sharp will re-encode. */
 const PNG_1X1 = Buffer.from(
@@ -168,6 +169,63 @@ describe('fetchRemoteImageToTempPng', () => {
     } finally {
       http.restore();
     }
+  });
+
+  describe('caller cancellation', () => {
+    const URL_ = 'https://images.test/slow.png';
+
+    it('aborting the request signal mid-download cancels the body stream', async () => {
+      const controller = new AbortController();
+      const { route, state } = trickleRoute(URL_, new Uint8Array(200 * 1024), {
+        onChunk: (n) => n === 3 && controller.abort(),
+      });
+      const http = createFetchMock([route]);
+      http.install();
+      try {
+        await expect(
+          fetchRemoteImageToTempPng(URL_, createMockContext({ signal: controller.signal })),
+        ).rejects.toMatchObject({ code: JsonRpcErrorCode.RequestCancelled });
+        expect(state.cancelled).toBe(true);
+        // Torn down at the abort, not carried through the other ~197 chunks.
+        expect(state.pulled).toBeLessThan(10);
+      } finally {
+        http.restore();
+      }
+    });
+
+    it('a signal already aborted stops the fetch before any body is read', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const { route, state } = trickleRoute(URL_, new Uint8Array(200 * 1024));
+      const http = createFetchMock([route]);
+      http.install();
+      try {
+        await expect(
+          fetchRemoteImageToTempPng(URL_, createMockContext({ signal: controller.signal })),
+        ).rejects.toThrow();
+        expect(state.pulled).toBe(0);
+      } finally {
+        http.restore();
+      }
+    });
+
+    it('an uncancelled trickled download completes exactly as before', async () => {
+      const { route, state } = trickleRoute(URL_, new Uint8Array(PNG_1X1), { chunkBytes: 16 });
+      const http = createFetchMock([route]);
+      http.install();
+      try {
+        const tmpPath = await fetchRemoteImageToTempPng(
+          URL_,
+          createMockContext({ signal: new AbortController().signal }),
+        );
+        written.push(tmpPath);
+        await expect(fs.access(tmpPath)).resolves.toBeUndefined();
+        expect(state.pulled).toBe(Math.ceil(PNG_1X1.byteLength / 16));
+        expect(state.cancelled).toBe(false);
+      } finally {
+        http.restore();
+      }
+    });
   });
 
   it('rejects a response that declares more than the byte ceiling', async () => {

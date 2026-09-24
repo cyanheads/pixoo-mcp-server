@@ -7,8 +7,9 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { Context } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
-import { fetchWithTimeout, type RequestContext } from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
 
 /** Wall-clock budget for a remote image fetch, headers through body. */
 const FETCH_TIMEOUT_MS = 15_000;
@@ -28,13 +29,14 @@ export function isRemoteSource(source: string): boolean {
  * Private and loopback addresses are deliberately reachable: this server drives a
  * LAN device, so a NAS or local web server is a legitimate image host.
  *
+ * The download runs under `ctx.signal`: a cancelled request tears the response stream
+ * down instead of reading on to the deadline or the byte cap.
+ *
  * @throws {McpError} NotFound with `reason: 'asset_not_found'` for a non-https URL,
  *   an unreachable or non-2xx endpoint, or a response over {@link MAX_IMAGE_BYTES}.
+ * @throws {McpError} RequestCancelled when `ctx.signal` aborts while the body streams.
  */
-export async function fetchRemoteImageToTempPng(
-  source: string,
-  ctx: RequestContext,
-): Promise<string> {
+export async function fetchRemoteImageToTempPng(source: string, ctx: Context): Promise<string> {
   if (!source.startsWith('https://')) {
     throw notFound(`Only https URLs are supported. Received: "${source}".`, {
       reason: 'asset_not_found',
@@ -43,7 +45,11 @@ export async function fetchRemoteImageToTempPng(
     });
   }
 
-  const resp = await fetchWithTimeout(source, FETCH_TIMEOUT_MS, ctx).catch((err: unknown) => {
+  // A throw here after the signal fired still reaches the caller as a cancellation:
+  // the handler factory reclassifies any error once the request's signal has aborted.
+  const resp = await fetchWithTimeout(source, FETCH_TIMEOUT_MS, ctx, {
+    signal: ctx.signal,
+  }).catch((err: unknown) => {
     throw notFound(
       `Failed to fetch image from "${source}": ${err instanceof Error ? err.message : String(err)}`,
       {

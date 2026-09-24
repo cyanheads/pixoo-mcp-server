@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDisplayText } from '@/mcp-server/tools/definitions/pixoo-display-text.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectDeviceFailure, failDevicePush } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
@@ -250,6 +251,35 @@ describe('pixooDisplayText', () => {
     await expect(Promise.resolve(pixooDisplayText.handler(input, ctx))).rejects.toMatchObject({
       data: { reason: 'invalid_color' },
       message: expect.stringMatching(/white|black|red|green|blue/),
+    });
+  });
+
+  describe('device failures on push reach both surfaces through the contract', () => {
+    it('device_unreachable carries retryable: true', async () => {
+      failDevicePush({ ok: false, kind: 'network', message: 'connect EHOSTUNREACH' });
+      const result = await runToolContract(pixooDisplayText, { text: 'hi', push: true });
+      expectDeviceFailure(result, pixooDisplayText.errors, 'device_unreachable', true);
+    });
+
+    it('device_unreachable from a timeout carries retryable: true', async () => {
+      failDevicePush({ ok: false, kind: 'timeout', message: 'Request timed out' });
+      const result = await runToolContract(pixooDisplayText, { text: 'hi', push: true });
+      expectDeviceFailure(result, pixooDisplayText.errors, 'device_unreachable', true);
+    });
+
+    it.each([
+      [503, true],
+      [404, false],
+    ])('device_http_error (HTTP %i) is declared, retryable: %s', async (status, retryable) => {
+      failDevicePush({ ok: false, kind: 'http', status, message: `HTTP ${status}` });
+      const result = await runToolContract(pixooDisplayText, { text: 'hi', push: true });
+      expectDeviceFailure(result, pixooDisplayText.errors, 'device_http_error', retryable);
+    });
+
+    it('device_rejected carries no retryable key', async () => {
+      failDevicePush({ ok: false, kind: 'device', deviceCode: 1, message: 'error_code 1' });
+      const result = await runToolContract(pixooDisplayText, { text: 'hi', push: true });
+      expectDeviceFailure(result, pixooDisplayText.errors, 'device_rejected', undefined);
     });
   });
 

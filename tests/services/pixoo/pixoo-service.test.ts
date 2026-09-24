@@ -3,6 +3,7 @@
  * @module tests/services/pixoo/pixoo-service.test
  */
 
+import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { Canvas } from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -161,7 +162,8 @@ describe('PixooService failure kind mapping', () => {
     const ctx = createMockContext();
     const canvas = new Canvas(64);
     await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
-      data: { reason: 'device_unreachable' },
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'device_unreachable', retryable: true },
     });
   });
 
@@ -178,16 +180,24 @@ describe('PixooService failure kind mapping', () => {
     const ctx = createMockContext();
     const canvas = new Canvas(64);
     await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
-      data: { reason: 'device_unreachable' },
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'device_unreachable', retryable: true },
     });
   });
 
-  it('http failure → device_http_error', async () => {
+  it.each([
+    [503, true],
+    [500, true],
+    [429, true],
+    [408, true],
+    [404, false],
+    [400, false],
+  ])('http %i failure → device_http_error, retryable: %s', async (status, retryable) => {
     const svc = getPixooService();
     injectClient(
       svc,
       makeFakeClient({
-        push: () => Promise.resolve({ ok: false, kind: 'http', message: 'HTTP 503' }),
+        push: () => Promise.resolve({ ok: false, kind: 'http', status, message: `HTTP ${status}` }),
         getChannel: () => Promise.resolve({ ok: true, data: { SelectIndex: 3 } }),
       }),
     );
@@ -195,7 +205,27 @@ describe('PixooService failure kind mapping', () => {
     const ctx = createMockContext();
     const canvas = new Canvas(64);
     await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
-      data: { reason: 'device_http_error' },
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'device_http_error', retryable, recovery: { hint: expect.any(String) } },
+    });
+  });
+
+  it('pushAnimation maps a failure through the same contract as pushFrame', async () => {
+    const svc = getPixooService();
+    injectClient(
+      svc,
+      makeFakeClient({
+        pushAnimation: () => Promise.resolve({ ok: false, kind: 'network', message: 'EHOSTDOWN' }),
+        getChannel: () => Promise.resolve({ ok: true, data: { SelectIndex: 3 } }),
+      }),
+    );
+
+    const ctx = createMockContext();
+    await expect(
+      svc.pushAnimation([new Canvas(64), new Canvas(64)], 100, ctx),
+    ).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'device_unreachable', retryable: true },
     });
   });
 
@@ -217,9 +247,13 @@ describe('PixooService failure kind mapping', () => {
 
     const ctx = createMockContext();
     const canvas = new Canvas(64);
-    await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
+    const error = await svc.pushFrame(canvas, ctx).catch((err: unknown) => err);
+    expect(error).toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
       data: { reason: 'device_rejected', deviceCode: 5 },
     });
+    // A firmware rejection is deterministic — no retryability claim either way.
+    expect((error as McpError).data).not.toHaveProperty('retryable');
   });
 
   it('unknown failure kind → device_unreachable', async () => {
@@ -235,7 +269,7 @@ describe('PixooService failure kind mapping', () => {
     const ctx = createMockContext();
     const canvas = new Canvas(64);
     await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
-      data: { reason: 'device_unreachable' },
+      data: { reason: 'device_unreachable', retryable: true },
     });
   });
 });

@@ -180,18 +180,20 @@ Handlers throw — the framework catches, classifies, and formats.
 
 Pixoo-specific error reasons declared on tools:
 
-| Reason | Code | When |
-|:-------|:-----|:-----|
-| `device_unreachable` | `ServiceUnavailable` | Toolkit result kind `network`/`timeout` |
-| `device_http_error` | `ServiceUnavailable` | Non-2xx from the device's HTTP server |
-| `device_rejected` | `ServiceUnavailable` | Firmware returned non-zero `error_code` |
-| `no_device_configured` | `InvalidParams` | Device tool called without `PIXOO_IP` |
-| `asset_not_found` | `NotFound` | Image/sprite path or URL unreadable |
-| `invalid_color` | `InvalidParams` | `resolveColor` throw — invalid color name or format |
-| `unknown_icon` | `InvalidParams` | Icon name not in registry |
-| `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable |
+| Reason | Code | When | `retryable` |
+|:-------|:-----|:-----|:------------|
+| `device_unreachable` | `ServiceUnavailable` | Toolkit result kind `network`/`timeout` | `true` |
+| `device_http_error` | `ServiceUnavailable` | Non-2xx from the device's HTTP server | `true` for 408, 429, 500, 502–504; `false` otherwise |
+| `device_rejected` | `ServiceUnavailable` | Firmware returned non-zero `error_code` | — |
+| `no_device_configured` | `InvalidParams` | Device tool called without `PIXOO_IP` | — |
+| `asset_not_found` | `NotFound` | Image/sprite path or URL unreadable | — |
+| `invalid_color` | `InvalidParams` | `resolveColor` throw — invalid color name or format | — |
+| `unknown_icon` | `InvalidParams` | Icon name not in registry | — |
+| `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable | `true` |
 
-`PixooService` and `src/renderer/` raise the device, configuration, and remote-asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked, and every such site forwards its declared recovery with `ctx.recoveryFor`. A computed reason forwards the same way (`ctx.recoveryFor(reason)`); `lint:mcp` skips a definition whose `ctx.fail` reason is non-literal, so a clean lint says nothing about those sites.
+`PixooService` and `src/renderer/` raise the device, configuration, and asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked, and every such site forwards its declared recovery with `ctx.recoveryFor`. A computed reason forwards the same way (`ctx.recoveryFor(reason)`); `lint:mcp` skips a definition whose `ctx.fail` reason is non-literal, so a clean lint says nothing about those sites.
+
+A contract's `retryable` reaches the wire only through `ctx.fail`; a service throw carries it only when the service writes `data.retryable` itself. `classifyDeviceFailure` (in `pixoo-service.ts`) is the one place a failed device call becomes a reason and a retryability — `PixooService` writes both on its push-path throws, and `pixoo_overlay_text` passes the retryability into `ctx.fail` so it overrides the contract default per occurrence.
 
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';

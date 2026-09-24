@@ -6,7 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, validationError } from '@cyanheads/mcp-ts-core/errors';
 import { resolveColor } from '@cyanheads/pixoo-toolkit';
-import { getPixooService } from '@/services/pixoo/pixoo-service.js';
+import { classifyDeviceFailure, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 export const pixooOverlayText = tool('pixoo_overlay_text', {
   title: 'pixoo_overlay_text',
@@ -46,7 +46,12 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       .describe(
         'Device font ID (0–114). 0 = default, 18 = arrows, 20 = °C/°F. Device-rendered; no preview.',
       ),
-    color: z.string().default('#ffffff').describe('Text color as CSS hex color (default: white).'),
+    color: z
+      .string()
+      .default('#ffffff')
+      .describe(
+        'Text color: hex (#RRGGBB or #RGB) or a named color such as orange (default: white).',
+      ),
     speed: z
       .number()
       .int()
@@ -89,6 +94,13 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
     },
     {
+      reason: 'device_http_error',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: 'The device answered with a non-2xx HTTP status (retryable for 408, 429, 500, and 502–504).',
+      recovery:
+        'The device may be busy or rebooting; wait a few seconds and retry. If it persists, run pixoo_discover_devices to confirm PIXOO_IP points at the Pixoo.',
+    },
+    {
       reason: 'device_rejected',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware rejected the command.',
@@ -121,15 +133,11 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       ctx.log.info('Clearing text overlay', { id: input.id });
       const result = await svc.clearText(input.id, ctx);
       if (!result.ok) {
-        const reason =
-          result.kind === 'network' || result.kind === 'timeout'
-            ? 'device_unreachable'
-            : 'device_rejected';
-        throw ctx.fail(
-          reason,
-          `Clear overlay failed (${result.kind}): ${result.message}`,
-          ctx.recoveryFor(reason),
-        );
+        const { reason, retryable } = classifyDeviceFailure(result);
+        throw ctx.fail(reason, `Clear overlay failed (${result.kind}): ${result.message}`, {
+          ...ctx.recoveryFor(reason),
+          ...(retryable !== undefined && { retryable }),
+        });
       }
       return { acknowledged: true, mode: 'clear', id: input.id };
     }
@@ -168,15 +176,11 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
     const result = await svc.sendText(sendOpts, ctx);
 
     if (!result.ok) {
-      const reason =
-        result.kind === 'network' || result.kind === 'timeout'
-          ? 'device_unreachable'
-          : 'device_rejected';
-      throw ctx.fail(
-        reason,
-        `Set overlay failed (${result.kind}): ${result.message}`,
-        ctx.recoveryFor(reason),
-      );
+      const { reason, retryable } = classifyDeviceFailure(result);
+      throw ctx.fail(reason, `Set overlay failed (${result.kind}): ${result.message}`, {
+        ...ctx.recoveryFor(reason),
+        ...(retryable !== undefined && { retryable }),
+      });
     }
 
     return { acknowledged: true, mode: 'set', id: input.id };

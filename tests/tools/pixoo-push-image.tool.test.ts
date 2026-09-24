@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooPushImage } from '@/mcp-server/tools/definitions/pixoo-push-image.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectDeviceFailure, failDevicePush } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
@@ -109,6 +110,29 @@ describe('pixooPushImage', () => {
     expectForwardedRecovery(result, pixooPushImage.errors, 'asset_not_found');
     expect(result.structuredContent).toMatchObject({
       error: { data: { path: '/tmp/pixoo-nonexistent-file-xyz-12345.png' } },
+    });
+  });
+
+  describe('device failures on push reach both surfaces through the contract', () => {
+    it('device_unreachable carries retryable: true', async () => {
+      failDevicePush({ ok: false, kind: 'network', message: 'connect EHOSTUNREACH' });
+      const result = await runToolContract(pixooPushImage, { source: fixturePath, push: true });
+      expectDeviceFailure(result, pixooPushImage.errors, 'device_unreachable', true);
+    });
+
+    it.each([
+      [503, true],
+      [404, false],
+    ])('device_http_error (HTTP %i) is declared, retryable: %s', async (status, retryable) => {
+      failDevicePush({ ok: false, kind: 'http', status, message: `HTTP ${status}` });
+      const result = await runToolContract(pixooPushImage, { source: fixturePath, push: true });
+      expectDeviceFailure(result, pixooPushImage.errors, 'device_http_error', retryable);
+    });
+
+    it('device_rejected carries no retryable key', async () => {
+      failDevicePush({ ok: false, kind: 'device', deviceCode: 1, message: 'error_code 1' });
+      const result = await runToolContract(pixooPushImage, { source: fixturePath, push: true });
+      expectDeviceFailure(result, pixooPushImage.errors, 'device_rejected', undefined);
     });
   });
 

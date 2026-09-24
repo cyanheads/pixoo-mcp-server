@@ -12,6 +12,7 @@ import {
   Channel,
   type DiscoveredDevice,
   PixooClient,
+  type PixooFailure,
   type PixooResult,
   type PixooSize,
 } from '@cyanheads/pixoo-toolkit';
@@ -41,40 +42,65 @@ const CHANNEL_ENUM_TO_NAME: Record<number, string> = {
   [Channel.Custom]: 'custom',
 };
 
-/** Map a PixooResult failure to the appropriate MCP error. */
-function mapFailure(fail: {
-  ok: false;
-  kind: string;
-  message: string;
-  deviceCode?: number;
-}): never {
+/** Error-contract reasons a failed device call maps to. */
+export type DeviceFailureReason = 'device_unreachable' | 'device_http_error' | 'device_rejected';
+
+/** HTTP statuses a later attempt can clear — the device busy, rate-limited, or restarting. */
+const TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Classify a failed device call into its error-contract reason and retryability.
+ * `retryable` is absent for a firmware rejection, which makes no claim either way.
+ *
+ * Services cannot call `ctx.fail`, the only path that fills `data.retryable` from a
+ * tool's contract, so every throw site writes the value this returns.
+ */
+export function classifyDeviceFailure(fail: PixooFailure): {
+  reason: DeviceFailureReason;
+  retryable?: boolean;
+} {
   switch (fail.kind) {
-    case 'network':
-    case 'timeout':
+    case 'http':
+      return {
+        reason: 'device_http_error',
+        retryable: TRANSIENT_HTTP_STATUSES.has(fail.status ?? 0),
+      };
+    case 'device':
+      return { reason: 'device_rejected' };
+    default:
+      return { reason: 'device_unreachable', retryable: true };
+  }
+}
+
+/** Map a PixooResult failure to the appropriate MCP error. */
+function mapFailure(fail: PixooFailure): never {
+  const { reason, retryable } = classifyDeviceFailure(fail);
+  switch (reason) {
+    case 'device_unreachable':
       throw serviceUnavailable(`Device unreachable: ${fail.message}`, {
-        reason: 'device_unreachable',
+        reason,
+        retryable,
         recovery: {
-          hint: 'Check that the device is powered on and on the same network as this server.',
+          hint: 'Check the device is powered on and on the same network. Retry in a few seconds.',
         },
       });
-    case 'http':
+    case 'device_http_error':
       throw serviceUnavailable(`Device HTTP error: ${fail.message}`, {
-        reason: 'device_http_error',
-        recovery: { hint: 'The device may be busy or rebooting; wait a few seconds and retry.' },
+        reason,
+        retryable,
+        recovery: {
+          hint: 'The device may be busy or rebooting; wait a few seconds and retry. If it persists, run pixoo_discover_devices to confirm PIXOO_IP points at the Pixoo.',
+        },
       });
-    case 'device':
+    case 'device_rejected':
       throw serviceUnavailable(
         `Device rejected command (error_code ${fail.deviceCode ?? '?'}): ${fail.message}`,
         {
-          reason: 'device_rejected',
+          reason,
           deviceCode: fail.deviceCode,
-          recovery: { hint: 'Check the device error code in the Pixoo documentation.' },
+          recovery: { hint: 'Note the device error code and check the Pixoo documentation.' },
         },
       );
-    default:
-      throw serviceUnavailable(`Device error: ${fail.message}`, {
-        reason: 'device_unreachable',
-      });
   }
 }
 
@@ -276,6 +302,7 @@ export class PixooService {
         'Divoom cloud discovery endpoint unreachable — check internet connectivity.',
         {
           reason: 'discovery_failed',
+          retryable: true,
           recovery: {
             hint: 'Ensure this server has internet access for the Divoom discovery endpoint, or set PIXOO_IP manually.',
           },

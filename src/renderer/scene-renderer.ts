@@ -4,7 +4,7 @@
  */
 
 import * as fs from 'node:fs/promises';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
 import type { RequestContext } from '@cyanheads/mcp-ts-core/utils';
 import {
   Canvas,
@@ -202,6 +202,29 @@ export interface AssetCache {
 }
 
 /**
+ * Confirm a local image or sprite-sheet path is readable before the toolkit's
+ * loader reaches it — the loader fails a missing file with an unclassified error.
+ *
+ * @throws {McpError} NotFound with `reason: 'asset_not_found'` when the path is
+ *   missing or unreadable.
+ */
+async function assertReadableAsset(assetPath: string, label: string): Promise<void> {
+  try {
+    await fs.access(assetPath, fs.constants.R_OK);
+  } catch (err) {
+    throw notFound(
+      `${label} not found or unreadable: "${assetPath}".`,
+      {
+        reason: 'asset_not_found',
+        path: assetPath,
+        recovery: { hint: 'Pass an absolute path to an existing, readable image file.' },
+      },
+      { cause: err },
+    );
+  }
+}
+
+/**
  * Preload all async assets referenced in elements.
  *
  * `ctx` is threaded through so a remote image fetch correlates to the
@@ -220,7 +243,9 @@ export async function preloadAssets(
         if (!cache.images.has(source)) {
           // The toolkit's loadImage reads from disk, so a remote source is
           // staged to a temp PNG first and unlinked once it has been read.
-          const tmpPathToCleanup = isRemoteSource(source)
+          const remote = isRemoteSource(source);
+          if (!remote) await assertReadableAsset(source, 'Image file');
+          const tmpPathToCleanup = remote
             ? await fetchRemoteImageToTempPng(source, ctx)
             : undefined;
           const localPath = tmpPathToCleanup ?? source;
@@ -241,6 +266,7 @@ export async function preloadAssets(
       } else if (el.type === 'sprite') {
         const key = `${el.path}:${el.cols}:${el.rows}`;
         if (!cache.sprites.has(key)) {
+          await assertReadableAsset(el.path, 'Sprite sheet');
           const sprite = await downsampleSprite(el.path, el.cols, el.rows);
           cache.sprites.set(key, sprite);
         }
@@ -602,7 +628,7 @@ export function renderElement(
     case 'image': {
       const cachedCanvas = assets.images.get(el.source);
       if (cachedCanvas) {
-        canvas.blit(cachedCanvas, dx, dy);
+        target.blit(cachedCanvas, dx, dy);
       }
       layoutEntries.push({
         element: elIdx,

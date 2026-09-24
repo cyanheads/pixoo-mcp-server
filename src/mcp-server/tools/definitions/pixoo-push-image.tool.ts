@@ -81,6 +81,14 @@ export const pixooPushImage = tool('pixoo_push_image', {
       thrownBy: 'service',
     },
     {
+      reason: 'device_http_error',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: 'The device answered with a non-2xx HTTP status (retryable for 408, 429, 500, and 502–504).',
+      recovery:
+        'The device may be busy or rebooting; wait a few seconds and retry. If it persists, run pixoo_discover_devices to confirm PIXOO_IP points at the Pixoo.',
+      thrownBy: 'service',
+    },
+    {
       reason: 'device_rejected',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',

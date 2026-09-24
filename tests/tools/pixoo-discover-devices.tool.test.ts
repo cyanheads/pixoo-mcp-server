@@ -3,7 +3,9 @@
  * @module tests/tools/pixoo-discover-devices.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { PixooClient } from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDiscoverDevices } from '@/mcp-server/tools/definitions/pixoo-discover-devices.tool.js';
@@ -89,6 +91,29 @@ describe('pixooDiscoverDevices', () => {
     await expect(pixooDiscoverDevices.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'discovery_failed' },
     });
+  });
+
+  it('discovery_failed from the real service carries retryable: true on both surfaces', async () => {
+    vi.spyOn(PixooClient, 'discover').mockRejectedValue(new TypeError('fetch failed'));
+
+    const result = await runToolContract(pixooDiscoverDevices, { timeoutMs: 1000 });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: JsonRpcErrorCode.ServiceUnavailable,
+        data: {
+          reason: 'discovery_failed',
+          retryable: true,
+          recovery: { hint: expect.any(String) },
+        },
+      },
+    });
+    const text = result.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    const tail = '(reason discovery_failed · retryable)';
+    expect(text.trimEnd().slice(-tail.length)).toBe(tail);
   });
 
   it('format() lists device names and IPs', () => {

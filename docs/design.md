@@ -139,7 +139,7 @@ Instruction tool: static craft content per `topic` (`text | scene | dashboard | 
 | Reason | Code | When | Retryable |
 |:-------|:-----|:-----|:----------|
 | `device_unreachable` | `ServiceUnavailable` | toolkit result kind `network`/`timeout` | yes |
-| `device_http_error` | `ServiceUnavailable` | kind `http` — non-2xx from the device's HTTP server (busy, rebooting) | yes |
+| `device_http_error` | `ServiceUnavailable` | kind `http` — non-2xx from the device's HTTP server (busy, rebooting, or `PIXOO_IP` answering as something other than a Pixoo) | 408, 429, 500, 502–504 only |
 | `device_rejected` | `ServiceUnavailable` | kind `device` — firmware returned non-zero `error_code`; message includes the device code | no |
 | `no_device_configured` | `InvalidParams` | device tool called without `PIXOO_IP` — recovery: run `pixoo_discover_devices` | no |
 | `asset_not_found` | `NotFound` | image/sprite path or URL unreadable | no |

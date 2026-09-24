@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooOverlayText } from '@/mcp-server/tools/definitions/pixoo-overlay-text.tool.js';
 import { getPixooService, initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectDeviceFailure } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
@@ -141,6 +142,37 @@ describe('pixooOverlayText', () => {
       } as never);
       const result = await runToolContract(pixooOverlayText, { mode: 'clear', id: 2 });
       expectForwardedRecovery(result, pixooOverlayText.errors, 'device_rejected');
+    });
+
+    it.each([
+      ['set', 503],
+      ['clear', 404],
+    ] as const)(
+      'device_http_error — computed from an HTTP failure in %s mode',
+      async (mode, status) => {
+        const failure = { ok: false, kind: 'http', status, message: `HTTP ${status}` } as never;
+        vi.spyOn(getPixooService(), 'sendText').mockResolvedValue(failure);
+        vi.spyOn(getPixooService(), 'clearText').mockResolvedValue(failure);
+        const result = await runToolContract(pixooOverlayText, { mode, id: 1, text: 'Hi' });
+        expectForwardedRecovery(result, pixooOverlayText.errors, 'device_http_error');
+      },
+    );
+  });
+
+  describe('retryability reaches both surfaces', () => {
+    it.each([
+      [{ kind: 'network', message: 'ECONNREFUSED' }, 'device_unreachable', true],
+      [{ kind: 'timeout', message: 'Request timed out' }, 'device_unreachable', true],
+      [{ kind: 'http', status: 503, message: 'HTTP 503' }, 'device_http_error', true],
+      [{ kind: 'http', status: 404, message: 'HTTP 404' }, 'device_http_error', false],
+      [{ kind: 'device', deviceCode: 1, message: 'error_code 1' }, 'device_rejected', undefined],
+    ])('%o → %s, retryable: %s', async (failure, reason, retryable) => {
+      vi.spyOn(getPixooService(), 'sendText').mockResolvedValue({
+        ok: false,
+        ...failure,
+      } as never);
+      const result = await runToolContract(pixooOverlayText, { mode: 'set', id: 0, text: 'Hi' });
+      expectDeviceFailure(result, pixooOverlayText.errors, reason, retryable);
     });
   });
 

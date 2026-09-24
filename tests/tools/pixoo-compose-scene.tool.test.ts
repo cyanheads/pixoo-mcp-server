@@ -3,6 +3,8 @@
  * @module tests/tools/pixoo-compose-scene.tool.test
  */
 
+import type { z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
   createMockContext,
   getContentBlocks,
@@ -12,7 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { expectDeviceFailure, failDevicePush } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
+
+type SceneInput = z.input<typeof pixooComposeScene.input>;
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -220,6 +225,83 @@ describe('pixooComposeScene', () => {
     });
     await expect(Promise.resolve(pixooComposeScene.handler(input, ctx))).rejects.toMatchObject({
       data: { reason: 'unknown_icon' },
+    });
+  });
+
+  describe('device failures on push reach both surfaces through the contract', () => {
+    const staticScene: SceneInput = {
+      background: '#000000',
+      elements: [{ type: 'text', text: 'HI' }],
+      push: true,
+    };
+    const animatedScene: SceneInput = {
+      ...staticScene,
+      elements: [{ type: 'text', text: 'HI', effect: { name: 'float' } }],
+      frames: 3,
+    };
+
+    it.each([
+      ['static', staticScene],
+      ['animated', animatedScene],
+    ])('device_unreachable carries retryable: true (%s scene)', async (_label, scene) => {
+      failDevicePush({ ok: false, kind: 'network', message: 'connect EHOSTUNREACH' });
+      const result = await runToolContract(pixooComposeScene, scene);
+      expectDeviceFailure(result, pixooComposeScene.errors, 'device_unreachable', true);
+    });
+
+    it.each([
+      [503, true],
+      [404, false],
+    ])('device_http_error (HTTP %i) is declared, retryable: %s', async (status, retryable) => {
+      failDevicePush({ ok: false, kind: 'http', status, message: `HTTP ${status}` });
+      const result = await runToolContract(pixooComposeScene, animatedScene);
+      expectDeviceFailure(result, pixooComposeScene.errors, 'device_http_error', retryable);
+    });
+
+    it('device_rejected carries no retryable key', async () => {
+      failDevicePush({ ok: false, kind: 'device', deviceCode: 1, message: 'error_code 1' });
+      const result = await runToolContract(pixooComposeScene, staticScene);
+      expectDeviceFailure(result, pixooComposeScene.errors, 'device_rejected', undefined);
+    });
+  });
+
+  describe('asset_not_found for a missing local asset', () => {
+    it.each<[string, SceneInput['elements'][number]]>([
+      ['image', { type: 'image', source: '/nonexistent-pixoo-image.png' }],
+      ['sprite', { type: 'sprite', path: '/nonexistent-pixoo-sprite.png', cols: 4, rows: 4 }],
+    ])('a missing %s path fails as NotFound on both surfaces', async (_kind, element) => {
+      const result = await runToolContract(pixooComposeScene, {
+        push: false,
+        background: '#000000',
+        elements: [element],
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: JsonRpcErrorCode.NotFound,
+          data: { reason: 'asset_not_found', recovery: { hint: expect.any(String) } },
+        },
+      });
+      const text = result.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n');
+      expect(text).toContain('/nonexistent-pixoo-');
+      expect(text).toContain('Recovery: ');
+      expect(text.trimEnd().slice(-'(reason asset_not_found)'.length)).toBe(
+        '(reason asset_not_found)',
+      );
+    });
+
+    it('fails before anything is pushed', async () => {
+      const { getPixooService } = await import('@/services/pixoo/pixoo-service.js');
+      const pushFrame = vi.spyOn(getPixooService(), 'pushFrame');
+      const result = await runToolContract(pixooComposeScene, {
+        push: true,
+        background: '#000000',
+        elements: [{ type: 'image', source: '/nonexistent-pixoo-image.png' }],
+      });
+      expect(result.isError).toBe(true);
+      expect(pushFrame).not.toHaveBeenCalled();
     });
   });
 

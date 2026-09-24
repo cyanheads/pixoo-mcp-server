@@ -3,12 +3,13 @@
  * @module tests/tools/pixoo-overlay-text.tool.test
  */
 
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooOverlayText } from '@/mcp-server/tools/definitions/pixoo-overlay-text.tool.js';
 import { getPixooService, initPixooService } from '@/services/pixoo/pixoo-service.js';
-import { expectDeviceFailure } from '../helpers/device-failure.js';
+import { expectDeviceFailure, resultText } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
@@ -173,6 +174,116 @@ describe('pixooOverlayText', () => {
       } as never);
       const result = await runToolContract(pixooOverlayText, { mode: 'set', id: 0, text: 'Hi' });
       expectDeviceFailure(result, pixooOverlayText.errors, reason, retryable);
+    });
+  });
+
+  describe('x/y bounds follow PIXOO_SIZE', () => {
+    function useSize(size: number) {
+      resetServerConfig();
+      process.env['PIXOO_SIZE'] = String(size);
+    }
+
+    it.each([16, 32, 64])('size %i: x/y at size - 1 reach the device', async (size) => {
+      useSize(size);
+      const sendText = vi
+        .spyOn(getPixooService(), 'sendText')
+        .mockResolvedValue({ ok: true } as never);
+      const result = await runToolContract(pixooOverlayText, {
+        mode: 'set',
+        id: 0,
+        text: 'Hi',
+        x: size - 1,
+        y: size - 1,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(sendText).toHaveBeenCalledWith(
+        expect.objectContaining({ x: size - 1, y: size - 1 }),
+        expect.anything(),
+      );
+    });
+
+    it.each(
+      [16, 32, 64].flatMap((size) => [
+        [size, 'x'],
+        [size, 'y'],
+      ]),
+    )('size %i: %s at size is rejected naming the valid range, never sent', async (size, axis) => {
+      useSize(size as number);
+      const sendText = vi
+        .spyOn(getPixooService(), 'sendText')
+        .mockResolvedValue({ ok: true } as never);
+      const result = await runToolContract(pixooOverlayText, {
+        mode: 'set',
+        id: 0,
+        text: 'Hi',
+        [axis as string]: size,
+      });
+      expect(result.isError).toBe(true);
+      const error = (result.structuredContent as { error: { code: number; message: string } })
+        .error;
+      expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
+      expect(error.message).toContain(`${axis} must be 0–${(size as number) - 1}`);
+      expect(resultText(result)).toContain(`${axis} must be 0–${(size as number) - 1}`);
+      expect(sendText).not.toHaveBeenCalled();
+    });
+
+    it.each([16, 32, 64])(
+      'size %i: width up to the display width is sent; wider is rejected, never sent',
+      async (size) => {
+        useSize(size);
+        const sendText = vi
+          .spyOn(getPixooService(), 'sendText')
+          .mockResolvedValue({ ok: true } as never);
+        const accepted = await runToolContract(pixooOverlayText, {
+          mode: 'set',
+          id: 0,
+          text: 'Hi',
+          width: size,
+        });
+        expect(accepted.isError).toBeFalsy();
+        expect(sendText).toHaveBeenCalledWith(
+          expect.objectContaining({ width: size }),
+          expect.anything(),
+        );
+
+        sendText.mockClear();
+        const rejected = await runToolContract(pixooOverlayText, {
+          mode: 'set',
+          id: 0,
+          text: 'Hi',
+          width: size + 1,
+        });
+        expect(rejected.isError).toBe(true);
+        const error = (rejected.structuredContent as { error: { code: number; message: string } })
+          .error;
+        expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
+        expect(error.message).toContain(`width must be 0–${size}`);
+        expect(resultText(rejected)).toContain(`width must be 0–${size}`);
+        expect(sendText).not.toHaveBeenCalled();
+      },
+    );
+
+    it('size 16: a value far past the edge is rejected; clear mode ignores x/y', async () => {
+      useSize(16);
+      const sendText = vi
+        .spyOn(getPixooService(), 'sendText')
+        .mockResolvedValue({ ok: true } as never);
+      const clearText = vi
+        .spyOn(getPixooService(), 'clearText')
+        .mockResolvedValue({ ok: true } as never);
+      const rejected = await runToolContract(pixooOverlayText, {
+        mode: 'set',
+        id: 0,
+        text: 'hi',
+        x: 50,
+        y: 50,
+      });
+      expect(rejected.isError).toBe(true);
+      expect(sendText).not.toHaveBeenCalled();
+
+      const cleared = await runToolContract(pixooOverlayText, { mode: 'clear', id: 0, x: 50 });
+      expect(cleared.isError).toBeFalsy();
+      expect(clearText).toHaveBeenCalledOnce();
     });
   });
 

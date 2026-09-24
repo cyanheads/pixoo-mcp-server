@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, validationError } from '@cyanheads/mcp-ts-core/errors';
 import { resolveColor } from '@cyanheads/pixoo-toolkit';
+import { getServerConfig } from '@/config/server-config.js';
 import { classifyDeviceFailure, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 export const pixooOverlayText = tool('pixoo_overlay_text', {
@@ -29,14 +30,14 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       .min(0)
       .max(64)
       .default(0)
-      .describe('X start position on display (default: 0).'),
+      .describe('X start position, 0 to display size − 1 (63 on a 64px display; default: 0).'),
     y: z
       .number()
       .int()
       .min(0)
       .max(64)
       .default(0)
-      .describe('Y start position on display (default: 0).'),
+      .describe('Y start position, 0 to display size − 1 (63 on a 64px display; default: 0).'),
     font: z
       .number()
       .int()
@@ -72,7 +73,9 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       .int()
       .min(0)
       .optional()
-      .describe('Text region width in pixels (optional; defaults to display width).'),
+      .describe(
+        'Text region width in pixels, 0 to display size (64 on a 64px display; defaults to display width).',
+      ),
   }),
 
   output: z.object({
@@ -145,6 +148,26 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
     // mode === 'set'
     if (!input.text) {
       throw validationError('text is required when mode is "set".');
+    }
+
+    // The schema's ceiling is fixed at import; the configured display sets the real edge.
+    const size = getServerConfig().pixooSize;
+    for (const [axis, value] of [
+      ['x', input.x],
+      ['y', input.y],
+    ] as const) {
+      if (value >= size) {
+        throw validationError(
+          `${axis} must be 0–${size - 1} on a ${size}px display (PIXOO_SIZE=${size}); received ${value}.`,
+          { [axis]: value, max: size - 1 },
+        );
+      }
+    }
+    if (input.width !== undefined && input.width > size) {
+      throw validationError(
+        `width must be 0–${size} on a ${size}px display (PIXOO_SIZE=${size}); received ${input.width}.`,
+        { width: input.width, max: size },
+      );
     }
 
     ctx.log.info('Setting text overlay', { id: input.id, textLength: input.text.length });

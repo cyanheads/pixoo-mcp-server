@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getServerConfig } from '@/config/server-config.js';
+import { DIM_BRIGHTNESS } from '@/mcp-server/tools/device-push.js';
 import { getIconsByCategory } from '@/renderer/icons.js';
 import { THEME_NAMES } from '@/renderer/themes.js';
 import { getPixooService } from '@/services/pixoo/pixoo-service.js';
@@ -26,9 +27,11 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Shadow + outline:** Add \`shadow: true\` for dark backgrounds; \`outline: true\` for legibility against low-contrast backgrounds.
 
-**Auto-fit:** Set \`overflow: "auto"\` and let the renderer choose font size and scroll. Every fit decision appears in \`layout[]\`.
+**Auto-fit:** Single-line text tries the standard font, then compact; set \`font\` to keep one font, and text too wide for it overflows instead of shrinking. Every fit decision appears in \`layout[]\`. Text still too wide shows only its opening characters — set \`effect: "auto"\` to scroll it across the display instead, or \`effect: "scroll"\` to scroll any text.
 
-**Multi-line stacking:** For 3 lines at scale 2: 10px + 1px gap × 3 = 33px. Leaves 15.5px margin each side for a 64px canvas — plan your vertical budget.`,
+**Motion:** \`effect: "float"\` (gentle bob) or \`effect: "pulse"\` (breathing brightness) loops over 20 frames. Motion reads best on short headlines; keep long text static or scrolling.
+
+**Multi-line stacking:** For 3 lines at scale 2: 10px + 1px gap × 3 = 33px. Leaves 15.5px margin above and below on a 64px canvas — plan your vertical budget. \`align: "left"\` or \`"right"\` lines up the edges of the lines; \`position.x\` places the block.`,
 
   scene: `## Scene Composition Guidance
 
@@ -126,6 +129,24 @@ const CRAFT_CONTENT: Record<string, string> = {
 - LEDs don't reproduce very dark colors (< #202020) well`,
 };
 
+/**
+ * A follow-up call with its arguments pre-filled — the `{ toolName, reason, args }`
+ * shape other suggestion-emitting servers use, declared here until the framework
+ * exports it (cyanheads/mcp-ts-core#478).
+ */
+const NextToolSuggestionSchema = z
+  .object({
+    toolName: z.string().describe('Tool to call next.'),
+    reason: z.string().describe('Why this step is recommended given the current device state.'),
+    args: z
+      .object({})
+      .passthrough()
+      .describe('Pre-filled arguments for the call; {} when the tool needs none.'),
+  })
+  .describe('A recommended follow-up call with its arguments pre-filled.');
+
+type NextToolSuggestion = z.infer<typeof NextToolSuggestionSchema>;
+
 export const pixooDesignBrief = tool('pixoo_design_brief', {
   title: 'pixoo_design_brief',
   description:
@@ -168,19 +189,7 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       })
       .describe('Live device state snapshot at the time of the request.'),
     nextToolSuggestions: z
-      .array(
-        z
-          .object({
-            tool: z.string().describe('Tool name to try next.'),
-            rationale: z.string().describe('Why this tool is relevant given current state.'),
-            suggestedArgs: z
-              .object({})
-              .passthrough()
-              .optional()
-              .describe('Pre-filled argument suggestions as a key-value object.'),
-          })
-          .describe('A suggested next-step tool with rationale and optional pre-filled args.'),
-      )
+      .array(NextToolSuggestionSchema)
       .describe('Suggested next steps based on topic and device state.'),
     availableThemes: z
       .array(z.string())
@@ -206,17 +215,13 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       }));
 
     // Build next-tool suggestions based on topic + device state
-    const suggestions: Array<{
-      tool: string;
-      rationale: string;
-      suggestedArgs?: Record<string, unknown>;
-    }> = [];
+    const suggestions: NextToolSuggestion[] = [];
 
     if (input.topic === 'text') {
       suggestions.push({
-        tool: 'pixoo_display_text',
-        rationale: 'The primary tool for styled text rendering.',
-        suggestedArgs: {
+        toolName: 'pixoo_display_text',
+        reason: 'The primary tool for styled text rendering.',
+        args: {
           text: 'HELLO',
           theme: 'midnight',
           style: { palette: 'lavender', shadow: true, scale: 2 },
@@ -225,15 +230,16 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       });
       if (!deviceStatus.reachable) {
         suggestions.push({
-          tool: 'pixoo_discover_devices',
-          rationale: 'Device is not reachable — find it on the network first.',
+          toolName: 'pixoo_discover_devices',
+          reason: 'Device is not reachable — find it on the network first.',
+          args: {},
         });
       }
     } else if (input.topic === 'scene') {
       suggestions.push({
-        tool: 'pixoo_compose_scene',
-        rationale: 'Full scene composition with layered elements.',
-        suggestedArgs: {
+        toolName: 'pixoo_compose_scene',
+        reason: 'Full scene composition with layered elements.',
+        args: {
           background: { theme: 'midnight' },
           elements: [
             {
@@ -250,9 +256,9 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       });
     } else if (input.topic === 'dashboard') {
       suggestions.push({
-        tool: 'pixoo_compose_scene',
-        rationale: 'Compose a status dashboard with widgets.',
-        suggestedArgs: {
+        toolName: 'pixoo_compose_scene',
+        reason: 'Compose a status dashboard with widgets.',
+        args: {
           background: { gradient: { type: 'v', from: '#0a1020', to: '#000000' } },
           elements: [
             { type: 'text', text: 'STATUS', x: 2, y: 2, style: { palette: 'ice' } },
@@ -265,9 +271,9 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       });
     } else if (input.topic === 'animation') {
       suggestions.push({
-        tool: 'pixoo_compose_scene',
-        rationale: 'Compose an animated scene.',
-        suggestedArgs: {
+        toolName: 'pixoo_compose_scene',
+        reason: 'Compose an animated scene.',
+        args: {
           background: { theme: 'midnight' },
           elements: [
             {
@@ -287,32 +293,37 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
     } else if (input.topic === 'troubleshooting') {
       if (!deviceStatus.reachable) {
         suggestions.push({
-          tool: 'pixoo_discover_devices',
-          rationale: 'Device is not reachable — discover it on the network.',
+          toolName: 'pixoo_discover_devices',
+          reason: 'Device is not reachable — discover it on the network.',
+          args: {},
         });
       } else if (deviceStatus.screenOn === false) {
         suggestions.push({
-          tool: 'pixoo_control_device',
-          rationale: 'Screen appears to be off.',
-          suggestedArgs: { screen: 'on' },
+          toolName: 'pixoo_control_device',
+          reason: 'Screen appears to be off.',
+          args: { screen: 'on' },
         });
-      } else if (deviceStatus.brightness !== undefined && deviceStatus.brightness < 10) {
+      } else if (
+        deviceStatus.brightness !== undefined &&
+        deviceStatus.brightness <= DIM_BRIGHTNESS
+      ) {
         suggestions.push({
-          tool: 'pixoo_control_device',
-          rationale: 'Brightness is very low — content may not be visible.',
-          suggestedArgs: { brightness: 80 },
+          toolName: 'pixoo_control_device',
+          reason: 'Brightness is very low — content may not be visible.',
+          args: { brightness: 80 },
         });
       } else {
         suggestions.push({
-          tool: 'pixoo_control_device',
-          rationale: 'Read full device state.',
+          toolName: 'pixoo_control_device',
+          reason: 'Read full device state.',
+          args: {},
         });
       }
     } else {
       suggestions.push({
-        tool: 'pixoo_display_text',
-        rationale: 'Start with text display to verify the pipeline works end-to-end.',
-        suggestedArgs: { text: 'TEST', push: false },
+        toolName: 'pixoo_display_text',
+        reason: 'Start with text display to verify the pipeline works end-to-end.',
+        args: { text: 'TEST', push: false },
       });
     }
 
@@ -352,10 +363,10 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
     lines.push('');
     lines.push('## Next Steps');
     for (const s of result.nextToolSuggestions) {
-      lines.push(`**${s.tool}**: ${s.rationale}`);
-      if (s.suggestedArgs) {
+      lines.push(`**${s.toolName}**: ${s.reason}`);
+      if (Object.keys(s.args).length > 0) {
         lines.push('```json');
-        lines.push(JSON.stringify(s.suggestedArgs, null, 2));
+        lines.push(JSON.stringify(s.args, null, 2));
         lines.push('```');
       }
     }

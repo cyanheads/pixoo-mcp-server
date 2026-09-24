@@ -3,11 +3,13 @@
  * @module tests/tools/pixoo-design-brief.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDesignBrief } from '@/mcp-server/tools/definitions/pixoo-design-brief.tool.js';
+import { pixooDisplayText } from '@/mcp-server/tools/definitions/pixoo-display-text.tool.js';
 import { getPixooService, initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { resultText } from '../helpers/device-failure.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -39,6 +41,22 @@ describe('pixooDesignBrief', () => {
   function stubStatus(status = fakeStatus) {
     vi.spyOn(getPixooService(), 'getStatus').mockResolvedValue(status);
   }
+
+  it('topic "text" names only parameters pixoo_display_text accepts', async () => {
+    stubStatus();
+    const result = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'text' }),
+      createMockContext(),
+    );
+    const accepted = Object.keys(pixooDisplayText.input.shape);
+    // Inline `name: value` references in the guidance — top-level or style-block keys.
+    const named = [...result.craftGuidance.matchAll(/`(\w+): /g)].map(([, name]) => name);
+    expect(named).not.toContain('overflow');
+    for (const name of named) {
+      expect([...accepted, 'palette', 'shadow', 'outline', 'scale']).toContain(name);
+    }
+    expect(result.craftGuidance).toContain('`effect: "auto"`');
+  });
 
   it('topic "text" — returns expected output shape', async () => {
     stubStatus();
@@ -77,6 +95,93 @@ describe('pixooDesignBrief', () => {
     }
   });
 
+  describe('nextToolSuggestions entries are { toolName, reason, args }', () => {
+    const TOPICS = [
+      'text',
+      'scene',
+      'dashboard',
+      'animation',
+      'pixel-art',
+      'troubleshooting',
+    ] as const;
+    // Every device state a branch reads: reachable, unreachable, screen off, dim.
+    const STATES = {
+      reachable: fakeStatus,
+      unreachable: { reachable: false },
+      'screen off': { ...fakeStatus, screenOn: false },
+      dim: { ...fakeStatus, brightness: 5 },
+    };
+
+    it.each(
+      TOPICS.flatMap((topic) =>
+        Object.entries(STATES).map(([state, status]) => [topic, state, status] as const),
+      ),
+    )('%s (%s): every entry carries exactly toolName, reason, args', async (topic, _s, status) => {
+      stubStatus(status as typeof fakeStatus);
+      const result = await runToolContract(pixooDesignBrief, { topic });
+      expect(result.isError).toBeFalsy();
+      const { nextToolSuggestions } = result.structuredContent as {
+        nextToolSuggestions: Array<Record<string, unknown>>;
+      };
+      expect(nextToolSuggestions.length).toBeGreaterThan(0);
+      for (const entry of nextToolSuggestions) {
+        expect(Object.keys(entry).sort()).toEqual(['args', 'reason', 'toolName']);
+        expect(entry['toolName']).toMatch(/^pixoo_/);
+        expect(typeof entry['reason']).toBe('string');
+        expect(entry['args']).toBeTypeOf('object');
+        // The markdown surface names every suggested tool with its reason.
+        expect(resultText(result)).toContain(`**${entry['toolName']}**: ${entry['reason']}`);
+      }
+    });
+
+    it.each([
+      ['text', { reachable: false }, 'pixoo_discover_devices'],
+      ['troubleshooting', { reachable: false }, 'pixoo_discover_devices'],
+      ['troubleshooting', fakeStatus, 'pixoo_control_device'],
+    ] as const)('%s → %o: the arg-less %s entry has args: {}', async (topic, status, toolName) => {
+      stubStatus(status as typeof fakeStatus);
+      const result = await pixooDesignBrief.handler(
+        pixooDesignBrief.input.parse({ topic }),
+        createMockContext(),
+      );
+      expect(result.nextToolSuggestions).toContainEqual(
+        expect.objectContaining({ toolName, args: {} }),
+      );
+    });
+
+    it.each([
+      [10, true],
+      [11, false],
+    ])(
+      'troubleshooting at brightness %i: suggests raising it = %s (same ≤ 10 floor as the post-push notice)',
+      async (brightness, suggested) => {
+        stubStatus({ ...fakeStatus, brightness });
+        const result = await pixooDesignBrief.handler(
+          pixooDesignBrief.input.parse({ topic: 'troubleshooting' }),
+          createMockContext(),
+        );
+        const raise = expect.objectContaining({ args: { brightness: 80 } });
+        if (suggested) expect(result.nextToolSuggestions).toContainEqual(raise);
+        else expect(result.nextToolSuggestions).not.toContainEqual(raise);
+      },
+    );
+
+    it('pre-filled args survive the rename', async () => {
+      stubStatus({ ...fakeStatus, screenOn: false });
+      const result = await pixooDesignBrief.handler(
+        pixooDesignBrief.input.parse({ topic: 'troubleshooting' }),
+        createMockContext(),
+      );
+      expect(result.nextToolSuggestions).toEqual([
+        {
+          toolName: 'pixoo_control_device',
+          reason: 'Screen appears to be off.',
+          args: { screen: 'on' },
+        },
+      ]);
+    });
+  });
+
   it('device unreachable → deviceContext.reachable is false, still returns guidance', async () => {
     vi.spyOn(getPixooService(), 'getStatus').mockResolvedValue({ reachable: false });
     const ctx = createMockContext();
@@ -85,6 +190,41 @@ describe('pixooDesignBrief', () => {
 
     expect(result.deviceContext.reachable).toBe(false);
     expect(result.craftGuidance.length).toBeGreaterThan(0);
+  });
+
+  it('format() renders each suggestion as a name line, plus a JSON block only when it has args', () => {
+    const output = {
+      topic: 'troubleshooting',
+      craftGuidance: 'Guidance.',
+      deviceContext: { displaySize: 64, reachable: true },
+      nextToolSuggestions: [
+        { toolName: 'pixoo_control_device', reason: 'Read full device state.', args: {} },
+        {
+          toolName: 'pixoo_control_device',
+          reason: 'Screen appears to be off.',
+          args: { screen: 'on' },
+        },
+      ],
+      availableThemes: ['midnight'],
+      iconCategories: {},
+    };
+    const text = (pixooDesignBrief.format!(output)[0] as { text: string }).text;
+    const nextSteps = text.slice(
+      text.indexOf('## Next Steps'),
+      text.indexOf('## Available Themes'),
+    );
+    expect(nextSteps).toBe(
+      [
+        '## Next Steps',
+        '**pixoo_control_device**: Read full device state.',
+        '**pixoo_control_device**: Screen appears to be off.',
+        '```json',
+        '{\n  "screen": "on"\n}',
+        '```',
+        '',
+        '',
+      ].join('\n'),
+    );
   });
 
   it('format() returns text containing Design Brief heading and device context', () => {
@@ -98,7 +238,7 @@ describe('pixooDesignBrief', () => {
         brightness: 80,
         screenOn: true,
       },
-      nextToolSuggestions: [{ tool: 'pixoo_display_text', rationale: 'Primary tool.' }],
+      nextToolSuggestions: [{ toolName: 'pixoo_display_text', reason: 'Primary tool.', args: {} }],
       availableThemes: ['midnight', 'ember'],
       iconCategories: { weather: ['sun', 'cloud'] },
     };

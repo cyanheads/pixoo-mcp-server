@@ -5,6 +5,7 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { get } from 'node:http';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -35,6 +36,40 @@ function freePort(): Promise<number> {
   });
 }
 
+type ServerCard = { _meta?: Record<string, unknown> };
+
+/**
+ * Reads the server card once, bounded at 2s; `undefined` on any failure. Uses
+ * `node:http` rather than `fetch`: Node's bundled undici can throw an uncatchable
+ * `setTypeOfService EINVAL` on macOS when a request lands on a socket mid-teardown,
+ * which is exactly what polling a booting child does (nodejs/undici#5544).
+ */
+function readCard(port: number): Promise<ServerCard | undefined> {
+  return new Promise((resolve) => {
+    const req = get(
+      { host: '127.0.0.1', port, path: '/.well-known/mcp.json', timeout: 2_000 },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          if (res.statusCode !== 200) return resolve(undefined);
+          try {
+            resolve(JSON.parse(body) as ServerCard);
+          } catch {
+            resolve(undefined);
+          }
+        });
+        res.on('error', () => resolve(undefined));
+      },
+    );
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(undefined));
+  });
+}
+
 /**
  * Starts the entry point with the given `MCP_SESSION_MODE` and returns the
  * session mode from `/.well-known/mcp.json`. An empty value reads as unset.
@@ -50,9 +85,7 @@ async function publishedSessionMode(sessionModeEnv: string): Promise<unknown> {
 }
 
 /** Boots one child; resolves its card, or `undefined` when the child exits first. */
-async function bootAndReadCard(
-  sessionModeEnv: string,
-): Promise<{ _meta?: Record<string, unknown> } | undefined> {
+async function bootAndReadCard(sessionModeEnv: string): Promise<ServerCard | undefined> {
   const port = await freePort();
   const proc = spawn('bun', [ENTRY], {
     cwd: PROJECT_ROOT,
@@ -75,13 +108,7 @@ async function bootAndReadCard(
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     if (exited) return undefined;
-    // Each attempt is bounded so one stalled connection cannot outlive the deadline.
-    const card = await fetch(`http://127.0.0.1:${port}/.well-known/mcp.json`, {
-      signal: AbortSignal.timeout(2_000),
-    }).then(
-      (res) => (res.ok ? (res.json() as Promise<{ _meta?: Record<string, unknown> }>) : undefined),
-      () => undefined,
-    );
+    const card = await readCard(port);
     // A card read after the child exited came from whatever took the port.
     if (card && !exited) return card;
     await new Promise((resolve) => setTimeout(resolve, 200));

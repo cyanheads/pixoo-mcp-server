@@ -63,13 +63,30 @@ export async function fetchRemoteImageToTempPng(
       recovery: { hint: 'Downscale the image before hosting it, or point at a smaller file.' },
     });
 
-  // content-length is advisory: it bails before the body is buffered, but the
-  // measured length is the gate that actually holds.
+  // content-length is advisory: it bails before the body is read, but the byte
+  // count taken while streaming is the gate that actually holds.
   const contentLength = Number(resp.headers.get('content-length') ?? 0);
-  if (contentLength > MAX_IMAGE_BYTES) throw tooLarge(contentLength, 'contentLength');
+  if (contentLength > MAX_IMAGE_BYTES) {
+    await resp.body?.cancel();
+    throw tooLarge(contentLength, 'contentLength');
+  }
 
-  const buf = Buffer.from(await resp.arrayBuffer());
-  if (buf.byteLength > MAX_IMAGE_BYTES) throw tooLarge(buf.byteLength, 'byteLength');
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = resp.body?.getReader();
+  if (reader) {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_IMAGE_BYTES) {
+        await reader.cancel();
+        throw tooLarge(received, 'byteLength');
+      }
+      chunks.push(value);
+    }
+  }
+  const buf = Buffer.concat(chunks, received);
 
   const { default: sharp } = await import('sharp');
   const tmpPath = path.join(

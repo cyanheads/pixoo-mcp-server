@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'node:fs/promises';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createFetchMock, createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchRemoteImageToTempPng, isRemoteSource } from '@/renderer/remote-image.js';
@@ -78,6 +79,92 @@ describe('fetchRemoteImageToTempPng', () => {
       await expect(
         fetchRemoteImageToTempPng('https://images.test/missing.png', createMockContext()),
       ).rejects.toMatchObject({ data: { reason: 'asset_not_found' } });
+    } finally {
+      http.restore();
+    }
+  });
+
+  it('loads an under-cap body that arrives in chunks with no content-length', async () => {
+    const half = Math.ceil(PNG_1X1.byteLength / 2);
+    const http = createFetchMock([
+      {
+        match: 'https://images.test/chunked.png',
+        respond: () => {
+          const response = new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new Uint8Array(PNG_1X1.subarray(0, half)));
+                controller.enqueue(new Uint8Array(PNG_1X1.subarray(half)));
+                controller.close();
+              },
+            }),
+          );
+          expect(response.headers.get('content-length')).toBeNull();
+          return response;
+        },
+      },
+    ]);
+    http.install();
+    try {
+      const tmpPath = await fetchRemoteImageToTempPng(
+        'https://images.test/chunked.png',
+        createMockContext(),
+      );
+      written.push(tmpPath);
+      await expect(fs.access(tmpPath)).resolves.toBeUndefined();
+    } finally {
+      http.restore();
+    }
+  });
+
+  it('tears down an oversized body mid-stream when no content-length is declared', async () => {
+    const CHUNK_BYTES = 1024 * 1024;
+    const AVAILABLE_CHUNKS = 30;
+    const chunk = new Uint8Array(CHUNK_BYTES);
+    let pulled = 0;
+    let cancelled = false;
+    const http = createFetchMock([
+      {
+        match: 'https://images.test/endless.png',
+        respond: () =>
+          new Response(
+            new ReadableStream<Uint8Array>(
+              {
+                pull(controller) {
+                  if (pulled === AVAILABLE_CHUNKS) {
+                    controller.close();
+                    return;
+                  }
+                  pulled++;
+                  controller.enqueue(chunk.slice());
+                },
+                cancel() {
+                  cancelled = true;
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          ),
+      },
+    ]);
+    http.install();
+    try {
+      await expect(
+        fetchRemoteImageToTempPng('https://images.test/endless.png', createMockContext()),
+      ).rejects.toMatchObject({
+        code: JsonRpcErrorCode.NotFound,
+        data: {
+          reason: 'asset_not_found',
+          url: 'https://images.test/endless.png',
+          byteLength: expect.any(Number),
+          recovery: { hint: expect.any(String) },
+        },
+      });
+      expect(cancelled).toBe(true);
+      // The cap is 10 MiB: the 11th chunk crosses it. Allow a chunk or two of
+      // read-ahead through the fetch wrapper, but nowhere near the full 30.
+      expect(pulled).toBeGreaterThanOrEqual(11);
+      expect(pulled).toBeLessThanOrEqual(13);
     } finally {
       http.restore();
     }

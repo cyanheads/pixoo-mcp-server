@@ -119,7 +119,7 @@ export class PixooService {
           {
             reason: 'no_device_configured',
             recovery: {
-              hint: 'Run pixoo_discover_devices to find your device IP, then set PIXOO_IP.',
+              hint: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
             },
           },
         );

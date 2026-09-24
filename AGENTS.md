@@ -1,7 +1,7 @@
 # Developer Protocol
 
 **Server:** pixoo-mcp-server
-**Version:** 1.1.4
+**Version:** 1.2.0
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.6`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.0.0 (protocol revision 2026-07-28 alongside the 2025 era)
@@ -195,6 +195,8 @@ Pixoo-specific error reasons declared on tools:
 
 A contract's `retryable` reaches the wire only through `ctx.fail`; a service throw carries it only when the service writes `data.retryable` itself. `classifyDeviceFailure` (in `pixoo-service.ts`) is the one place a failed device call becomes a reason and a retryability — `PixooService` writes both on its push-path throws, and `pixoo_overlay_text` passes the retryability into `ctx.fail` so it overrides the contract default per occurrence.
 
+The three push tools (`pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`) share one post-render path in `src/mcp-server/tools/device-push.ts`. `pushKeepingPreview` rethrows a failed push's error with its code, `reason`, `retryable`, and recovery untouched, adding `data.outputFiles` (the file the call already saved, else a copy in a fresh `os.tmpdir()` directory) and naming the path in the message. The framework drops `ctx.content` blocks from error results, so the file path is how the render survives. On success, `visibilityNotice` turns the post-push `DeviceStateSnapshot` into one `ctx.enrich.notice` (screen off, brightness ≤ 10, not on the custom channel). `ctx.enrich.notice` is last-wins, so a tool with a second notice source composes them into one string.
+
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 
@@ -233,8 +235,10 @@ src/
     scene-renderer.ts                   # Element vocabulary, layout resolver, frame rendering
     keyframes.ts                        # Keyframe interpolation + animation preset compiler
     preview.ts                          # PNG/contact-sheet/GIF encoding
-    remote-image.ts                     # https image fetch to a temp file for the toolkit loader
+    remote-image.ts                     # https image fetch to a temp file for the toolkit loader; stops on ctx.signal
   mcp-server/
+    tools/
+      device-push.ts                    # Shared post-render push: preview kept on failure, visibility notice
     tools/definitions/
       pixoo-display-text.tool.ts
       pixoo-compose-scene.tool.ts

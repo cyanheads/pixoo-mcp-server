@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-09-24 00:28:29
+Generated on: 2026-09-24 02:59:25
 
 ```text
 pixoo-mcp-server/
@@ -27,6 +27,7 @@ pixoo-mcp-server/
 │   ├── 0.1.x/
 │   ├── 1.0.x/
 │   ├── 1.1.x/
+│   ├── 1.2.x/
 │   └── template.md
 ├── docs/
 │   └── design.md
@@ -145,14 +146,15 @@ pixoo-mcp-server/
 │   │   │       ├── pixoo-icons.resource.ts
 │   │   │       └── pixoo-themes.resource.ts
 │   │   └── tools/
-│   │       └── definitions/
-│   │           ├── pixoo-compose-scene.tool.ts
-│   │           ├── pixoo-control-device.tool.ts
-│   │           ├── pixoo-design-brief.tool.ts
-│   │           ├── pixoo-discover-devices.tool.ts
-│   │           ├── pixoo-display-text.tool.ts
-│   │           ├── pixoo-overlay-text.tool.ts
-│   │           └── pixoo-push-image.tool.ts
+│   │       ├── definitions/
+│   │       │   ├── pixoo-compose-scene.tool.ts
+│   │       │   ├── pixoo-control-device.tool.ts
+│   │       │   ├── pixoo-design-brief.tool.ts
+│   │       │   ├── pixoo-discover-devices.tool.ts
+│   │       │   ├── pixoo-display-text.tool.ts
+│   │       │   ├── pixoo-overlay-text.tool.ts
+│   │       │   └── pixoo-push-image.tool.ts
+│   │       └── device-push.ts
 │   ├── renderer/
 │   │   ├── icons.ts
 │   │   ├── keyframes.ts
@@ -169,7 +171,8 @@ pixoo-mcp-server/
 │   ├── helpers/
 │   │   ├── device-failure.ts
 │   │   ├── expect-forwarded-recovery.ts
-│   │   └── list-extra.ts
+│   │   ├── list-extra.ts
+│   │   └── trickle-body.ts
 │   ├── prompts/
 │   ├── renderer/
 │   │   ├── icons.test.ts
@@ -193,7 +196,8 @@ pixoo-mcp-server/
 │   │   ├── pixoo-discover-devices.tool.test.ts
 │   │   ├── pixoo-display-text.tool.test.ts
 │   │   ├── pixoo-overlay-text.tool.test.ts
-│   │   └── pixoo-push-image.tool.test.ts
+│   │   ├── pixoo-push-image.tool.test.ts
+│   │   └── push-tools.post-push.test.ts
 │   └── index.session-mode.test.ts
 ├── .dockerignore
 ├── .env.example

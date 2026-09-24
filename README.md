@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-1.1.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pixoo-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pixoo-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pixoo-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-1.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pixoo-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pixoo-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pixoo-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -29,7 +29,7 @@ Divoom Pixoo LED matrix displays (Pixoo-64 primary; 16 and 32 also supported) on
 
 | Tool | Description |
 |:-----|:------------|
-| `pixoo_display_text` | Render styled text (theme, gradient, shadow, outline, auto-fit) onto the display and push it. Returns the rendered frame as an image. |
+| `pixoo_display_text` | Render styled text (theme, gradient, shadow, outline, auto-fit) onto the display and push it, static or animated with a scroll, float, or pulse effect. Returns the render as an image. |
 | `pixoo_compose_scene` | Compose a full scene: layered elements (text, icons, widgets, shapes, bitmaps, images, sprites) with per-element effects and keyframes, static or animated. Returns the rendered scene as an image. |
 | `pixoo_push_image` | Load an image (absolute local path or https URL), resize it to the LED grid, and push it. Returns the downsampled result as an image. |
 | `pixoo_overlay_text` | Set or clear a device-native scrolling text overlay. Uses device-rendered fonts; overlays persist across channel switches until cleared. |
@@ -54,10 +54,11 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 
 - Named scene themes set background gradient and default text palette in one parameter (`midnight`, `ember`, `claude`, `ice`, `neon`, `forest`, `mono`)
 - Style block: palette ramps (`ember`, `ice`, `neon`, `fire`, `lavender`, `claude`, `mono`) or a custom gradient/flat color, optional drop shadow, 1px outline, integer scale 1–8
-- Semantic positioning (`x: "center"`, `y: "bottom"`) or absolute pixel coordinates; multi-line text stacks vertically with configurable alignment
-- Auto-fit overflow tries standard font, then compact, then scroll; every fit decision is reported in `layout[]` with an `action` (`shrunk-to-compact`, `scrolling`, `wrapped`, `truncated`, `clipped`)
+- Semantic positioning (`x: "center"`, `y: "bottom"`) or absolute pixel coordinates; multi-line text stacks vertically, and `align` (`left`/`center`/`right`) lines up the lines within the block that `position.x` places
+- Auto-fit overflow tries standard font, then compact, then marks the text `scrolling`; an explicit `font` is used as given, so text too wide for it scrolls in that font instead of shrinking; every fit decision is reported in `layout[]` with an `action` (`shrunk-to-compact`, `scrolling`, `wrapped`, `truncated`, `clipped`)
+- `effect` animates the text: `scroll` runs it across the display once (up to 40 frames), `auto` scrolls only text too wide to fit, `float` and `pulse` loop over 20 frames; animations push as one device animation and report `frames`
 - Optional `brightness` (0–100) applied before push — a failure is a warning via an enrichment notice, not a tool error
-- Returns the rendered frame as an image content block; `outputFiles` is populated only when `PIXOO_OUTPUT_DIR` is configured
+- Returns the rendered frame (or a grid of every animation frame) as an image content block; `outputFiles` (PNG, or GIF when animated) is populated only when `PIXOO_OUTPUT_DIR` is configured
 
 ---
 
@@ -66,16 +67,16 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 - Up to 50 layered elements rendered back-to-front: `text`, `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image`, `sprite`
 - Background: solid color, gradient (vertical, horizontal, or radial), or named theme
 - Animation via named effect presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw per-property keyframe arrays — 1–40 frames at 10–2000ms per frame (default 150ms)
-- `image` elements accept an absolute local path or an https URL; `sprite` elements take an absolute local path; a supplied `output` path must be absolute with no traversal segments
+- `image` elements accept an absolute local path or an https URL and fit the configured display size; `sprite` elements take an absolute local path; a supplied `output` path must be absolute with no traversal segments, and replaces the `PIXOO_OUTPUT_DIR` auto-save for that call
 - `opacity` (0–100) blends any element, images included, over the layers beneath it
-- Static scenes return a PNG preview; animations return a labeled contact-sheet PNG plus a saved GIF (GIF preview is inconsistent across MCP clients)
+- Static scenes return a PNG preview; animations return a contact-sheet PNG tiling every frame, plus a GIF saved to `PIXOO_OUTPUT_DIR` when configured (GIF preview is inconsistent across MCP clients)
 - Typed failures for `asset_not_found`, `invalid_color`, and `unknown_icon`, alongside the shared device-error reasons
 
 ---
 
 ### `pixoo_push_image` <sub>tool</sub>
 
-- Accepts an absolute local file path or an https (not http) URL; a URL response is capped at 10 MB, enforced while the body streams
+- Accepts an absolute local file path or an https (not http) URL; a URL response is capped at 10 MB, enforced while the body streams, and the download stops when the call is cancelled
 - Three fit modes: `contain` (letterbox), `cover` (crop to fill), `fill` (stretch)
 - Three resize kernels: `nearest` for pixel art (default), `lanczos3` for photos, `mitchell` for a balance
 - Returns the exact resized result as an image content block before it is pushed
@@ -86,7 +87,7 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 
 - `mode: "set"` adds or updates an overlay on one of 20 independent slots (`id` 0–19); `mode: "clear"` removes it
 - 115 device-rendered font IDs (0–114); overlays persist across channel switches until explicitly cleared
-- Configurable `x`/`y` (0–64), scroll `direction` (`left`/`right`), `speed` (0–100), and `align`; color accepts hex (`#RRGGBB` or `#RGB`) or a named color, the same as the render tools
+- Configurable `x`/`y` (0 to display size − 1, checked against `PIXOO_SIZE`), scroll `direction` (`left`/`right`), `speed` (0–100), and `align`; color accepts hex (`#RRGGBB` or `#RGB`) or a named color, the same as the render tools
 - Device-rendered, not previewable — for styled, previewable text use `pixoo_display_text`
 
 ---
@@ -112,7 +113,7 @@ All resource data is also reachable via tools. `pixoo_design_brief` surfaces the
 
 - Six topics: `text`, `scene`, `dashboard`, `animation`, `pixel-art`, `troubleshooting`
 - Returns markdown craft guidance (legibility floors, palette discipline, layout zones, animation budgets) plus a live `deviceContext` snapshot
-- `nextToolSuggestions` are pre-filled with ready-to-use arguments tailored to the topic and current device state (e.g. suggests `pixoo_discover_devices` when the device is unreachable)
+- `nextToolSuggestions` entries are `{ toolName, reason, args }`, with `args` pre-filled with ready-to-use arguments (`{}` when the tool needs none) tailored to the topic and current device state (e.g. suggests `pixoo_discover_devices` when the device is unreachable)
 - Also returns `availableThemes` and `iconCategories` for direct use in other tools
 
 ---
@@ -163,8 +164,8 @@ Agent-friendly output:
 
 - Preview-as-content — render tools return the upscaled (8×, 512px) output as an image content block, so the calling model sees exactly what was drawn, before and after push
 - Layout transparency — every silent renderer decision (font fallback, truncation, scroll engaged, element clipped) is reported in `layout[]` so agents can inspect and refine
-- Device truth — `pushed` reflects the device ACK; `deviceState` after a push reports the channel, brightness, and screen state the device returned
-- Render without a device — `push: false` renders and returns the preview with no device reachable; a push to an unreachable device fails with a retryable `device_unreachable` error
+- Device truth — `pushed` reflects the device ACK; `deviceState` after a push reports the channel, brightness, and screen state the device returned, with a `notice` naming the fix when the render won't be visible (screen off, brightness ≤ 10, device off the custom channel)
+- Render without a device — `push: false` renders and returns the preview with no device reachable; a push to an unreachable device fails with a retryable `device_unreachable` error whose `outputFiles` names the saved preview (the `PIXOO_OUTPUT_DIR` copy when configured, otherwise a temp file), so the render isn't lost
 
 ## Getting started
 
@@ -272,7 +273,7 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 |:---------|:------------|:--------|
 | `PIXOO_IP` | Device IP address on the local network. **Required for device tools** (`pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`, `pixoo_overlay_text`, `pixoo_control_device`). Discovery and pure-render (`push: false`) work without it. | — |
 | `PIXOO_SIZE` | Display size in pixels: `16`, `32`, or `64`. | `64` |
-| `PIXOO_OUTPUT_DIR` | Directory for auto-saving preview PNG and GIF files. When unset, previews are returned in-response only. | — |
+| `PIXOO_OUTPUT_DIR` | Directory for auto-saving preview PNG and GIF files. When unset, previews are returned in-response only (a failed push still writes its preview to a temp file). An explicit `output` on `pixoo_compose_scene` replaces it for that call. | — |
 | `PIXOO_PUSH_MIN_INTERVAL_MS` | Minimum interval between device pushes in milliseconds. Prevents device freeze from rapid-fire commands. | `1000` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |

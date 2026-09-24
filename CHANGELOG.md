@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.2.0](changelog/1.2.x/1.2.0.md) — 2026-09-23 · ⚠️ Breaking
+
+pixoo_display_text adds scroll/float/pulse effects, align, and an honored font; animated previews return a full frame grid; failed pushes keep their render; design_brief's suggestion shape and overlay_text's x/y/width bounds change (breaking); scene image sizing and per-source caching are fixed.
+
 ## [1.1.4](changelog/1.1.x/1.1.4.md) — 2026-09-23 · 🛡️ Security
 
 Push-capable tools now declare device_http_error and carry retryable; pixoo_compose_scene's image opacity and missing local-asset errors are fixed; pixoo_control_device no longer drops failed-setter notices; pixoo_push_image's fetch cap now holds while the body streams.

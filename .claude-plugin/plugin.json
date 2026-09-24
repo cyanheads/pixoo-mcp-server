@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "pixoo-mcp-server",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads",

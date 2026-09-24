@@ -38,10 +38,23 @@ function freePort(): Promise<number> {
 /**
  * Starts the entry point with the given `MCP_SESSION_MODE` and returns the
  * session mode from `/.well-known/mcp.json`. An empty value reads as unset.
+ * The probed port is released before the child binds it, so another process can
+ * take it in between; a child that exits before serving is retried on a fresh port.
  */
 async function publishedSessionMode(sessionModeEnv: string): Promise<unknown> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const card = await bootAndReadCard(sessionModeEnv);
+    if (card) return card._meta?.[SESSION_MODE_META_KEY];
+  }
+  throw new Error('Server exited before serving its card on three consecutive ports');
+}
+
+/** Boots one child; resolves its card, or `undefined` when the child exits first. */
+async function bootAndReadCard(
+  sessionModeEnv: string,
+): Promise<{ _meta?: Record<string, unknown> } | undefined> {
   const port = await freePort();
-  child = spawn('bun', [ENTRY], {
+  const proc = spawn('bun', [ENTRY], {
     cwd: PROJECT_ROOT,
     env: {
       ...process.env,
@@ -53,14 +66,24 @@ async function publishedSessionMode(sessionModeEnv: string): Promise<unknown> {
     },
     stdio: 'ignore',
   });
+  child = proc;
+  let exited = false;
+  proc.once('exit', () => {
+    exited = true;
+  });
 
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    const card = await fetch(`http://127.0.0.1:${port}/.well-known/mcp.json`).then(
+    if (exited) return undefined;
+    // Each attempt is bounded so one stalled connection cannot outlive the deadline.
+    const card = await fetch(`http://127.0.0.1:${port}/.well-known/mcp.json`, {
+      signal: AbortSignal.timeout(2_000),
+    }).then(
       (res) => (res.ok ? (res.json() as Promise<{ _meta?: Record<string, unknown> }>) : undefined),
       () => undefined,
     );
-    if (card) return card._meta?.[SESSION_MODE_META_KEY];
+    // A card read after the child exited came from whatever took the port.
+    if (card && !exited) return card;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error('Server did not serve its card within 20s');

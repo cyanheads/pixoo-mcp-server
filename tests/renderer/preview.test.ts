@@ -1,14 +1,24 @@
 /**
- * @fileoverview Tests for preview encoding utilities: PNG content block, contact sheet.
+ * @fileoverview Tests for preview encoding utilities: PNG content block, contact sheet,
+ * and the PIXOO_OUTPUT_DIR / temp-dir preview files.
  * @module tests/renderer/preview.test
  */
 
+import { mkdtemp, readFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { Canvas } from '@cyanheads/pixoo-toolkit';
+import { Canvas, type RGB } from '@cyanheads/pixoo-toolkit';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
-import { buildContactSheet, encodePreviewBlock, savePngPreview } from '@/renderer/preview.js';
+import {
+  autoSavePreview,
+  buildContactSheet,
+  encodePreviewBlock,
+  saveGifPreview,
+  savePngPreview,
+  saveTempPreview,
+} from '@/renderer/preview.js';
 
 // ─── encodePreviewBlock ───────────────────────────────────────────────────────
 
@@ -49,35 +59,95 @@ describe('encodePreviewBlock', () => {
 // ─── buildContactSheet ────────────────────────────────────────────────────────
 
 describe('buildContactSheet', () => {
-  it('returns an image block from the middle frame of an odd-length array', () => {
-    const frames = [new Canvas(64), new Canvas(64), new Canvas(64)];
-    frames[0]!.clear([255, 0, 0]);
-    frames[1]!.clear([0, 255, 0]); // middle — expected
-    frames[2]!.clear([0, 0, 255]);
-    const block = buildContactSheet(frames);
-    expect(block.type).toBe('image');
-    expect(block.mimeType).toBe('image/png');
-    expect(block.data.length).toBeGreaterThan(0);
+  /** Frames cleared to distinct solid colors, in order. */
+  function solidFrames(colors: RGB[], size: 16 | 32 | 64 = 64): Canvas[] {
+    return colors.map((color) => new Canvas(size).clear(color));
+  }
+
+  /** Decode the sheet and read the pixel at the center of grid cell (col, row). */
+  async function decodeGrid(block: { data: string }, cols: number, rows: number) {
+    const { data, info } = await sharp(Buffer.from(block.data, 'base64'))
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const cell = (col: number, row: number): RGB => {
+      const x = Math.floor(((col + 0.5) * info.width) / cols);
+      const y = Math.floor(((row + 0.5) * info.height) / rows);
+      const i = (y * info.width + x) * info.channels;
+      return [data[i]!, data[i + 1]!, data[i + 2]!];
+    };
+    return { width: info.width, height: info.height, cell };
+  }
+
+  it('tiles every frame, in order, into a ceil(sqrt(n)) grid', async () => {
+    const colors: RGB[] = [
+      [255, 0, 0],
+      [0, 255, 0],
+      [0, 0, 255],
+    ];
+    const block = await buildContactSheet(solidFrames(colors));
+    expect(block).toMatchObject({ type: 'image', mimeType: 'image/png' });
+
+    const grid = await decodeGrid(block, 2, 2);
+    expect(grid.width).toBe(grid.height);
+    expect([grid.cell(0, 0), grid.cell(1, 0), grid.cell(0, 1)]).toEqual(colors);
+    // The fourth cell of the 2×2 grid holds no frame.
+    expect(colors).not.toContainEqual(grid.cell(1, 1));
   });
 
-  it('returns a valid image block for a single-frame input', () => {
-    const frames = [new Canvas(64)];
-    frames[0]!.clear([128, 128, 128]);
-    const block = buildContactSheet(frames);
-    expect(block.type).toBe('image');
-    expect(block.data.length).toBeGreaterThan(0);
+  it('differs from every single constituent frame', async () => {
+    const frames = solidFrames([
+      [255, 0, 0],
+      [0, 255, 0],
+      [0, 0, 255],
+    ]);
+    const block = await buildContactSheet(frames);
+    for (const frame of frames) expect(block.data).not.toBe(encodePreviewBlock(frame).data);
+    const width = Buffer.from(block.data, 'base64').readUInt32BE(16);
+    expect(width).not.toBe(512);
   });
 
-  it('returns a fallback black canvas for an empty frame array', () => {
-    const block = buildContactSheet([]);
+  it('lays 40 frames out as a 7×6 grid within the 512px budget', async () => {
+    const colors = Array.from({ length: 40 }, (_, i): RGB => [i * 6, 250 - i * 6, 100]);
+    const grid = await decodeGrid(await buildContactSheet(solidFrames(colors)), 7, 6);
+    expect(grid.width).toBeLessThanOrEqual(512);
+    expect(grid.height).toBeLessThan(grid.width);
+    for (let i = 0; i < 40; i++) {
+      expect(grid.cell(i % 7, Math.floor(i / 7)), `frame ${i}`).toEqual(colors[i]);
+    }
+    expect(colors).not.toContainEqual(grid.cell(5, 5));
+    expect(colors).not.toContainEqual(grid.cell(6, 5));
+  });
+
+  it('scales a small display up toward the 512px budget', async () => {
+    const colors: RGB[] = [
+      [255, 0, 0],
+      [0, 255, 0],
+      [0, 0, 255],
+      [255, 255, 0],
+    ];
+    const grid = await decodeGrid(await buildContactSheet(solidFrames(colors, 16)), 2, 2);
+    expect(grid.width).toBeGreaterThan(256);
+    expect(grid.width).toBeLessThanOrEqual(512);
+    expect([grid.cell(0, 0), grid.cell(1, 0), grid.cell(0, 1), grid.cell(1, 1)]).toEqual(colors);
+  });
+
+  it('a single frame previews exactly as encodePreviewBlock does', async () => {
+    const [frame] = solidFrames([[128, 128, 128]]);
+    expect(await buildContactSheet([frame!])).toEqual(encodePreviewBlock(frame!));
+  });
+
+  it('returns a fallback black canvas for an empty frame array', async () => {
+    const block = await buildContactSheet([]);
     expect(block.type).toBe('image');
     expect(block.data.length).toBeGreaterThan(0);
   });
 });
 
-// ─── savePngPreview ───────────────────────────────────────────────────────────
+// ─── autoSavePreview / saveTempPreview ────────────────────────────────────────
 
-describe('savePngPreview', () => {
+describe('saving previews', () => {
+  const writePng = (canvas: Canvas) => (dir: string) => savePngPreview(canvas, dir, 'preview-test');
+
   beforeEach(() => {
     resetServerConfig();
     process.env['PIXOO_SIZE'] = '64';
@@ -91,29 +161,40 @@ describe('savePngPreview', () => {
     resetServerConfig();
   });
 
-  it('returns undefined when PIXOO_OUTPUT_DIR is not set', async () => {
+  it('autoSavePreview writes nothing when PIXOO_OUTPUT_DIR is not set', async () => {
     delete process.env['PIXOO_OUTPUT_DIR'];
     resetServerConfig();
-    const canvas = new Canvas(64);
-    const result = await savePngPreview(canvas, 'test');
-    expect(result).toBeUndefined();
+    expect(await autoSavePreview(writePng(new Canvas(64)))).toEqual([]);
   });
 
-  it('returns a file path and writes a non-empty PNG when PIXOO_OUTPUT_DIR is set', async () => {
+  it('autoSavePreview writes a non-empty PNG into PIXOO_OUTPUT_DIR', async () => {
     const outDir = path.join(os.tmpdir(), `pixoo-preview-test-${Date.now()}`);
     process.env['PIXOO_OUTPUT_DIR'] = outDir;
     resetServerConfig();
 
-    const canvas = new Canvas(64);
-    canvas.clear([255, 0, 0]);
-    const result = await savePngPreview(canvas, 'preview-test');
+    const saved = await autoSavePreview(writePng(new Canvas(64).clear([255, 0, 0])));
 
-    expect(typeof result).toBe('string');
-    expect(result).toContain('preview-test.png');
-
-    // Verify the file actually exists and has content
-    const { readFile } = await import('node:fs/promises');
-    const bytes = await readFile(result!);
+    expect(saved).toEqual([path.join(outDir, 'preview-test.png')]);
+    const bytes = await readFile(saved[0]!);
     expect(bytes.byteLength).toBeGreaterThan(0);
+  });
+
+  it('saveTempPreview writes into a fresh directory under the OS temp dir', async () => {
+    const write = writePng(new Canvas(64).clear([0, 255, 0]));
+    const first = await saveTempPreview(write);
+    const second = await saveTempPreview(write);
+
+    expect(first.startsWith(os.tmpdir())).toBe(true);
+    expect(path.basename(first)).toBe('preview-test.png');
+    expect(path.dirname(first)).not.toBe(path.dirname(second));
+    expect((await readFile(first)).subarray(1, 4).toString('latin1')).toBe('PNG');
+  });
+
+  it('saveGifPreview writes an animated GIF', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-gif-test-'));
+    const frames = [new Canvas(64).clear([255, 0, 0]), new Canvas(64).clear([0, 0, 255])];
+    const saved = await saveGifPreview(frames, 150, dir, 'anim');
+    expect(saved).toBe(path.join(dir, 'anim.gif'));
+    expect((await readFile(saved)).subarray(0, 4).toString('latin1')).toBe('GIF8');
   });
 });

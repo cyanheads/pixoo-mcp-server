@@ -4,8 +4,8 @@
  */
 
 import * as fs from 'node:fs/promises';
+import type { Context } from '@cyanheads/mcp-ts-core';
 import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
-import type { RequestContext } from '@cyanheads/mcp-ts-core/utils';
 import {
   Canvas,
   downsampleSprite,
@@ -15,6 +15,7 @@ import {
   lerpColor,
   loadImage,
   measureText,
+  type PixooSize,
   type RGB,
   renderSprite,
   renderSvgPath,
@@ -195,9 +196,13 @@ export type SceneElement =
   | ImageElement
   | SpriteElement;
 
-/** Pre-loaded asset cache for images and sprites. */
+/**
+ * Pre-loaded asset cache for images and sprites. Images are keyed by element: the
+ * loader bakes each element's fit, size, and position into its canvas, so two
+ * elements sharing a source still need a canvas each.
+ */
 export interface AssetCache {
-  images: Map<string, Canvas>;
+  images: Map<ImageElement, Canvas>;
   sprites: Map<string, Awaited<ReturnType<typeof downsampleSprite>>>;
 }
 
@@ -225,14 +230,16 @@ async function assertReadableAsset(assetPath: string, label: string): Promise<vo
 }
 
 /**
- * Preload all async assets referenced in elements.
+ * Preload all async assets referenced in elements. Images load onto a `size` canvas,
+ * the scene's own, so an image with no `w`/`h` fits the display.
  *
- * `ctx` is threaded through so a remote image fetch correlates to the
- * originating request in logs and traces.
+ * `ctx` is threaded through so a remote image fetch correlates to the originating
+ * request in logs and traces, and stops when that request is cancelled.
  */
 export async function preloadAssets(
   elements: SceneElement[],
-  ctx: RequestContext,
+  ctx: Context,
+  size: PixooSize,
 ): Promise<AssetCache> {
   const cache: AssetCache = { images: new Map(), sprites: new Map() };
 
@@ -240,29 +247,26 @@ export async function preloadAssets(
     elements.map(async (el) => {
       if (el.type === 'image') {
         const source = el.source;
-        if (!cache.images.has(source)) {
-          // The toolkit's loadImage reads from disk, so a remote source is
-          // staged to a temp PNG first and unlinked once it has been read.
-          const remote = isRemoteSource(source);
-          if (!remote) await assertReadableAsset(source, 'Image file');
-          const tmpPathToCleanup = remote
-            ? await fetchRemoteImageToTempPng(source, ctx)
-            : undefined;
-          const localPath = tmpPathToCleanup ?? source;
-          const loadOpts: Parameters<typeof loadImage>[1] = {
-            fit: el.fit ?? 'contain',
-            kernel: el.kernel ?? 'nearest',
-            x: typeof el.x === 'number' ? el.x : 0,
-            y: typeof el.y === 'number' ? el.y : 0,
-          };
-          if (el.w !== undefined) loadOpts.width = el.w;
-          if (el.h !== undefined) loadOpts.height = el.h;
-          const canvas = await loadImage(localPath, loadOpts);
-          if (tmpPathToCleanup) {
-            fs.unlink(tmpPathToCleanup).catch(() => undefined);
-          }
-          cache.images.set(source, canvas);
+        // The toolkit's loadImage reads from disk, so a remote source is
+        // staged to a temp PNG first and unlinked once it has been read.
+        const remote = isRemoteSource(source);
+        if (!remote) await assertReadableAsset(source, 'Image file');
+        const tmpPathToCleanup = remote ? await fetchRemoteImageToTempPng(source, ctx) : undefined;
+        const localPath = tmpPathToCleanup ?? source;
+        const loadOpts: Parameters<typeof loadImage>[1] = {
+          size,
+          fit: el.fit ?? 'contain',
+          kernel: el.kernel ?? 'nearest',
+          x: typeof el.x === 'number' ? el.x : 0,
+          y: typeof el.y === 'number' ? el.y : 0,
+        };
+        if (el.w !== undefined) loadOpts.width = el.w;
+        if (el.h !== undefined) loadOpts.height = el.h;
+        const canvas = await loadImage(localPath, loadOpts);
+        if (tmpPathToCleanup) {
+          fs.unlink(tmpPathToCleanup).catch(() => undefined);
         }
+        cache.images.set(el, canvas);
       } else if (el.type === 'sprite') {
         const key = `${el.path}:${el.cols}:${el.rows}`;
         if (!cache.sprites.has(key)) {
@@ -626,7 +630,7 @@ export function renderElement(
     }
 
     case 'image': {
-      const cachedCanvas = assets.images.get(el.source);
+      const cachedCanvas = assets.images.get(el);
       if (cachedCanvas) {
         target.blit(cachedCanvas, dx, dy);
       }
@@ -718,10 +722,10 @@ export async function renderScene(
   background: BackgroundSpec,
   elements: SceneElement[],
   frameCount: number,
-  ctx: RequestContext,
-  size: 16 | 32 | 64 = 64,
+  ctx: Context,
+  size: PixooSize = 64,
 ): Promise<{ frames: Canvas[]; layoutEntries: LayoutEntry[] }> {
-  const assets = await preloadAssets(elements, ctx);
+  const assets = await preloadAssets(elements, ctx, size);
   const allLayoutEntries: LayoutEntry[] = [];
   const frames: Canvas[] = [];
 

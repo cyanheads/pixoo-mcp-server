@@ -3,11 +3,12 @@
  * @module tests/renderer/scene-renderer.test
  */
 
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createFetchMock, createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { Canvas, savePng } from '@cyanheads/pixoo-toolkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -24,24 +25,30 @@ import {
   type TextElement,
 } from '@/renderer/scene-renderer.js';
 import type { LayoutEntry } from '@/renderer/text-engine.js';
+import { trickleRoute } from '../helpers/trickle-body.js';
 
 /** Empty asset cache — no images or sprites preloaded. */
 function emptyCache(): AssetCache {
   return { images: new Map(), sprites: new Map() };
 }
 
-/** Asset cache holding one preloaded image under `source`. */
-function imageCache(source: string, image: Canvas): AssetCache {
-  return { images: new Map([[source, image]]), sprites: new Map() };
+/** Asset cache holding one preloaded image for `el`. */
+function imageCache(el: ImageElement, image: Canvas): AssetCache {
+  return { images: new Map([[el, image]]), sprites: new Map() };
 }
 
 const BLUE = [0, 0, 255] as const;
 const RED = [255, 0, 0] as const;
 
+const GREEN = [0, 255, 0] as const;
+const YELLOW = [255, 255, 0] as const;
+
 /** Directory for on-disk image and sprite fixtures, removed after the suite. */
 let fixtureDir: string;
 /** A 64×64 opaque red PNG. */
 let redPngPath: string;
+/** A 64×64 PNG in four quadrants: red top-left, blue top-right, green bottom-left, yellow bottom-right. */
+let quadrantPngPath: string;
 
 beforeAll(async () => {
   fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-scene-renderer-'));
@@ -49,6 +56,14 @@ beforeAll(async () => {
   red.clear([...RED]);
   redPngPath = path.join(fixtureDir, 'red.png');
   await savePng(red, redPngPath);
+
+  const quadrants = new Canvas(64);
+  quadrants.fillRect(0, 0, 32, 32, [...RED]);
+  quadrants.fillRect(32, 0, 32, 32, [...BLUE]);
+  quadrants.fillRect(0, 32, 32, 32, [...GREEN]);
+  quadrants.fillRect(32, 32, 32, 32, [...YELLOW]);
+  quadrantPngPath = path.join(fixtureDir, 'quadrants.png');
+  await savePng(quadrants, quadrantPngPath);
 });
 
 afterAll(async () => {
@@ -244,7 +259,7 @@ describe('renderElement — image', () => {
     canvas.clear([...BLUE]);
     const el: ImageElement = { type: 'image', source: 'img', dx, dy };
     if (opacity !== undefined) el.opacity = opacity;
-    renderElement(canvas, el, 0, 0, 1, imageCache('img', image), []);
+    renderElement(canvas, el, 0, 0, 1, imageCache(el, image), []);
 
     expect(Buffer.from(canvas.buffer).equals(Buffer.from(expected.buffer))).toBe(true);
   });
@@ -253,7 +268,7 @@ describe('renderElement — image', () => {
     const canvas = new Canvas(64);
     canvas.clear([...BLUE]);
     const el: ImageElement = { type: 'image', source: 'img', opacity: 30 };
-    renderElement(canvas, el, 0, 0, 1, imageCache('img', halfImage()), []);
+    renderElement(canvas, el, 0, 0, 1, imageCache(el, halfImage()), []);
 
     // Inside the image: strictly between red (image) and blue (background).
     const [r, g, b] = canvas.getPixelRgba(5, 5);
@@ -274,7 +289,7 @@ describe('renderElement — image', () => {
     canvas.clear([...BLUE]);
     const before = Buffer.from(canvas.buffer);
     const el: ImageElement = { type: 'image', source: 'img', opacity: 0 };
-    renderElement(canvas, el, 0, 0, 1, imageCache('img', halfImage()), []);
+    renderElement(canvas, el, 0, 0, 1, imageCache(el, halfImage()), []);
     expect(Buffer.from(canvas.buffer).equals(before)).toBe(true);
   });
 });
@@ -283,16 +298,29 @@ describe('renderElement — image', () => {
 
 describe('preloadAssets — local paths', () => {
   it('loads a local image file into the cache', async () => {
-    const cache = await preloadAssets([{ type: 'image', source: redPngPath }], createMockContext());
-    const image = cache.images.get(redPngPath);
+    const el: ImageElement = { type: 'image', source: redPngPath };
+    const cache = await preloadAssets([el], createMockContext(), 64);
+    const image = cache.images.get(el);
     expect(image).toBeInstanceOf(Canvas);
     expect(image?.getPixelRgba(10, 10)).toEqual([...RED, 255]);
   });
+
+  it.each([16, 32, 64] as const)(
+    'loads an image onto a %ipx canvas, fitted to it',
+    async (size) => {
+      const el: ImageElement = { type: 'image', source: quadrantPngPath };
+      const cache = await preloadAssets([el], createMockContext(), size);
+      const image = cache.images.get(el)!;
+      expect(image.width).toBe(size);
+      expect(image.getPixelRgba(size - 1, size - 1)).toEqual([...YELLOW, 255]);
+    },
+  );
 
   it('loads a local sprite sheet into the cache', async () => {
     const cache = await preloadAssets(
       [{ type: 'sprite', path: redPngPath, cols: 4, rows: 4 }],
       createMockContext(),
+      64,
     );
     const sprite = cache.sprites.get(`${redPngPath}:4:4`);
     expect(sprite).toMatchObject({ cols: 4, rows: 4 });
@@ -306,7 +334,7 @@ describe('preloadAssets — local paths', () => {
     ],
   ])('a missing local %s path fails as asset_not_found', async (_kind, build) => {
     const missing = path.join(fixtureDir, 'does-not-exist.png');
-    await expect(preloadAssets([build(missing)], createMockContext())).rejects.toMatchObject({
+    await expect(preloadAssets([build(missing)], createMockContext(), 64)).rejects.toMatchObject({
       code: JsonRpcErrorCode.NotFound,
       data: {
         reason: 'asset_not_found',
@@ -326,8 +354,59 @@ describe('preloadAssets — local paths', () => {
           { type: 'sprite', path: missing, cols: 2, rows: 2 },
         ],
         createMockContext(),
+        64,
       ),
     ).rejects.toMatchObject({ data: { reason: 'asset_not_found', path: missing } });
+  });
+});
+
+// ─── preloadAssets — remote image cancellation ────────────────────────────────
+
+describe('preloadAssets — remote image cancellation', () => {
+  const url = 'https://images.test/slow-scene.png';
+
+  it('aborting the request signal mid-download cancels the body stream', async () => {
+    const controller = new AbortController();
+    const { route, state } = trickleRoute(url, new Uint8Array(200 * 1024), {
+      onChunk: (n) => n === 3 && controller.abort(),
+    });
+    const http = createFetchMock([route]);
+    http.install();
+    try {
+      await expect(
+        preloadAssets(
+          [
+            { type: 'image', source: redPngPath },
+            { type: 'image', source: url },
+          ],
+          createMockContext({ signal: controller.signal }),
+          64,
+        ),
+      ).rejects.toMatchObject({ code: JsonRpcErrorCode.RequestCancelled });
+      expect(state.cancelled).toBe(true);
+      expect(state.pulled).toBeLessThan(10);
+    } finally {
+      http.restore();
+    }
+  });
+
+  it('an uncancelled remote image loads into the cache', async () => {
+    const png = await fs.readFile(redPngPath);
+    const { route, state } = trickleRoute(url, new Uint8Array(png), { chunkBytes: 64 });
+    const http = createFetchMock([route]);
+    http.install();
+    try {
+      const el: ImageElement = { type: 'image', source: url };
+      const cache = await preloadAssets(
+        [el],
+        createMockContext({ signal: new AbortController().signal }),
+        32,
+      );
+      expect(cache.images.get(el)?.getPixelRgba(31, 31)).toEqual([...RED, 255]);
+      expect(state.cancelled).toBe(false);
+    } finally {
+      http.restore();
+    }
   });
 });
 
@@ -374,6 +453,84 @@ describe('renderScene', () => {
     expect(frames).toHaveLength(3);
     // Layout collected only from frame 0 — one entry per element
     expect(layoutEntries).toHaveLength(1);
+  });
+
+  describe('image elements fit the scene size', () => {
+    it.each([16, 32] as const)(
+      'size %i: the whole source fits, every quadrant in place',
+      async (size) => {
+        const { frames } = await renderScene(
+          '#000000',
+          [{ type: 'image', source: quadrantPngPath }],
+          1,
+          createMockContext(),
+          size,
+        );
+        const frame = frames[0]!;
+        expect(frame.width).toBe(size);
+        const at = (fx: number, fy: number) => frame.getPixelRgba(size * fx, size * fy);
+        expect(at(0.75, 0.75)).toEqual([...YELLOW, 255]); // the source's bottom-right quadrant
+        expect(at(0.25, 0.75)).toEqual([...GREEN, 255]);
+        expect(at(0.75, 0.25)).toEqual([...BLUE, 255]);
+        expect(at(0.25, 0.25)).toEqual([...RED, 255]);
+      },
+    );
+
+    it('size 16: an image placed with x/y and w/h lands at those scene coordinates', async () => {
+      const { frames } = await renderScene(
+        '#000000',
+        [{ type: 'image', source: quadrantPngPath, x: 8, y: 8, w: 8, h: 8 }],
+        1,
+        createMockContext(),
+        16,
+      );
+      const frame = frames[0]!;
+      expect(frame.getPixelRgba(4, 4)).toEqual([0, 0, 0, 255]);
+      expect(frame.getPixelRgba(9, 9)).toEqual([...RED, 255]);
+      expect(frame.getPixelRgba(14, 14)).toEqual([...YELLOW, 255]);
+    });
+
+    it('two image elements sharing a source each keep their own placement and fit', async () => {
+      const { frames, layoutEntries } = await renderScene(
+        '#000000',
+        [
+          { type: 'image', source: quadrantPngPath, x: 0, y: 0, w: 8, h: 8 },
+          { type: 'image', source: quadrantPngPath, x: 40, y: 40, w: 16, h: 16 },
+        ],
+        1,
+        createMockContext(),
+        64,
+      );
+      const frame = frames[0]!;
+      // First element: 8×8 at the origin.
+      expect(frame.getPixelRgba(1, 1)).toEqual([...RED, 255]);
+      expect(frame.getPixelRgba(6, 6)).toEqual([...YELLOW, 255]);
+      expect(frame.getPixelRgba(12, 12)).toEqual([0, 0, 0, 255]);
+      // Second element: 16×16 at (40, 40), not a copy of the first.
+      expect(frame.getPixelRgba(41, 41)).toEqual([...RED, 255]);
+      expect(frame.getPixelRgba(54, 54)).toEqual([...YELLOW, 255]);
+      expect(layoutEntries.map((e) => e.box)).toEqual([
+        { x: 0, y: 0, w: 8, h: 8 },
+        { x: 40, y: 40, w: 16, h: 16 },
+      ]);
+    });
+
+    it('size 64: output is byte-identical to the pre-size-threading render', async () => {
+      const { frames } = await renderScene(
+        '#102030',
+        [
+          { type: 'image', source: quadrantPngPath },
+          { type: 'image', source: redPngPath, x: 40, y: 4, w: 20, h: 12, kernel: 'lanczos3' },
+        ],
+        1,
+        createMockContext(),
+        64,
+      );
+      const hash = createHash('sha256').update(Buffer.from(frames[0]!.buffer)).digest('hex');
+      expect(hash).toMatchInlineSnapshot(
+        `"3702f1ebd066e5dc9646ef5222ef36a037e1308147ed95093b964a861eafb42c"`,
+      );
+    });
   });
 
   it('a fade-in image element ramps from background to image across frames', async () => {

@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.2.1](changelog/1.2.x/1.2.1.md) — 2026-09-26
+
+pixoo_compose_scene checks animate keyframes per property and caps image, icon, and sprite sizes; stroke icons, icon palettes, keyframed colors, and layout fits now render and report as documented. mcp-ts-core ^0.13.6 → ^0.13.9.
+
 ## [1.2.0](changelog/1.2.x/1.2.0.md) — 2026-09-23 · ⚠️ Breaking
 
 pixoo_display_text adds scroll/float/pulse effects, align, and an honored font; animated previews return a full frame grid; failed pushes keep their render; design_brief's suggestion shape and overlay_text's x/y/width bounds change (breaking); scene image sizing and per-source caching are fixed.

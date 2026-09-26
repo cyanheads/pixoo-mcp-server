@@ -2,9 +2,9 @@
 
 **Server:** pixoo-mcp-server
 **Version:** 1.2.0
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.6`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.9`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.0.0 (protocol revision 2026-07-28 alongside the 2025 era)
+**MCP SDK:** `@modelcontextprotocol/server` ^2.1.0 (protocol revision 2026-07-28 alongside the 2025 era)
 **Zod:** ^4.6.5
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -166,7 +166,7 @@ Handlers receive a unified `ctx` object. Key properties used by this server:
 | `ctx.enrich` | Success-path agent context — `.notice()` / `.total()` / `.echo()` / `.truncated()`. Lands only when the definition declares an `enrichment` block. |
 | `ctx.fail` | Typed throw against the definition's `errors[]` reason union — auto-populates `data.reason`. |
 | `ctx.recoveryFor` | `{ recovery: { hint } }` for a declared reason, resolved from the contract. Pass it as `ctx.fail`'s data argument (or spread it in) to put the declared hint on the wire. |
-| `ctx.state` | Tenant-scoped KV — `.get`, `.set(key, value, { ttl? })`, `.delete`, `.getMany`, `.list`. Keys are validated; colons are not legal separators. |
+| `ctx.state` | Tenant-scoped KV — `.get`, `.set(key, value, { ttl? })`, `.delete`, `.getMany`, `.list`. Accepts any JSON-serializable value; reads return its JSON form (a `Date` comes back as an ISO string). Keys are validated; colons are not legal separators. |
 | `ctx.requestInput` / `ctx.inputs` | Multi-round-trip input. `return ctx.requestInput(...)`; read the answers with `ctx.inputs.accepted(key, schema)` on re-entry. Unused by this server. |
 | `ctx.signal` | `AbortSignal` for cancellation. Pass it to any long-running I/O. |
 | `ctx.requestId` | Unique request ID. |
@@ -332,7 +332,7 @@ Available skills:
 | `bun run audit:fix` | `bun audit fix` — upgrade vulnerable packages to the lowest safe version within existing ranges (`--dry-run` previews, `--latest` rewrites ranges). First response when `devcheck` flags a transitive advisory; then `bun update <name>`, then `bun dedupe` |
 | `bun run audit:refresh` | Delete `bun.lock` and reinstall. Last resort after `audit:fix`, `bun update <name>`, and `bun dedupe` — re-resolves every ranged dep (the framework pin included) and rewrites the lockfile as `lockfileVersion: 2` |
 | `bun run lint:mcp` | Run the MCP definition linter standalone (rule catalog: `api-linter` skill) |
-| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity, MCPB `user_config` wiring, plugin manifests, README version badge (run by devcheck) |
+| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity, MCPB `user_config` wiring, plugin manifests, manifest and README version parity, Dockerfile build platform (run by devcheck) |
 | `bun run list-skills` | Print the skill registry |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting (safe fixes only) |
@@ -352,7 +352,7 @@ Available skills:
 
 `bun run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies and strips dependency-shipped agent docs and platform-specific native bindings that root-anchored `.mcpbignore` patterns cannot reach. MCPB is stdio-only — HTTP deployments are unaffected.
 
-`lint:packaging` verifies that `server.json` and `manifest.json` declare the same env var names, that every `manifest.json` `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.<key>}"` (the host substitutes nothing else), that an optional string option carries `"default": ""`, that no plugin manifest writes an empty `env` value, and that the README `Version-` badge matches `package.json`.
+`lint:packaging` verifies that `server.json` and `manifest.json` declare the same env var names, that every `manifest.json` `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.<key>}"` (the host substitutes nothing else), that an optional string option carries `"default": ""`, that no plugin manifest writes an empty `env` value, that `manifest.json` and the README `Version-` badge carry the `package.json` version, and that the Dockerfile stage running `bun run build` starts `FROM --platform=$BUILDPLATFORM` (a multi-arch build otherwise runs it under QEMU, where Bun aborts).
 
 ---
 

@@ -4,7 +4,7 @@ description: >
   Scaffold a new MCP tool definition. Use when the user asks to add a tool, create a new tool, or implement a new capability for the server.
 metadata:
   author: cyanheads
-  version: "2.29"
+  version: "2.31"
   audience: external
   type: reference
 ---
@@ -19,18 +19,18 @@ Tools use the `tool()` builder from `@cyanheads/mcp-ts-core`. Each tool lives in
 2. **Determine if it needs input the caller may not supply** — a confirmation, a choice, the client's roots — which makes it a multi-round-trip handler (`ctx.requestInput` / `ctx.inputs`, see `api-context`)
 3. **Create the file** at `src/mcp-server/tools/definitions/{{tool-name}}.tool.ts`
 4. **Register** the tool in the project's existing `createApp()` tool list (directly in `src/index.ts` for fresh scaffolds, or via a barrel if the repo already has one)
-5. **Run `bun run devcheck`** to verify — if Biome reports formatting issues, run `bun run format` to auto-fix, then re-run devcheck
-6. **Smoke-test** with `bun run rebuild && bun run start:stdio` (or `start:http`)
+5. **Run `bun run devcheck`** to verify — it applies Biome's formatting fixes as it runs
+6. **Smoke-test** with `bun run rebuild && bun run start:stdio < /dev/null` (or `start:http`) — the `Core services constructed` log record must list the new tool in its `tools` field (the message text shows only counts); if it doesn't, the tool never reached `createApp()`
 
 ## Naming
 
-Tools use lowercase snake_case with a canonical server/domain prefix: `{server}_{verb}_{noun}` — 3 words.
+Tools use lowercase snake_case with a canonical server/domain prefix, `{server}_{verb}_{noun}` by default. Drop the noun only when the verb is a complete action on its own (`git_pull`, `git_status`): if `{server}_{verb}` leaves "…what?" unanswered — `search` what? `connect` to what? — the noun is missing. The full rule is the Name row of the `design-mcp-server` Design table.
 
 Examples: `pubmed_search_articles`, `pubmed_fetch_fulltext`, `clinicaltrials_find_eligible`.
 
 The server prefix is judged on clarity, not length: the brand name or the plain well-known word for the domain both pass (`pubmed_`, `patents_`); an abbreviation fails only when it reads as something else out of context (`loc_`, `ct_`). A fourth segment is fine when the noun is inherently two words (`openfda_search_device_clearances`). When a name resists the schema — can't pick a verb, noun feels generic, the *verb* wants a second word — that's usually a signal the scope is fuzzy; split the tool, rename, or reconsider.
 
-For shape selection (Workflow or Instruction variants — standard single-action tools are the default), see the `design-mcp-server` skill's Tool shapes section.
+For shape selection (Workflow, Instruction, or Reference variants — standard single-action tools are the default), see the `design-mcp-server` skill's Tool shapes section.
 
 ## Template
 
@@ -243,7 +243,7 @@ const { enableWrites } = getServerConfig();
 
 // The suggestion is emitted only under the config that registers its target.
 const nextToolSuggestions = enableWrites
-  ? [{ toolName: 'brapi_submit_observations', args: { studyDbId } }]
+  ? [{ toolName: 'brapi_submit_observations', reason: 'Record the observations collected for this study.', args: { studyDbId } }]
   : [];
 
 return {
@@ -281,7 +281,7 @@ Two limits worth knowing when you write a schema:
 
 ### Three things the framework fixes before the schema sees the arguments
 
-Strict input is right for a misspelling the caller can fix, and wrong when the arguments the model wrote were correct and something between the model and the schema was not. An ordered step inside `parseToolArguments` covers those cases: **drop client-added keys → key aliases → parse → on failure, repair and one re-parse.** All three stages are on by default, none changes what `tools/list` advertises, and none appears in a response — each emits a debug log and a counter (`mcp.input.ignored_key`, `mcp.input.aliased`, `mcp.input.coerced`) instead, so a new client artifact surfaces in telemetry rather than as a failed call.
+Strict input is right for a misspelling the caller can fix, and wrong when the arguments the model wrote were correct and something between the model and the schema was not. An ordered step inside `parseToolArguments` covers those cases: **drop client-added keys → key aliases → parse → on failure, repair and one re-parse**, plus one alias-first retry when that still fails and the drop discarded a key (below). All three stages are on by default and none changes what `tools/list` advertises. A call they rescue carries nothing about them in its response — each change in the attempt your handler receives emits a debug log and a counter (`mcp.input.ignored_key`, `mcp.input.aliased`, `mcp.input.coerced`) instead, so a new client artifact surfaces in telemetry rather than as a failed call. A call they cannot rescue is rejected with the first order's rewrites and underscore-rule drops reported, as `data.input` and as closing hint sentences (`Validated query as targetQuery.`, `Dropped undeclared key _max.`), because the issues name only the keys that were validated and the caller could not otherwise tell a bad value from a moved or discarded key.
 
 **1. Client-added root keys are dropped.** Some clients put their own keys inside `arguments`: a placeholder when the model sends none, a call description, a call id, or a `_meta` block that belongs on `params`. The model never wrote them and cannot remove them, so the retry fails identically. An undeclared root key is dropped when it is underscore-prefixed or on the built-in list (`_meta`, `tool_call_description`, `toolCallId`). Three boundaries: a declared key is never dropped (on a union root, that means every variant's keys); an author-opened root is left alone; and a tool declaring any underscore-prefixed key of its own switches the underscore rule off — otherwise a misspelled `_cursor` would vanish silently, which is the failure strict input exists to prevent.
 
@@ -297,9 +297,11 @@ export const drugProfile = tool('drug_profile', {
 
 Alongside those, an undeclared key whose case-folded form (`-`/`_` stripped, lowercased) names exactly one declared key is rewritten too — `max_results`, `Max-Results`, and `MAXRESULTS` all reach a declared `maxResults`, with nothing declared. Neither half advertises anything: `inputSchema` is byte-identical with or without `inputAliases`, so the canonical key keeps its place in `required` and the model is still told to use it.
 
-Declare an alias where the meaning is certain and the mapping is one-to-one — a sibling tool's spelling for the same concept, the upstream API's own name, a shorthand weaker models reach for. It is not fuzzy matching: a key matching no alias and no declared key is still rejected by name, with the accepted-key hint. Four boundaries: a rewrite applies only when the target key is absent (alias *and* target present fails exactly as it does today); an author-opened root is never rewritten; a union root resolves against the variant the discriminator selects, and rewrites nothing when the discriminator is absent or unrecognized; and a `headerParam`-designated target is never rewritten *to* — the SDK cross-checks the `Mcp-Param-<Name>` header against the raw body before dispatch, so a later rewrite would hand your handler a value no intermediary attested. `lint:mcp` rejects an alias that shadows a declared key, names a target that does not exist, or is ambiguous against another alias or key (`input-alias-conflict`).
+Declare an alias where the meaning is certain and the mapping is one-to-one — a sibling tool's spelling for the same concept, the upstream API's own name, a shorthand weaker models reach for. It is not fuzzy matching: a key matching no alias and no declared key is still rejected by name, with the accepted-key hint. Four boundaries: a rewrite applies only when the target key is absent (alias *and* target present fails exactly as it does today); an author-opened root is never rewritten; a union root resolves against the variant the discriminator selects, and rewrites nothing when the discriminator is absent or unrecognized; and a `headerParam`-designated target is never rewritten *to* — the SDK cross-checks the `Mcp-Param-<Name>` header against the raw body before dispatch, so a later rewrite would hand your handler a value no intermediary attested. `lint:mcp` rejects an alias that shadows a declared key, names a target that does not exist or is `headerParam`-designated, or is ambiguous against another alias or key (`input-alias-conflict`).
 
-**3. A stringified array is repaired after the parse fails.** `statusFilter: "[\"RECRUITING\"]"` against `z.array(z.string())` is a serialization slip the server can undo with certainty — `JSON.parse` is the exact inverse of the `JSON.stringify` that produced it, which is what separates it from the nearest-key guessing strict input refuses. The repair runs *only* on the failure branch, *only* at the paths the rejection's own issues name, and is kept only if the repaired arguments then pass your schema. So it cannot touch a value that was already valid — a free-text field legitimately holding `"[1,2,3]"` is not in the issue list, so it survives untouched even when the same call carries a genuine stringified array in another field. It walks values only: no key is added, dropped, or renamed. When nothing validates, the original rejection is thrown verbatim: same code, message, `data.issues`, and `data.recovery.hint`.
+**3. A stringified array or object, or an integer sent for a string, is repaired after the parse fails.** `statusFilter: "[\"RECRUITING\"]"` against `z.array(z.string())`, or `target: "{\"type\":\"path\",\"path\":\"a.md\"}"` against an object or discriminated-union field, is a serialization slip the server can undo with certainty — `JSON.parse` is the exact inverse of the `JSON.stringify` that produced it. So is `station_id: 8654467` against `z.string()`: `String(n)` of a safe integer is the digits the caller sent. That certainty is what separates a repair from the nearest-key guessing strict input refuses. The repair runs *only* on the failure branch, *only* at the paths the rejection's own issues name, once — a value one repair produced is never repaired again, and a number inside one branch of a union field stays as sent — and is kept only if the repaired arguments then pass your schema. So it cannot touch a value that was already valid: a free-text field legitimately holding `"[1,2,3]"` or `"{…}"` is not in the issue list, so it survives untouched even when the same call carries a genuine stringified value in another field. The integer repair is gated further, to issues that say the value failed for being a number (a wrong type, a string-only enum, a union every branch of which refused the type): `-1` against `z.union([z.number().int().positive(), z.string()])` keeps its rejection instead of slipping past your constraint through the string branch, and `-0`, a fraction, or an integer past `Number.MAX_SAFE_INTEGER` is never repaired. Your schema still decides the repaired string — `20260922` against `z.iso.date()` stays rejected. It walks values only: no key is added, dropped, or renamed. When nothing validates, the original rejection is thrown — exactly what the same call gets under `coerce: false`.
+
+**When the drop took a key the alias stage wanted.** The drop runs first, so it also discards an underscore spelling of a declared key (`_query` for `query`), a declared `inputAliases: { _q: 'query' }`, and an ignore-listed key a declared alias names. If the call then fails, repair included, the step reruns both stages with the alias stage first, where those keys are rewritten instead, and keeps that retry only if it validates, again with its own repair. The retry never case-folds an ignore-listed key onto a declared one (`_meta` stays the client's even beside a declared `meta`), and still drops an underscore key it cannot resolve. It never changes which calls validate: `{ query: 'abc', _max_results: '12345' }` against an optional `maxResults: z.number()` validates with `_max_results` dropped, so the retry never runs. A call neither order validates gets the retry's rejection, which describes the arguments as the caller meant them: `{ _q: 'ab' }` against `query: z.string().min(3)` reports the too-short `query` and closes `Validated _q as query.`, not a missing `query` beside a dropped `_q`.
 
 Turn any stage off per server — there is no per-tool switch:
 
@@ -308,13 +310,13 @@ await createApp({
   input: {
     ignoreKeys: ['some_client_field'], // adds to the built-in list; `false` disables the stage
     caseStyleAliases: false,           // declared `inputAliases` only
-    coerce: false,                     // never retry a failed parse
+    coerce: false,                     // never repair an argument value
   },
   tools: allToolDefinitions,
 });
 ```
 
-Those three stages are the whole of the framework's input edge: argument **key** names, and one **value** shape — a JSON-stringified array, which `JSON.parse` inverts with certainty. Every other value normalization is domain knowledge and belongs to the tool: the case or bare-leaf form of a code, a unit or vocabulary alias, a composite identifier assembled from two arguments, a delimiter-joined list, a spelled-out name. Which variants a given input accepts is decided per input at design time (`design-mcp-server` § *Parameter descriptions*) and applied at the head of the handler, on the unambiguous mappings only.
+Those three stages are the whole of the framework's input edge: argument **key** names, and three **value** shapes — a JSON-stringified array or object, which `JSON.parse` inverts with certainty, and a safe integer sent for a string, whose digits `String(n)` restores. Every other value normalization is domain knowledge and belongs to the tool: the case or bare-leaf form of a code, a unit or vocabulary alias, a composite identifier assembled from two arguments, a delimiter-joined list, a spelled-out name. Which variants a given input accepts is decided per input at design time (`design-mcp-server` § *Parameter descriptions*) and applied at the head of the handler, on the unambiguous mappings only.
 
 ### Multi-mode tools take a discriminated-union input
 
@@ -344,11 +346,11 @@ The handler dispatches on the discriminator and TypeScript narrows `input` to th
 
 What reaches the wire is `{"type": "object", "oneOf": [<branch>, …]}`: branches intact, each with its own `required` list and a `const`-tagged discriminator, `additionalProperties: false` on every one. Identical bytes on a 2025-11-25 and a 2026-07-28 connection — the legacy projection inspects `outputSchema` alone and never rewrites an input root.
 
-Three constraints:
+Four constraints:
 
 - **The union must be discriminated.** A bare `z.union(...)` is rejected: with no literal-tagged key the model has nothing to choose a branch by, and every variant's `required` would read as applying at once.
 - **`output` stays a flat `z.object`** — see the widening section below for why a non-object output root breaks the success path. When the *result* shape varies by mode, use a `kind` discriminator with presence-based optional fields and render each arm on field presence in `format()`.
-- **Portability is unmeasured at the parameter root.** `schema-root-oneof-portability` (strict mode only) says so; for Anthropic clients the union is the better shape, and flattening is the escape hatch if you target the widest vendor matrix.
+- **Claude clients flatten the union root.** The Anthropic Messages API rejects a top-level `oneOf` in `input_schema`, so Claude clients rewrite the root before the model sees it — and the rewrite keeps only the first branch's properties, with `required: []`. A tool that must work in Claude clients takes a flat `z.object()` with an enum discriminator, optional per-mode fields, each mode's required fields named in the discriminator's `.describe()`, and the combination checked in the handler. `schema-root-oneof-portability` (strict mode only) flags the union root. Tracked in [#510](https://github.com/cyanheads/mcp-ts-core/issues/510).
 - **A union root rules out `headerParam`.** See below — the branches sit under `oneOf`, which the reachability rule excludes.
 
 ### `headerParam` mirrors an argument into a request header
@@ -369,7 +371,7 @@ input: z.object({
 
 The emitted property carries `"x-mcp-header": "Region"` and nothing else about the field changes — description, type, validation, and requiredness are untouched. Order does not matter: `headerParam(z.string(), 'Region').describe('…')` and `headerParam(z.string().describe('…'), 'Region')` are the same schema.
 
-**It mirrors, it does not relocate.** When the body carries a value for a designated property, the matching `Mcp-Param-<Name>` header MUST be present and decode to an equal value; the SDK cross-checks the pair before dispatch and rejects a disagreement with `-32020` (`HeaderMismatch`, HTTP `400`). Absent or `null` in the body means no header is expected. **Your handler still reads the argument from `input`** — there is nothing new to do in the handler body.
+**It mirrors, it does not relocate.** When the body carries a value for a designated property, the matching `Mcp-Param-<Name>` header MUST be present and decode to an equal value; the SDK cross-checks the pair before dispatch and rejects a disagreement with `-32020` (`HeaderMismatch`, HTTP `400`). Absent or `null` in the body means no header is expected. **Your handler still reads the argument from `input`** — there is nothing new to do in the handler body. Browser clients need nothing extra either: the HTTP transport's CORS preflight allows `Mcp-Param-<Name>` for every designation on a registered tool, for each origin `MCP_ALLOWED_ORIGINS` accepts.
 
 **Where a designation is legal.** The property must be primitive-typed (`string`, `integer`, `number`, `boolean`) and statically reachable through a chain of `properties` keys. Top-level and nested `z.object()` fields qualify. These do not:
 
@@ -539,7 +541,7 @@ async handler(input, ctx) {
 
 Single-item tools don't need this — they either succeed or throw. The partial success question only arises with array inputs.
 
-**Telemetry:** The framework automatically detects this pattern — when a handler result contains a non-empty `failed` array, the span gets `mcp.tool.partial_success`, `mcp.tool.batch.succeeded_count`, and `mcp.tool.batch.failed_count` attributes. No manual instrumentation needed.
+**Telemetry:** The framework automatically detects this pattern — when a handler result contains a non-empty `failed` array, the span gets `mcp.tool.partial_success`, `mcp.tool.batch.succeeded_count` (from the `succeeded` array), and `mcp.tool.batch.failed_count` attributes. No manual instrumentation needed. An `output` built with `partialResultSchema()` from `/utils` is read under its own `failedKey`/`succeededKey` instead — also after `.extend()`, `.pick()`, `.omit()`, or a `.shape` spread. `.partial()` and `.required()` rebuild the fields, so a schema derived that way falls back to the literal keys.
 
 ### Empty results need context
 
@@ -811,6 +813,21 @@ async handler(input, ctx) {
 
 The same applies to optional arrays — use `?.length` guards so empty arrays are skipped, not passed through.
 
+When an optional string field carries a validator (`.regex()` for a date, `.min(1)` for a cursor), a permissive schema would drop the validator and a strict one would reject the blank. Keep both by mapping the blank to `undefined` *before* the validator runs:
+
+```typescript
+/** A blank from a form client is "unset", never a value to validate. */
+const blankAsUnset = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((value) => (value === '' ? undefined : value), schema);
+
+input: z.object({
+  d1: blankAsUnset(z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()).describe('Earliest date, YYYY-MM-DD.'),
+  cursor: blankAsUnset(z.string().regex(/^[1-9]\d*$/).optional()).describe('Opaque continuation from the previous page.'),
+}),
+```
+
+`toJSONSchema` emits only the inner schema for a preprocess pipe in both `io` modes, so the advertised `pattern` is unchanged; `''` parses to an absent key, a real value still hits the validator, and the handler needs no extra guard.
+
 **Required fields are different.** If a string field is required and must be non-empty to be meaningful, `.min(1)` is correct — the client shouldn't have submitted the form without filling it in.
 
 ### Match response density to context budget
@@ -878,4 +895,4 @@ return { items: hits };
 - [ ] Registered in the project's existing `createApp()` tool list (directly or via barrel)
 - [ ] Test file created via `add-test` skill, or handler tested directly with `createMockContext()`
 - [ ] `bun run devcheck` passes
-- [ ] Smoke-tested with `bun run rebuild && bun run start:stdio` (or `start:http`)
+- [ ] Smoke-tested with `bun run rebuild && bun run start:stdio < /dev/null` (or `start:http`); the `Core services constructed` record lists the new tool in its `tools` field

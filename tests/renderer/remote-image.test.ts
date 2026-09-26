@@ -193,6 +193,28 @@ describe('fetchRemoteImageToTempPng', () => {
       }
     });
 
+    it('a caller-side deadline mid-download is a Timeout, and still cancels the body stream', async () => {
+      const controller = new AbortController();
+      const { route, state } = trickleRoute(URL_, new Uint8Array(200 * 1024), {
+        onChunk: (n) =>
+          n === 3 && controller.abort(new DOMException('Caller deadline', 'TimeoutError')),
+      });
+      const http = createFetchMock([route]);
+      http.install();
+      try {
+        await expect(
+          fetchRemoteImageToTempPng(URL_, createMockContext({ signal: controller.signal })),
+        ).rejects.toMatchObject({
+          code: JsonRpcErrorCode.Timeout,
+          data: { errorSource: 'FetchSignalTimeout' },
+        });
+        expect(state.cancelled).toBe(true);
+        expect(state.pulled).toBeLessThan(10);
+      } finally {
+        http.restore();
+      }
+    });
+
     it('a signal already aborted stops the fetch before any body is read', async () => {
       const controller = new AbortController();
       controller.abort();

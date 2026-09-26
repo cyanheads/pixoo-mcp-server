@@ -4,7 +4,7 @@ description: >
   Exercise tools, resources, and prompts against a live HTTP server via MCP JSON-RPC over curl. Starts the server, surfaces the catalog, runs real and adversarial inputs, measures every call (bytes, token estimate, wall-clock) and weighs the catalog, and produces a tight report with concrete findings and numbered follow-up options. Use after adding or modifying definitions, or when the user asks to test, try out, or verify their MCP surface.
 metadata:
   author: cyanheads
-  version: "2.16"
+  version: "2.17"
   audience: external
   type: debug
 ---
@@ -19,7 +19,7 @@ Unit tests (`add-test` skill) verify handler logic with mocked context. Field te
 
 This skill drives an HTTP server because curl + JSON-RPC is the most reliable harness for shell-based agents. The same handlers run on both transports — only the framing differs — so HTTP exercises the full functional surface. Both HTTP session modes are covered: a durable `Mcp-Session-Id` session, and the sessionless initialization a `MCP_SESSION_MODE=stateless` server performs.
 
-**Stdio coverage is a boot check only — run this before Step 1.** Run `bun run rebuild && bun run start:stdio < /dev/null`, and confirm the startup logs look clean (banner, expected tool/resource counts, no errors/warnings, no missing-config gripes). Redirecting stdin is what ends the run: the server treats EOF as a shutdown signal, boots fully, then exits on its own, so the log also shows the graceful-shutdown path. Do not background it and reach for `pkill` — a pattern like `pkill -f dist/index.js` matches every other stdio MCP server on the machine, including the ones the calling agent's own session is connected to. Pino logs go to stderr in stdio mode (stdout is reserved for JSON-RPC), so they print straight to the terminal when you run interactively. No need to call tools over stdio — the HTTP pass already covered handler behavior.
+**Stdio coverage is a boot check only — run this before Step 1.** Run `bun run rebuild && bun run start:stdio < /dev/null`, and confirm the startup logs look clean: the `Core services constructed — N tool(s) …` record lists every registered tool, resource, and prompt in its `tools` / `resources` / `prompts` fields — the message text shows only counts — and a definition missing from them was never passed to `createApp()`. No errors/warnings, no missing-config gripes. The emoji startup banner prints only to a terminal, so its absence from an agent's shell is not a finding. Redirecting stdin is what ends the run: the server treats EOF as a shutdown signal, boots fully, then exits on its own, so the log also shows the graceful-shutdown path. Do not background it and reach for `pkill` — a pattern like `pkill -f dist/index.js` matches every other stdio MCP server on the machine, including the ones the calling agent's own session is connected to. Pino logs go to stderr in stdio mode (stdout is reserved for JSON-RPC), so they print straight to the terminal when you run interactively. No need to call tools over stdio — the HTTP pass already covered handler behavior.
 
 ---
 
@@ -402,7 +402,7 @@ Treat any hit as a `ux` finding in the report. The authoring rule lives under *T
 |:------------------------------------------------|:-------------|
 | `include` / `fields` / `expand` / `view` / `projection` parameter | Field selection: non-default value renders requested fields |
 | Array return with `query` / `filter` inputs | Empty result: does response explain *why* (echo criteria, suggest broadening)? |
-| Identifier, code, or enum-ish input (an ID format, a classification code, a unit, a place name, a list the docs say may be comma-joined) | Value-variant tolerance: re-send the happy-path call with each obvious variant of that value — lowercase, the bare leaf of a hierarchical code, a common domain alias, a delimiter-joined list where an array is accepted, the spelled-out form of an abbreviated name. Pass is either outcome: the call succeeds, or it fails with an error naming the expected shape. A miss or a bare validation failure on a variant that maps one-to-one onto a valid value is a `ux` finding. Probe **values** — variants of the argument *key* name, and a JSON-stringified array as a value, are handled by the framework, not the server. |
+| Identifier, code, or enum-ish input (an ID format, a classification code, a unit, a place name, a list the docs say may be comma-joined) | Value-variant tolerance: re-send the happy-path call with each obvious variant of that value — lowercase, the bare leaf of a hierarchical code, a common domain alias, a delimiter-joined list where an array is accepted, the spelled-out form of an abbreviated name. Pass is either outcome: the call succeeds, or it fails with an error naming the expected shape. A miss or a bare validation failure on a variant that maps one-to-one onto a valid value is a `ux` finding. Probe **values** — variants of the argument *key* name, and a JSON-stringified array or object or an integer sent for a string as a value, are handled by the framework, not the server. |
 | Batch / bulk input (arrays of IDs, multi-item ops) | Partial success: mix valid + invalid items |
 | `annotations.readOnlyHint: true` | Confirm no mutation happened |
 | `annotations.idempotentHint: true` | Call twice with same input — safe? |
@@ -500,7 +500,7 @@ End with:
 
 ## Checklist
 
-- [ ] Stdio boot check completed — `bun run rebuild && bun run start:stdio < /dev/null` shows clean startup (banner, expected counts, no errors) and a graceful shutdown on EOF
+- [ ] Stdio boot check completed — `bun run rebuild && bun run start:stdio < /dev/null` shows clean startup (every expected definition listed in the `Core services constructed` record's `tools` / `resources` / `prompts` fields, no errors) and a graceful shutdown on EOF
 - [ ] HTTP server built and started; real port parsed from log
 - [ ] Session initialized (a stateless server returns an empty `sid` — still a pass); `notifications/initialized` sent; negotiated protocol version matches the requested one (a downgrade is a finding)
 - [ ] Catalog surfaced and presented; descriptions audited for leaks (implementation details, meta-coaching, consumer-aware phrasing)

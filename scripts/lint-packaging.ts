@@ -59,6 +59,22 @@
  *      package's headline version on GitHub and npmjs.com and ships in the
  *      tarball, so a half-finished bump is publicly visible. Skipped when the
  *      README, the badge, or the package version is absent (issue #418).
+ *  13. npm `files` excludes the built bundle: when `manifest.json` exists and
+ *      `package.json` `files` covers `dist/` wholesale, it must also carry
+ *      `"!dist/*.mcpb"`. The `bundle` script writes the `.mcpb` into `dist/`,
+ *      so without the entry a release that bundles before publishing ships the
+ *      server and its production dependencies inside the npm tarball
+ *      (issue #469). Skipped when `manifest.json` or `files` is absent.
+ *  14. manifest.json version parity: `version` must equal `package.json`'s, the
+ *      same rule check 10 applies to the plugin manifests — the bundle's install
+ *      dialog shows it. Skipped when `manifest.json` or the package version is
+ *      absent.
+ *  15. Dockerfile build platform: every stage that runs `bun run build` must
+ *      start `FROM --platform=$BUILDPLATFORM`. Without it the non-native leg of
+ *      a multi-arch `docker buildx` build runs under QEMU, where bun >= 1.4
+ *      aborts inside the build and no image publishes for either architecture —
+ *      and the image publishes last, after npm and the MCP Registry. Skipped
+ *      when there is no `Dockerfile` or no stage builds.
  *
  * Every check skips cleanly when its input is absent — consumers who deleted
  * `manifest.json` for an HTTP-only deploy, or who haven't built a bundle,
@@ -97,6 +113,7 @@ interface Manifest {
   name?: string;
   server?: { mcp_config?: { args?: unknown[]; env?: Record<string, string> } };
   user_config?: Record<string, ManifestUserConfigEntry>;
+  version?: unknown;
 }
 
 const USER_CONFIG_REF = /^\$\{user_config\.([\w-]+)\}$/;
@@ -742,6 +759,76 @@ export function checkReadmeVersionBadge(readme: string, packageVersion?: string)
   ];
 }
 
+/** The `files` entry that keeps the `bundle` script's `dist/<name>.mcpb` out of the npm tarball. */
+const BUNDLE_EXCLUSION = '!dist/*.mcpb';
+
+/**
+ * Check 13: a `files` allowlist that covers `dist/` wholesale must exclude the
+ * `.mcpb` the `bundle` script writes there. npm and Bun both honor `!` entries
+ * in `files`, and both ignore `.npmignore` once `files` is set, so the entry is
+ * the only place the exclusion can live. The caller runs this only when
+ * `manifest.json` exists — a project without one never builds a bundle.
+ */
+export function checkBundleExcludedFromFiles(files: unknown): string[] {
+  if (!Array.isArray(files)) return [];
+  const entries = files.filter((entry): entry is string => typeof entry === 'string');
+
+  const coversDist = entries.some(
+    (entry) => entry.replace(/^\.\//, '').replace(/\/(?:\*\*(?:\/\*)?|\*)?$/, '') === 'dist',
+  );
+  if (!coversDist) return [];
+  if (entries.includes(BUNDLE_EXCLUSION) || entries.includes('!dist/**/*.mcpb')) return [];
+
+  return [
+    `package.json "files" covers dist/ without "${BUNDLE_EXCLUSION}" — the bundle script writes ` +
+      `dist/<name>.mcpb, so a release that bundles before publishing ships it in the npm tarball; ` +
+      `add "${BUNDLE_EXCLUSION}" to "files"`,
+  ];
+}
+
+/**
+ * Check 14: manifest.json `version` must equal `package.json`'s. Skipped when
+ * the package version is absent — the same fail-safe as checks 10 and 12.
+ */
+export function checkManifestVersion(manifest: Manifest, packageVersion?: string): string[] {
+  if (!packageVersion || manifest.version === packageVersion) return [];
+  return [
+    manifest.version === undefined
+      ? `manifest.json has no "version" — must declare the package.json version "${packageVersion}"`
+      : `manifest.json "version" is "${String(manifest.version)}" — must equal the package.json version "${packageVersion}"`,
+  ];
+}
+
+const DOCKERFILE_FROM = /^\s*FROM\s/i;
+const DOCKERFILE_BUILD_PLATFORM = /--platform=\$\{?BUILDPLATFORM\}?(?:\s|$)/;
+const DOCKERFILE_BUILD_STEP = /\bbun run (?:re)?build\b/;
+
+/**
+ * Check 15: every Dockerfile stage that runs `bun run build` must be pinned to
+ * the build platform. Stages are split at `FROM` lines; comment lines are
+ * ignored so a note mentioning the build does not count as one.
+ */
+export function checkDockerfileBuildPlatform(dockerfile: string): string[] {
+  const stages: { from: string; line: number; builds: boolean }[] = [];
+  for (const [index, line] of dockerfile.split('\n').entries()) {
+    if (DOCKERFILE_FROM.test(line)) {
+      stages.push({ from: line.trim(), line: index + 1, builds: false });
+    } else if (!line.trimStart().startsWith('#') && DOCKERFILE_BUILD_STEP.test(line)) {
+      const stage = stages.at(-1);
+      if (stage) stage.builds = true;
+    }
+  }
+
+  return stages
+    .filter((stage) => stage.builds && !DOCKERFILE_BUILD_PLATFORM.test(stage.from))
+    .map(
+      (stage) =>
+        `Dockerfile:${stage.line} "${stage.from}" runs \`bun run build\` without --platform=$BUILDPLATFORM — ` +
+        `a multi-arch buildx build then runs it under QEMU, where bun aborts and no image publishes; ` +
+        `start the build stage with "FROM --platform=$BUILDPLATFORM" and copy dist/ into a separate runtime stage`,
+    );
+}
+
 /** Read `packaging.pluginManifests` from devcheck.config.json; default on. */
 function pluginManifestsEnabled(): boolean {
   const cfg = tryReadJson<{ packaging?: { pluginManifests?: boolean } }>(
@@ -755,7 +842,9 @@ async function main(): Promise<void> {
   const warnings: string[] = [];
   const notes: string[] = [];
 
-  const pkg = tryReadJson<{ name?: string; version?: string }>(resolve('package.json'));
+  const pkg = tryReadJson<{ files?: unknown; name?: string; version?: string }>(
+    resolve('package.json'),
+  );
   const unscopedName = pkg?.name?.split('/').pop();
 
   // ── Manifest-dependent checks (1–4 + manifest identity) ──
@@ -826,6 +915,9 @@ async function main(): Promise<void> {
     if (unscopedName) {
       errors.push(...checkManifestIdentity(manifest, unscopedName));
     }
+
+    errors.push(...checkManifestVersion(manifest, pkg?.version));
+    errors.push(...checkBundleExcludedFromFiles(pkg?.files));
   } else {
     notes.push('No manifest.json — skipping manifest/server.json alignment checks.');
   }
@@ -872,6 +964,12 @@ async function main(): Promise<void> {
       errors.push(...result.errors);
       warnings.push(...result.warnings);
     }
+  }
+
+  // ── Dockerfile build platform (check 15) ──
+  const dockerfilePath = resolve('Dockerfile');
+  if (existsSync(dockerfilePath)) {
+    errors.push(...checkDockerfileBuildPlatform(readFileSync(dockerfilePath, 'utf-8')));
   }
 
   // ── README version badge (check 12) ──

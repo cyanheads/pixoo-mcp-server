@@ -35,6 +35,10 @@ export function isRemoteSource(source: string): boolean {
  * @throws {McpError} NotFound with `reason: 'asset_not_found'` for a non-https URL,
  *   an unreachable or non-2xx endpoint, or a response over {@link MAX_IMAGE_BYTES}.
  * @throws {McpError} RequestCancelled when `ctx.signal` aborts while the body streams.
+ * @throws {McpError} Timeout when the body outlasts {@link FETCH_TIMEOUT_MS}, or when the
+ *   `ctx.signal` abort is a caller-side deadline (a `TimeoutError` reason). A tool handler
+ *   still answers the deadline as RequestCancelled: the handler factory settles any throw
+ *   after the request's signal fired as a cancellation.
  */
 export async function fetchRemoteImageToTempPng(source: string, ctx: Context): Promise<string> {
   if (!source.startsWith('https://')) {

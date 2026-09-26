@@ -3,6 +3,8 @@
 /.claude/
 /.agents/
 /framework-skills/
+/docs/idea.md
+/logs/
 /favorites/
 /Dockerfile
 /bun.lock

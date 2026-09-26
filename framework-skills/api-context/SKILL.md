@@ -4,7 +4,7 @@ description: >
   Canonical reference for the unified `Context` object passed to every tool and resource handler in `@cyanheads/mcp-ts-core`. Covers the full interface, its `RequestContext` base, all sub-APIs (`ctx.log`, `ctx.state`, `ctx.requestInput`, `ctx.inputs`, `ctx.enrich`, `ctx.content`), and when to use each.
 metadata:
   author: cyanheads
-  version: "2.5"
+  version: "2.8"
   audience: external
   type: reference
 ---
@@ -42,7 +42,7 @@ interface Context extends RequestContext {
   readonly state: ContextState;
 
   // Multi-round-trip input — always present, both eras (see § ctx.requestInput)
-  readonly requestInput: RequestInputFn;   // (spec) => never — suspends and asks the caller
+  readonly requestInput: RequestInputFn;   // (spec, options?) => never — suspends and asks the caller
   readonly inputs: ContextInputs;          // reader over a retried request's responses
 
   // List-changed / resource-updated notifications — wired in every handler ctx;
@@ -109,7 +109,7 @@ await fetchUser('123', ctx);   // ctx is a Context — no conversion
 
 `RequestContext` has **no index signature**. Its fields are exactly: `auth`, `extra`, `operation`, `requestId`, `sessionId`, `spanId`, `tenantId`, `timestamp`, `traceId`. A misspelled canonical field (`tenatId`) is a compile error instead of a silently-ignored key.
 
-Operation-specific correlation data goes in **`extra`** — the one deliberate open bag (`Readonly<Record<string, unknown>>`). The logger flattens `extra` into the emitted line, so log output looks the same as a top-level spread.
+Operation-specific correlation data goes in **`extra`** — the one deliberate open bag (`Readonly<Record<string, unknown>>`). The logger flattens `extra` into the emitted line, so log output looks the same as a top-level spread — except that an `extra` key named like a canonical field the context sets never replaces it.
 
 ### Adding correlation data
 
@@ -149,7 +149,7 @@ Never re-open the shape to get past a type error: no index signature, no widenin
 
 Request-scoped structured logger. Every log line is automatically annotated with `requestId`, `traceId`, and `tenantId` — no manual spreading needed.
 
-**Dual-sink.** Each call writes to Pino *and* mirrors onto the MCP wire as a `notifications/message` (the framework advertises the `logging` capability, and the SDK filters by the level the client set via `logging/setLevel`). The wire payload is `{ message, ...data }`; `ctx.log.error` adds `error: <message>`. Delivery is fire-and-forget — a client that never upgraded to SSE, set a higher level, or already disconnected drops the notification, and a failed send never fails the handler. Treat `ctx.log` as client-visible: it is no longer a server-only sink, so don't log anything there you wouldn't put in a tool result.
+**Dual-sink.** Each call writes to Pino *and* mirrors onto the MCP wire as a `notifications/message` (the framework advertises the `logging` capability, and the SDK filters by the level the client set via `logging/setLevel`). The wire payload is `{ message, ...data }`; `ctx.log.error` adds `error: <message>`. `message` and `error` are reserved wire keys, written after `data`: a `message` in `data` never replaces the log line on the wire, and on `ctx.log.error` with an `Error` the `error` key is always that error's message. The process log line still carries the caller's own fields, except one reusing a canonical name the context already sets (`requestId`, `traceId`, `spanId`, `tenantId`, …) — there the context's value wins, so the line stays correlated to its request. Delivery is fire-and-forget — a client that never upgraded to SSE, set a higher level, or already disconnected drops the notification, and a failed send never fails the handler. Treat `ctx.log` as client-visible: it is no longer a server-only sink, so don't log anything there you wouldn't put in a tool result.
 
 ### Methods
 
@@ -210,7 +210,7 @@ interface ContextState {
 ### Usage
 
 ```ts
-// Store — accepts any serializable value, no manual JSON.stringify needed
+// Store — accepts any JSON-serializable value, no manual JSON.stringify needed
 await ctx.state.set('item/123', { name: 'Widget', count: 42 });
 await ctx.state.set('session/xyz', token, { ttl: 3600 }); // TTL in seconds
 
@@ -236,6 +236,7 @@ if (page.cursor) { /* more pages available */ }
 
 - Throws `McpError(InvalidRequest)` if `tenantId` is missing. Won't happen in stdio (any auth mode) or HTTP+`MCP_AUTH_MODE=none` — both default to `'default'`. Can happen in HTTP+`MCP_AUTH_MODE=jwt`/`oauth` when the token lacks a `tid` claim (intentional fail-closed: distinct authenticated callers must not silently share state).
 - Keys are tenant-prefixed internally; handlers never need to namespace manually.
+- **Values round-trip as JSON** on every provider, `in-memory` included: reads return the JSON form, so a `Date` comes back as its ISO string, a `Map` as `{}`, and a returned object never shares identity with the one written. Validate reads with a schema that matches the stored form (`z.string()` for a date, not `z.date()`). A `bigint`, a cyclic reference, or a top-level `undefined`, function, or symbol throws `McpError(SerializationError)` before anything is written; in `setMany`, one such value rejects the whole batch.
 - **Key charset:** `^[a-zA-Z0-9_.\-/]+$`, 1024 chars max, no `..`. Slashes are the namespace separator — a colon (`item:123`) throws `McpError(ValidationError)` on every call. The rule covers `list` prefixes and every key in a batch operation. `createMockContext().state` enforces it identically, so an illegal key fails in the test rather than in a deployment.
 - **Workers persistence:** The `in-memory` provider loses data on cold starts. Use `cloudflare-kv`, `cloudflare-r2`, or `cloudflare-d1` for durable storage in Workers.
 
@@ -327,6 +328,17 @@ Always present, on every transport and both protocol eras. A handler that needs 
 One code path serves both eras. A 2026-07-28 client fulfils the embedded requests and retries the call; for a 2025-era session the SDK's legacy shim fulfils the same returns by issuing real `elicitation/create` / `sampling/createMessage` / `roots/list` round trips and re-entering the handler itself.
 
 **A 2025-era client that declared no matching capability is refused, with an envelope.** URL-mode elicitation needs `elicitation.url`, form-mode needs `elicitation.form` (a bare `elicitation: {}` satisfies it), sampling needs `sampling` — `sampling.tools` when the request carries `tools` / `toolChoice` — and `roots/list` needs `roots`. `ctx.requestInput` runs the check on the result it builds and throws the refusal instead of the signal, so it never reaches the wire and the handler fails where it stands — the execution measurement records it as a failed call, and each family's usual error path shapes it. A tool gets `isError` with `structuredContent.error.code = -32600` (`InvalidRequest`), `data.reason: 'client_capability_missing'`, and a `data.recovery.hint` naming the capability; a resource read gets the same code, reason, and hint through the JSON-RPC error envelope. A prompt's `generate` receives no `ctx`, so it has no `ctx.requestInput` to gate. The check runs on every round, so a handler that elicits first and samples second is gated again on the second. A return carrying only `requestState` asks the client for nothing and is never gated. On the 2026-07-28 leg the SDK owns this check and a violation surfaces as its `MissingRequiredClientCapabilityError` (`-32021`) instead.
+
+**The refusal's hint ends at reconnecting** — ``Reconnect with a client that declares the `elicitation.form` capability.`` — and offers no other way to supply the answer, because a consent gate deliberately has no input field for it: the model would fill it in. A handler whose own arguments can stand in for the answer says so per call with the optional second argument, a sentence appended to the hint after a space:
+
+```ts
+return ctx.requestInput(
+  { inputRequests: { noun: inputRequired.elicit({ message: 'I need a noun.', requestedSchema: Answer }) } },
+  { fallbackHint: 'Or call again with noun supplied.' },
+);
+```
+
+The option shapes that refusal alone, on a tool call and a resource read alike. A connection that can serve the request never sees it, and the 2026-07-28 leg's `-32021` is untouched.
 
 **`MCP_SESSION_MODE` decides whether that second leg exists.** Under `stateful` / `auto` the shim has the session it needs. Under `stateless` each 2025-era request is served by a fresh instance that never saw `initialize`, so its client-capability view is empty and the round trip is refused rather than attempted — fail-closed, but the handler never gets its answer. The refusal carries the same envelope, with a message and hint that name the per-request case and point at a stateful session. Ship `stateless` on a server whose destructive tools gate on `ctx.requestInput` and those tools become unusable for v1 HTTP clients. 2026-07-28 clients are unaffected in either mode: that revision has no server→client request channel at all, which is precisely why `input_required` exists. stdio is unaffected in either mode.
 
@@ -712,9 +724,11 @@ For tools that cap a list (i.e. have a `limit`/`per_page`/`page_size`/`max_resul
 
 ```ts
 enrichment: {
-  truncated: z.boolean().describe('True when the list was capped.'),
-  shown: z.number().describe('Number of items returned.'),
-  cap: z.number().describe('The limit that was applied.'),
+  // Optional: truncated() writes these only when the cap is hit, and a required
+  // enrichment field left unset fails the effective-output parse on every complete result.
+  truncated: z.boolean().optional().describe('True when the list was capped.'),
+  shown: z.number().optional().describe('Number of items returned.'),
+  cap: z.number().optional().describe('The limit that was applied.'),
   truncationCeiling: z.number().optional().describe('Upper bound for omitted items (threshold bound).'),
 },
 async handler(input, ctx) {
@@ -809,7 +823,7 @@ Test content blocks with `getContentBlocks(ctx)` from `@cyanheads/mcp-ts-core/te
 | `ctx.signal` | `AbortSignal` | Always |
 | `ctx.enrich` | `Enrich` | Always; typed on `HandlerContext<R, E>` when an `enrichment` block is declared |
 | `ctx.content` | `ContentCollect` | Always — prepends image/audio blocks to `content[]`, never `structuredContent` |
-| `ctx.requestInput` | `(spec) => never` | Always — suspends the handler and asks the caller for more input |
+| `ctx.requestInput` | `(spec, options?) => never` | Always — suspends the handler and asks the caller for more input; `options.fallbackHint` extends a 2025-era capability refusal's hint |
 | `ctx.inputs` | `ContextInputs` | Always; empty until the request is retried with responses |
 | `ctx.notifyResourceListChanged` | `function \| undefined` | Always in handler ctx; delivery request-scoped (see [§ list-changed notifications](#list-changed-notifications-ctxnotify)) |
 | `ctx.notifyResourceUpdated` | `function \| undefined` | Always in handler ctx; limited to URIs the client subscribed to, through the listen filter (2026) or the subscribe registry (2025) |

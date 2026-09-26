@@ -7,13 +7,14 @@ import { describe, expect, it } from 'vitest';
 import { getIconsByCategory, ICON_CATEGORIES, ICON_NAMES, ICONS } from '@/renderer/icons.js';
 
 describe('ICONS registry', () => {
-  it('has entries with name, category, d, and viewBox', () => {
+  it('has entries with name, category, viewBox, and fill or stroke path data', () => {
     for (const [key, entry] of Object.entries(ICONS)) {
       expect(entry.name).toBe(key);
       expect(typeof entry.category).toBe('string');
-      expect(typeof entry.d).toBe('string');
-      expect(entry.d.length).toBeGreaterThan(0);
       expect(typeof entry.viewBox).toBe('string');
+      const parts = [entry.fill, entry.stroke].filter((d) => d !== undefined);
+      expect(parts.length).toBeGreaterThan(0);
+      for (const d of parts) expect(d).toMatch(/^M/);
     }
   });
 

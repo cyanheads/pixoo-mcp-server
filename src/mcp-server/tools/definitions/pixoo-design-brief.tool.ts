@@ -79,7 +79,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 - \`pulse\`: opacity ramp — breathing effect, ambient indicators
 - \`scroll-left/right\`: horizontal pan — text that doesn't fit, scene transitions
 - \`blink\`: visibility toggle — alerts, status indicators
-- \`twinkle\`: sparse color wobble — stars, particles, sparkle elements
+- \`twinkle\`: irregular opacity flicker — stars, particles, sparkle elements
 - \`drift\`: slow x wander — background objects, atmospheric depth
 
 **Parallax:** Use different \`amplitude\` and \`phase\` values for depth: hero element amplitude=4, mid-ground amplitude=2, background amplitude=1.

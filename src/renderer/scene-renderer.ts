@@ -21,8 +21,14 @@ import {
   renderSvgPath,
   resolveColor,
 } from '@cyanheads/pixoo-toolkit';
-import { ICONS } from './icons.js';
-import { compileEffect, type EffectName, getKeyframeValue, type KeyframeMap } from './keyframes.js';
+import { ICONS, type IconPaths } from './icons.js';
+import {
+  compileEffect,
+  type EffectName,
+  getKeyframeValue,
+  interpolateColorKeyframe,
+  type KeyframeMap,
+} from './keyframes.js';
 import { fetchRemoteImageToTempPng, isRemoteSource } from './remote-image.js';
 import {
   drawStyledText,
@@ -34,7 +40,7 @@ import {
   type SemanticY,
   type TextStyle,
 } from './text-engine.js';
-import { PALETTES, type PaletteName, THEMES, type ThemeName } from './themes.js';
+import { type GradientStop, PALETTES, type PaletteName, THEMES, type ThemeName } from './themes.js';
 
 /** Background specification. */
 export type BackgroundSpec =
@@ -325,6 +331,75 @@ export function applyBackground(canvas: Canvas, bg: BackgroundSpec): void {
   canvas.clear();
 }
 
+/** Draw an icon's filled parts, then its stroked parts, in one color. */
+function drawIconPaths(
+  canvas: Canvas,
+  paths: IconPaths,
+  color: RGB,
+  svgViewBox: [number, number],
+  targetRect: [number, number, number, number],
+): void {
+  if (paths.fill) renderSvgPath(canvas, paths.fill, color, svgViewBox, targetRect);
+  if (paths.stroke) {
+    renderSvgPath(canvas, paths.stroke, color, svgViewBox, targetRect, { mode: 'stroke' });
+  }
+}
+
+/**
+ * Render an icon as a top-to-bottom ramp, the way a text palette paints glyphs: the icon's
+ * top ink row takes `stop.from`, its bottom ink row `stop.to`, and each row between takes
+ * its even step. Only ink that lands on the canvas counts, so an icon clipped by an edge
+ * ramps across the rows still visible.
+ */
+function renderIconRamp(
+  canvas: Canvas,
+  paths: IconPaths,
+  svgViewBox: [number, number],
+  targetRect: [number, number, number, number],
+  stop: GradientStop,
+): void {
+  const mask = new Canvas(canvas.width as PixooSize);
+  drawIconPaths(mask, paths, [255, 255, 255], svgViewBox, targetRect);
+  const inkAt = (x: number, y: number) => mask.getPixelRgba(x, y)[3] > 0;
+
+  const rows: number[] = [];
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      if (inkAt(x, y)) {
+        rows.push(y);
+        break;
+      }
+    }
+  }
+  const top = rows[0];
+  const bottom = rows.at(-1);
+  if (top === undefined || bottom === undefined) return;
+
+  const from = resolveColor(stop.from);
+  const to = resolveColor(stop.to);
+  for (const y of rows) {
+    const color = lerpColor(from, to, bottom === top ? 0 : (y - top) / (bottom - top));
+    for (let x = 0; x < mask.width; x++) {
+      if (inkAt(x, y)) canvas.setPixel(x, y, color);
+    }
+  }
+}
+
+/**
+ * The layout entry for an element drawn over `box` — its placed pixels, `dx`/`dy` included.
+ * The element fits when the box lies wholly on the canvas.
+ */
+function placedEntry(
+  element: number,
+  type: SceneElement['type'],
+  box: LayoutEntry['box'],
+  canvas: Canvas,
+): LayoutEntry {
+  const fits =
+    box.x >= 0 && box.y >= 0 && box.x + box.w <= canvas.width && box.y + box.h <= canvas.height;
+  return { element, type, box, fits, action: 'none' };
+}
+
 /** Render a single element onto a canvas at a specific frame. */
 export function renderElement(
   canvas: Canvas,
@@ -362,13 +437,19 @@ export function renderElement(
   const dx = (el.dx ?? 0) + dxAnim;
   const dy = (el.dy ?? 0) + dyAnim;
 
+  // A keyframed `color` stands in for the element's own `color` on this frame.
+  const colorFrames = kf?.['color'];
+  const keyframedColor = colorFrames ? interpolateColorKeyframe(colorFrames, frameIdx) : undefined;
+
   // If opacity < 100, render to scratch canvas and blit with alpha
   const target = opacity < 100 ? new Canvas(canvas.width as 16 | 32 | 64) : canvas;
 
   switch (el.type) {
     case 'text': {
-      const style: TextStyle = el.style ?? {};
-      if (!style.color && el.color) style.color = el.color;
+      // A copy: the per-frame color must not stick to the caller's style object.
+      const style: TextStyle = { ...el.style };
+      const color = keyframedColor ?? el.color;
+      if (!style.color && color) style.color = color;
       const fontVariant: FontVariant = el.font === 'compact' ? 'compact' : 'standard';
       const px = el.x ?? 0;
       const py = el.y ?? 0;
@@ -380,11 +461,7 @@ export function renderElement(
       const resolvedY = resolveY(py, textH, canvas.height, dy);
       drawStyledText(target, el.text, resolvedX, resolvedY, style, fontVariant);
       layoutEntries.push({
-        element: elIdx,
-        type: 'text',
-        box: { x: resolvedX, y: resolvedY, w: textW, h: textH },
-        fits: resolvedX + textW <= canvas.width && resolvedY + textH <= canvas.height,
-        action: 'none',
+        ...placedEntry(elIdx, 'text', { x: resolvedX, y: resolvedY, w: textW, h: textH }, canvas),
         font: fontVariant,
         scale,
       });
@@ -392,21 +469,22 @@ export function renderElement(
     }
 
     case 'icon': {
-      let svgD: string;
+      let paths: IconPaths;
       let viewBox = '0 0 16 16';
 
       if (el.name) {
-        const iconEntry = ICONS[el.name];
+        // Own keys only: an Object.prototype name such as "constructor" is not an icon.
+        const iconEntry = Object.hasOwn(ICONS, el.name) ? ICONS[el.name] : undefined;
         if (!iconEntry) {
           throw invalidParams(
             `Unknown icon "${el.name}". Use pixoo://reference/icons to browse available icons.`,
             { reason: 'unknown_icon' },
           );
         }
-        svgD = iconEntry.d;
+        paths = iconEntry;
         viewBox = iconEntry.viewBox;
       } else if (el.d) {
-        svgD = el.d;
+        paths = { fill: el.d };
         viewBox = el.viewBox ?? '0 0 16 16';
       } else {
         throw invalidParams('Icon element requires either "name" or "d" property.');
@@ -419,26 +497,27 @@ export function renderElement(
       const resolvedX = resolveX(px, w, canvas.width, dx);
       const resolvedY = resolveY(py, h, canvas.height, dy);
 
-      const color = el.color ? resolveColor(el.color) : ([255, 255, 255] as RGB);
+      // Resolved even under a palette, so a bad color still fails as invalid_color.
+      const colorSpec = keyframedColor ?? el.color;
+      const color = colorSpec ? resolveColor(colorSpec) : ([255, 255, 255] as RGB);
       // Parse viewBox string ("0 0 W H") to extract dimensions [W, H]
       const vbParts = viewBox.split(/\s+/).map(Number);
-      const vbW = vbParts[2] ?? 16;
-      const vbH = vbParts[3] ?? 16;
-      renderSvgPath(target, svgD, color, [vbW, vbH], [resolvedX, resolvedY, w, h]);
+      const svgViewBox: [number, number] = [vbParts[2] ?? 16, vbParts[3] ?? 16];
+      const targetRect: [number, number, number, number] = [resolvedX, resolvedY, w, h];
+      if (el.palette) {
+        renderIconRamp(target, paths, svgViewBox, targetRect, PALETTES[el.palette]);
+      } else {
+        drawIconPaths(target, paths, color, svgViewBox, targetRect);
+      }
 
-      layoutEntries.push({
-        element: elIdx,
-        type: 'icon',
-        box: { x: resolvedX, y: resolvedY, w, h },
-        fits: resolvedX + w <= canvas.width && resolvedY + h <= canvas.height,
-        action: 'none',
-      });
+      layoutEntries.push(placedEntry(elIdx, 'icon', { x: resolvedX, y: resolvedY, w, h }, canvas));
       break;
     }
 
     case 'rect': {
       const x = el.x + dx;
       const y = el.y + dy;
+      const fill = keyframedColor ?? el.color;
       if (el.gradient) {
         const from_ = resolveColor(el.gradient.from);
         const to_ = resolveColor(el.gradient.to);
@@ -456,56 +535,49 @@ export function renderElement(
             target.drawLineV(x + col, y, el.h, c);
           }
         }
-      } else if (el.color) {
-        target.fillRect(x, y, el.w, el.h, resolveColor(el.color));
+      } else if (fill) {
+        target.fillRect(x, y, el.w, el.h, resolveColor(fill));
       }
       if (el.borderColor) {
         target.drawRect(x, y, el.w, el.h, resolveColor(el.borderColor));
       }
-      layoutEntries.push({
-        element: elIdx,
-        type: 'rect',
-        box: { x, y, w: el.w, h: el.h },
-        fits: x + el.w <= canvas.width && y + el.h <= canvas.height,
-        action: 'none',
-      });
+      layoutEntries.push(placedEntry(elIdx, 'rect', { x, y, w: el.w, h: el.h }, canvas));
       break;
     }
 
     case 'circle': {
       const cx = el.cx + dx;
       const cy = el.cy + dy;
-      const color = el.color ? resolveColor(el.color) : ([255, 255, 255] as RGB);
+      const colorSpec = keyframedColor ?? el.color;
+      const color = colorSpec ? resolveColor(colorSpec) : ([255, 255, 255] as RGB);
       if (el.fill !== false) {
         target.fillCircle(cx, cy, el.radius, color);
       } else {
         target.drawCircle(cx, cy, el.radius, color);
       }
-      layoutEntries.push({
-        element: elIdx,
-        type: 'circle',
-        box: { x: cx - el.radius, y: cy - el.radius, w: el.radius * 2, h: el.radius * 2 },
-        fits: true,
-        action: 'none',
-      });
+      // The circle covers its center pixel plus `radius` on each side.
+      const diameter = el.radius * 2 + 1;
+      const box = { x: cx - el.radius, y: cy - el.radius, w: diameter, h: diameter };
+      layoutEntries.push(placedEntry(elIdx, 'circle', box, canvas));
       break;
     }
 
     case 'line': {
-      const color = el.color ? resolveColor(el.color) : ([255, 255, 255] as RGB);
-      target.drawLine(el.x0 + dx, el.y0 + dy, el.x1 + dx, el.y1 + dy, color);
-      layoutEntries.push({
-        element: elIdx,
-        type: 'line',
-        box: {
-          x: Math.min(el.x0, el.x1),
-          y: Math.min(el.y0, el.y1),
-          w: Math.abs(el.x1 - el.x0),
-          h: Math.abs(el.y1 - el.y0),
-        },
-        fits: true,
-        action: 'none',
-      });
+      const colorSpec = keyframedColor ?? el.color;
+      const color = colorSpec ? resolveColor(colorSpec) : ([255, 255, 255] as RGB);
+      const x0 = el.x0 + dx;
+      const y0 = el.y0 + dy;
+      const x1 = el.x1 + dx;
+      const y1 = el.y1 + dy;
+      target.drawLine(x0, y0, x1, y1, color);
+      // Both endpoints are drawn, so the line spans one pixel more than their distance.
+      const box = {
+        x: Math.min(x0, x1),
+        y: Math.min(y0, y1),
+        w: Math.abs(x1 - x0) + 1,
+        h: Math.abs(y1 - y0) + 1,
+      };
+      layoutEntries.push(placedEntry(elIdx, 'line', box, canvas));
       break;
     }
 
@@ -538,13 +610,7 @@ export function renderElement(
         drawText(target, el.label, labelX, labelY, [200, 200, 200], { font: FONT_3x5 });
       }
 
-      layoutEntries.push({
-        element: elIdx,
-        type: 'progress',
-        box: { x, y, w: el.w, h: el.h },
-        fits: true,
-        action: 'none',
-      });
+      layoutEntries.push(placedEntry(elIdx, 'progress', { x, y, w: el.w, h: el.h }, canvas));
       break;
     }
 
@@ -557,7 +623,8 @@ export function renderElement(
       const min_ = Math.min(...data);
       const max_ = Math.max(...data);
       const range = max_ - min_ || 1;
-      const color = el.color ? resolveColor(el.color) : ([100, 200, 255] as RGB);
+      const colorSpec = keyframedColor ?? el.color;
+      const color = colorSpec ? resolveColor(colorSpec) : ([100, 200, 255] as RGB);
 
       if (el.kind === 'bar') {
         const barW = Math.max(1, Math.floor(el.w / data.length));
@@ -567,25 +634,20 @@ export function renderElement(
           target.fillRect(x + i * barW, y + el.h - h, barW - 1, h, color);
         }
       } else {
-        const stepX = el.w / (data.length - 1);
+        // Scaled over w − 1 and h − 1, so the line fills exactly its w × h box.
+        const stepX = (el.w - 1) / (data.length - 1);
+        const bottom = y + el.h - 1;
+        const rowOf = (v: number) => bottom - Math.round(((v - min_) / range) * (el.h - 1));
         for (let i = 0; i < data.length - 1; i++) {
-          const v0 = data[i] ?? 0;
-          const v1 = data[i + 1] ?? 0;
           const x0 = Math.round(x + i * stepX);
-          const y0 = y + el.h - Math.round(((v0 - min_) / range) * el.h);
+          const y0 = rowOf(data[i] ?? 0);
           const x1 = Math.round(x + (i + 1) * stepX);
-          const y1 = y + el.h - Math.round(((v1 - min_) / range) * el.h);
+          const y1 = rowOf(data[i + 1] ?? 0);
           target.drawLine(x0, y0, x1, y1, color);
         }
       }
 
-      layoutEntries.push({
-        element: elIdx,
-        type: 'sparkline',
-        box: { x, y, w: el.w, h: el.h },
-        fits: true,
-        action: 'none',
-      });
+      layoutEntries.push(placedEntry(elIdx, 'sparkline', { x, y, w: el.w, h: el.h }, canvas));
       break;
     }
 
@@ -603,29 +665,32 @@ export function renderElement(
           target.setPixel(x + col, y + row, resolveColor(colorStr));
         }
       }
-      layoutEntries.push({
-        element: elIdx,
-        type: 'bitmap',
-        box: { x, y, w: el.rows[0]?.length ?? 0, h: el.rows.length },
-        fits: true,
-        action: 'none',
-      });
+      const widest = el.rows.reduce((max, row) => Math.max(max, row.length), 0);
+      layoutEntries.push(
+        placedEntry(elIdx, 'bitmap', { x, y, w: widest, h: el.rows.length }, canvas),
+      );
       break;
     }
 
     case 'pixels': {
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
       for (const pt of el.data) {
-        const colorAnim = String(getKeyframeValue(kf, 'color', frameIdx, pt.color));
-        const c = resolveColor(colorAnim);
-        target.setPixel(pt.x + dx, pt.y + dy, c);
+        const x = pt.x + dx;
+        const y = pt.y + dy;
+        target.setPixel(x, y, resolveColor(keyframedColor ?? pt.color));
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
       }
-      layoutEntries.push({
-        element: elIdx,
-        type: 'pixels',
-        box: { x: 0, y: 0, w: 0, h: 0 },
-        fits: true,
-        action: 'none',
-      });
+      const box =
+        el.data.length === 0
+          ? { x: 0, y: 0, w: 0, h: 0 }
+          : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+      layoutEntries.push(placedEntry(elIdx, 'pixels', box, canvas));
       break;
     }
 
@@ -634,13 +699,13 @@ export function renderElement(
       if (cachedCanvas) {
         target.blit(cachedCanvas, dx, dy);
       }
-      layoutEntries.push({
-        element: elIdx,
-        type: 'image',
-        box: { x: el.x ?? 0, y: el.y ?? 0, w: el.w ?? canvas.width, h: el.h ?? canvas.height },
-        fits: true,
-        action: 'none',
-      });
+      const box = {
+        x: (el.x ?? 0) + dx,
+        y: (el.y ?? 0) + dy,
+        w: el.w ?? canvas.width,
+        h: el.h ?? canvas.height,
+      };
+      layoutEntries.push(placedEntry(elIdx, 'image', box, canvas));
       break;
     }
 
@@ -669,13 +734,8 @@ export function renderElement(
           originalDarkColor: sprite.darkColor,
         });
 
-        layoutEntries.push({
-          element: elIdx,
-          type: 'sprite',
-          box: { x: resolvedX, y: resolvedY, w: spriteW, h: spriteH },
-          fits: resolvedX + spriteW <= canvas.width && resolvedY + spriteH <= canvas.height,
-          action: 'none',
-        });
+        const box = { x: resolvedX, y: resolvedY, w: spriteW, h: spriteH };
+        layoutEntries.push(placedEntry(elIdx, 'sprite', box, canvas));
       }
       break;
     }

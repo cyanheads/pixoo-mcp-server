@@ -85,23 +85,23 @@ Discriminated union, rendered back-to-front:
 | Type | What it adds over the archive | Backed by |
 |:-----|:------------------------------|:----------|
 | `text` | Full styled text engine (above) | toolkit fonts + ramp renderer |
-| `icon` | Built-in named icons or custom SVG path. `name` values live in the icon registry, listed at `pixoo://reference/icons` (categories: weather, arrows, status, media); custom icons pass `{ d, viewBox }` where `viewBox` defaults to `"0 0 16 16"` (toolkit default — pass `"0 0 24 24"` for lucide-style sources); fill color/palette | `renderSvgPath` (even-odd fill, holes, Béziers) |
+| `icon` | Built-in named icons or custom SVG path. `name` values live in the icon registry, listed at `pixoo://reference/icons` (categories: weather, arrows, status, media); custom icons pass `{ d, viewBox }` where `viewBox` defaults to `"0 0 16 16"` (toolkit default — pass `"0 0 24 24"` for lucide-style sources); `w`/`h` 1–256 (default 12); `color` (default white), or a `palette` painted as a top-to-bottom ramp from the icon's top ink row (`from`) to its bottom ink row (`to`), the way a text palette paints glyphs — `palette` wins over `color`. Each registry icon records which parts fill and which stroke: `sun` and `rain` fill the disk/cloud and stroke the rays/drops, the arrows fill the head and stroke the shaft, `snow`, `wind`, and the four status badges (`check-circle`, `x-circle`, `alert-circle`, `info`) are all stroke; custom `d` paths fill | `renderSvgPath` — even-odd fill (holes, Béziers) for filled parts, `mode: 'stroke'` 1-px lines for stroked parts |
 | `rect` | `gradient` fill option, optional `borderColor` | `fillRect`/`drawRect`/`gradientV/H` |
 | `circle` | unchanged | `fillCircle`/`drawCircle` |
 | `line` | unchanged | `drawLine` |
 | `progress` | Dashboard widget: value/max bar, gradient fill, track color, optional label | rects + text engine |
-| `sparkline` | Dashboard widget: `data[]` → mini line or bar chart, auto-scaled to its box | `drawLine`/rects |
+| `sparkline` | Dashboard widget: `data[]` → mini line or bar chart, auto-scaled to its box — a line runs from the box's first column to its last and from its bottom row to its top, filling exactly `w × h` | `drawLine`/rects |
 | `bitmap` | unchanged (palette indices + row strings — proven for custom art) | `setPixel` |
 | `pixels` | unchanged (sparse dots: stars, particles) | `setPixel` |
-| `image` | local path or https URL (URL sources are fetched to a temp file server-side — `loadImage` accepts local paths only), loaded onto a canvas of the configured display size, so an image with no `w`/`h` fits the display | `loadImage` (alpha-preserving) |
-| `sprite` | unchanged (sprite-sheet downsample + recolor) | `downsampleSprite`/`renderSprite` |
+| `image` | local path or https URL (URL sources are fetched to a temp file server-side — `loadImage` accepts local paths only), loaded onto a canvas of the configured display size, so an image with no `w`/`h` fits the display; `w`/`h` 1–256 | `loadImage` (alpha-preserving) |
+| `sprite` | unchanged (sprite-sheet downsample + recolor); `cols`/`rows` 1–64, `scale` 1–64 | `downsampleSprite`/`renderSprite` |
 
 Per-element: `visible`, `opacity` (0–100, composited via scratch canvas + alpha blend — the RGBA canvas makes true layering work; black pixels land, undrawn stays transparent), and motion (below).
 
 ### Motion: presets first, keyframes for control
 
-- **`effect`** — named animation presets compiled to keyframes server-side: `float` (gentle y bob), `scroll-left`/`scroll-right`, `pulse` (color ramp), `blink`, `twinkle` (sparse color wobble for `pixels`), `drift` (slow x wander), `fade-in`/`fade-out` (opacity ramp). Each takes minimal params (amplitude, period).
-- **`animate`** — raw `{ prop: [[frame, value], ...] }` keyframes, kept from the archive (numbers lerp, colors lerp through RGB, booleans snap; hold before first/after last). One of `effect` or `animate` per element.
+- **`effect`** — named animation presets compiled to keyframes server-side: `float` (gentle y bob), `scroll-left`/`scroll-right`, `pulse` (opacity breathing, 50–100 by default), `blink`, `twinkle` (irregular opacity flicker, 40–100 by default), `drift` (slow x wander), `fade-in`/`fade-out` (opacity ramp). Each takes minimal params (`amplitude`, `period`, `phase`). `amplitude` is movement for `float` (bob height, px), `scroll-*` (2 × amplitude px per frame), and `drift` (up to 4 × amplitude px), default 2; for `pulse` and `twinkle` it is the 0–1 depth of the opacity dip below 100, default 0.5 and 0.6; `blink` and the fades ignore it.
+- **`animate`** — raw `{ prop: [[frame, value], ...] }` keyframes, kept from the archive (numbers lerp, booleans snap; hold before first/after last). Values are checked and interpolated by property: `dx`, `dy`, and `opacity` take numbers or numeric strings, and a numeric string reads as its number, so `"000"` → `"100"` ramps exactly like `0` → `100`; `visible` takes `true` or `false` and switches at the midpoint between keyframes; only the `color` track lerps through RGB, reading each value as a color and returning `#rrggbb` between keyframes. Every track needs at least one keyframe. An empty track, a value of the wrong type, or a string on `dx`/`dy`/`opacity` that isn't a number fails input validation as `invalid_arguments`, naming the field. A track under any other key is accepted and ignored. Animatable: `dx`, `dy`, `opacity`, `visible`, and `color` on every element that has a `color` field (`text`, `icon`, `rect`, `circle`, `line`, `sparkline`, and each point of `pixels`). A keyframed `color` stands in for the static `color`, so it yields where that does — to an icon or text `palette`, a text `style.color`, a rect `gradient`. Every value in a `color` track is resolved before any frame renders, so one that isn't a color fails as `invalid_color` even when its keyframe lies past the scene's last frame. One of `effect` or `animate` per element.
 - Scene-level `frames` (1–40, default 1) and `speed` (ms/frame, default 150). 20×150 ≈ 3s loop is the documented sweet spot.
 
 ## Tool detail
@@ -147,7 +147,7 @@ Instruction tool: static craft content per `topic` (`text | scene | dashboard | 
 | `unknown_icon` | `InvalidParams` | icon name not in registry — message lists categories | no |
 | `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable | yes |
 
-Text overflow is **not** an error — it's a reported fit decision in `layout[]`. Validation failures (frame cap, malformed keyframes) bubble as standard `ValidationError`.
+Text overflow is **not** an error — it's a reported fit decision in `layout[]`. Input-schema failures (frame cap, malformed or empty keyframe tracks) are rejected before the handler runs, as `-32602` with the framework's `invalid_arguments` reason and a hint naming the field.
 
 ## Output design
 
@@ -160,8 +160,8 @@ Text overflow is **not** an error — it's a reported fit decision in `layout[]`
   {
     element: number | 'background',   // index into elements[]; display_text uses 0
     type: string,                     // element type ('text', 'icon', ...)
-    box: { x, y, w, h },              // resolved bounding box after layout
-    fits: boolean,
+    box: { x, y, w, h },              // pixels the element was placed over, dx/dy included
+    fits: boolean,                    // the box lies wholly on the canvas
     action: 'none' | 'shrunk-to-compact' | 'scrolling' | 'wrapped' | 'truncated' | 'clipped',
     font?: 'standard' | 'compact',    // text only — the font actually used
     scale?: number                    // text only — the scale actually used
@@ -220,9 +220,14 @@ Each step independently testable; renderer tests need no device.
 - **`destructiveHint: false` on push tools.** Pushing replaces ephemeral display content the agent itself produced; nothing unrecoverable is lost. Pacing protects the hardware. (The archive marked these destructive — friction without protection.)
 - **Device overlay text kept but de-emphasized.** It's the only persistent-marquee capability and costs nothing to keep; the description routes styled-text asks to `pixoo_display_text`.
 - **Effects compile to keyframes** rather than a second animation engine — presets are sugar, the interpolator (ported concept from the archive: lerp numbers, lerp colors, snap booleans) stays the single source of motion truth.
+- **Keyframes interpolate by property, not by value.** Only the `color` track lerps as colors; `dx`, `dy`, and `opacity` read numeric strings as numbers. Guessing from the value misreads a number that also parses as hex, such as `"100"`, as a color.
+- **Keyframe value types are enforced in the input schema, per property.** The renderer coerces with `Number()` and `Boolean()`, so a word on `opacity`, `dx`, or `dy` became `NaN` (a silently wrong render, or an unclassified failure mid-render) and `"false"` on `visible` kept the element shown. The schema reuses the renderer's `numericValue` test, so it accepts exactly the strings the interpolator reads as numbers.
 - **Contact sheet over inline GIF** for animation previews — MCP image-block support for GIF is inconsistent across clients; a PNG grid of every frame is universally visible and shows the motion a single frame hides, the real GIF goes to disk.
 - **An explicit `output` replaces the auto-save.** A caller that names its destination on every call (a live dashboard) would otherwise fill `PIXOO_OUTPUT_DIR` with copies it never asked for.
 - **A failed push keeps its render as a file, not a success result.** Returning `pushed: false` with a notice would hide the device failure and drop the `retryable` signal callers key on.
+- **Element sizes that drive render cost are capped in the schema.** An `image` is resized to exactly `w × h` and a `sprite` paints `scale²` pixels per cell, every one visited even off the canvas, so cost tracks the request rather than the display. `image`/`icon` `w`/`h` stop at 256 (four times the largest panel, room for crop and zoom placements); sprite `scale` stops at 64, where one cell already covers the largest panel, and sprite `cols`/`rows` stop at 64, where the grid already spans the largest panel at `scale: 1` — the downsampler allocates every cell, so the grid is capped on its own, not only through `scale`.
+- **Registry icons declare their stroke parts.** The icon paths are outline-style, and a two-point subpath has no area to fill, so filling everything dropped rays, shafts, and marks. The status badges draw their ring as a stroke rather than a disk, because a mark stroked in the disk's own color would be invisible.
+- **`fits` checks all four edges of the placed box.** An element pushed off the left or top edge is clipped just as one past the right or bottom is.
 - **`pixoo_overlay_text` checks `x`/`y` against `PIXOO_SIZE` in the handler.** Input schemas are built once at import, before the configured size is known, so the advertised `.max(64)` stays the absolute ceiling and the handler enforces the real edge.
 - **Suggestion entries use the `{ toolName, reason, args }` shape** other suggestion-emitting servers use, declared locally until `cyanheads/mcp-ts-core#478` exports it; `args` is always present so a client can execute an entry without a presence check.
 - **No DataCanvas, no mirror, no app tools** — nothing here is analytical row data, and the human-facing surface is the physical display itself.

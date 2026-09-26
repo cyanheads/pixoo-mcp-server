@@ -10,6 +10,7 @@ import { Canvas, NAMED_COLORS, type PixooSize, savePng } from '@cyanheads/pixoo-
 import { getServerConfig } from '@/config/server-config.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
 import { ICONS } from '@/renderer/icons.js';
+import { numericValue } from '@/renderer/keyframes.js';
 import {
   autoSavePreview,
   buildContactSheet,
@@ -41,7 +42,7 @@ const EffectSchema = z
       .number()
       .optional()
       .describe(
-        'Effect intensity: pixels of movement for float/scroll/drift, 0–1 scale for fade/pulse. Default varies by effect (float: 2px).',
+        'Effect intensity. float, scroll-left, scroll-right, drift: movement in pixels (default 2). pulse, twinkle: 0–1 depth of the opacity dip below 100 (default 0.5 and 0.6). Other effects ignore it.',
       ),
     period: z
       .number()
@@ -56,19 +57,50 @@ const EffectSchema = z
   })
   .describe('Named animation effect preset.');
 
+/** A `[[frame, value], ...]` track of at least one keyframe, each value checked by `value`. */
+function keyframeTrack<T extends z.ZodType>(value: T, description: string) {
+  return z
+    .array(z.tuple([z.number().describe('Frame index.'), value]))
+    .min(
+      1,
+      'A keyframe track needs at least one [frame, value] entry; omit the property to leave it unanimated.',
+    )
+    .describe(description);
+}
+
+const NUMERIC_KEYFRAME_ERROR = 'Expected a number or a numeric string such as "40" or "-2.5".';
+
+const NumericKeyframeValue = z
+  .union([z.number(), z.string()], { error: NUMERIC_KEYFRAME_ERROR })
+  .refine((value) => numericValue(value) !== undefined, NUMERIC_KEYFRAME_ERROR)
+  .describe('Value at this frame: a number, or a numeric string such as "40" read as that number.');
+
 const AnimateSchema = z
-  .record(
-    z.string(),
-    z
-      .array(
-        z.tuple([
-          z.number().describe('Frame index.'),
-          z.union([z.number(), z.string(), z.boolean()]).describe('Value at this frame.'),
-        ]),
-      )
-      .describe('Keyframe entries: [[frame, value], ...].'),
-  )
-  .describe('Raw keyframe map: { property: [[frame, value], ...] }.');
+  .object({
+    dx: keyframeTrack(
+      NumericKeyframeValue,
+      'X offset keyframes in pixels, added to dx and interpolated between keyframes.',
+    ).optional(),
+    dy: keyframeTrack(
+      NumericKeyframeValue,
+      'Y offset keyframes in pixels, added to dy and interpolated between keyframes.',
+    ).optional(),
+    opacity: keyframeTrack(
+      NumericKeyframeValue,
+      'Opacity keyframes 0–100, interpolated between keyframes.',
+    ).optional(),
+    visible: keyframeTrack(
+      z.boolean().describe('Whether the element shows at this frame.'),
+      'Visibility keyframes: true or false, switching at the midpoint between keyframes.',
+    ).optional(),
+    color: keyframeTrack(
+      z.union([z.number(), z.string(), z.boolean()]).describe('Color at this frame.'),
+      'Color keyframes (hex or named), interpolated through RGB. Drives any element with a color field.',
+    ).optional(),
+  })
+  .describe(
+    'Raw keyframe tracks by property: { dx | dy | opacity | visible | color: [[frame, value], ...] }.',
+  );
 
 const BaseElementProps = {
   visible: z.boolean().optional().describe('Whether the element is visible (default: true).'),
@@ -136,13 +168,15 @@ const IconElementSchema = z.object({
   viewBox: z.string().optional().describe('SVG viewBox string (default: "0 0 16 16").'),
   x: XPosSchema.optional().describe('X position.'),
   y: YPosSchema.optional().describe('Y position.'),
-  w: z.number().int().optional().describe('Render width in pixels (default: 12).'),
-  h: z.number().int().optional().describe('Render height in pixels (default: 12).'),
-  color: z.string().optional().describe('Icon fill color.'),
+  w: z.number().int().min(1).max(256).optional().describe('Render width in pixels (default: 12).'),
+  h: z.number().int().min(1).max(256).optional().describe('Render height in pixels (default: 12).'),
+  color: z.string().optional().describe('Icon color (default: white).'),
   palette: z
     .enum(['ember', 'ice', 'neon', 'fire', 'lavender', 'claude', 'mono'])
     .optional()
-    .describe('Named palette for colored icon.'),
+    .describe(
+      "Named palette painted as a top-to-bottom color ramp from the icon's top row to its bottom row. Takes precedence over color.",
+    ),
   ...BaseElementProps,
 });
 
@@ -246,8 +280,14 @@ const ImageElementSchema = z.object({
   source: z.string().describe('Absolute local file path or https (not http) URL.'),
   x: z.number().int().optional().describe('X offset on canvas (default: 0).'),
   y: z.number().int().optional().describe('Y offset on canvas (default: 0).'),
-  w: z.number().int().optional().describe('Target width (default: canvas width).'),
-  h: z.number().int().optional().describe('Target height (default: canvas height).'),
+  w: z.number().int().min(1).max(256).optional().describe('Target width (default: canvas width).'),
+  h: z
+    .number()
+    .int()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe('Target height (default: canvas height).'),
   fit: z
     .enum(['contain', 'cover', 'fill'])
     .optional()
@@ -262,11 +302,17 @@ const ImageElementSchema = z.object({
 const SpriteElementSchema = z.object({
   type: z.literal('sprite').describe('Sprite sheet element.'),
   path: z.string().describe('Absolute local path to the sprite sheet image.'),
-  cols: z.number().int().min(1).describe('Number of columns in the sprite grid.'),
-  rows: z.number().int().min(1).describe('Number of rows in the sprite grid.'),
+  cols: z.number().int().min(1).max(64).describe('Number of columns in the sprite grid.'),
+  rows: z.number().int().min(1).max(64).describe('Number of rows in the sprite grid.'),
   x: XPosSchema.optional().describe('X position (default: center).'),
   y: z.number().int().optional().describe('Y position (default: 0).'),
-  scale: z.number().int().min(1).optional().describe('Pixel scale factor.'),
+  scale: z
+    .number()
+    .int()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe('Pixel scale factor: each sprite cell renders as a scale × scale block.'),
   bodyColor: z.string().optional().describe('Override body color.'),
   darkColor: z.string().optional().describe('Override dark/eye color.'),
   ...BaseElementProps,
@@ -347,7 +393,9 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     elements: z
       .array(ElementSchema)
       .max(50)
-      .describe('Scene elements rendered back-to-front. Up to 50 elements.'),
+      .describe(
+        "Scene elements rendered back-to-front. Up to 50 elements. An element's animate keyframes can drive dx, dy, and opacity (numbers or numeric strings, interpolated), visible (true or false, switching at the midpoint between keyframes), and color on any element with a color field (interpolated through RGB).",
+      ),
     frames: z
       .number()
       .int()

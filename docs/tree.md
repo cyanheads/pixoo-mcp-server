@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-09-24 02:59:25
+Generated on: 2026-09-26 19:31:09
 
 ```text
 pixoo-mcp-server/
@@ -169,6 +169,7 @@ pixoo-mcp-server/
 │   └── index.ts
 ├── tests/
 │   ├── helpers/
+│   │   ├── canvas-ink.ts
 │   │   ├── device-failure.ts
 │   │   ├── expect-forwarded-recovery.ts
 │   │   ├── list-extra.ts

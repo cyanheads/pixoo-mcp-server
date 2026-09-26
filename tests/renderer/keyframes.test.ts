@@ -3,15 +3,23 @@
  * @module tests/renderer/keyframes.test
  */
 
-import { describe, expect, it } from 'vitest';
+import { lerpColor, resolveColor } from '@cyanheads/pixoo-toolkit';
+import { describe, expect, it, vi } from 'vitest';
 import {
   compileEffect,
   EFFECT_NAMES,
   type EffectName,
   getKeyframeValue,
+  interpolateColorKeyframe,
   interpolateKeyframe,
   type KeyframeEntry,
+  type KeyframeMap,
 } from '@/renderer/keyframes.js';
+
+/** The opacity values an effect's keyframes step through, in frame order. */
+function opacities(keyframes: KeyframeMap): Array<KeyframeEntry[1]> {
+  return (keyframes['opacity'] ?? []).map(([, value]) => value);
+}
 
 describe('interpolateKeyframe', () => {
   it('returns default 0 for empty frames array', () => {
@@ -76,26 +84,197 @@ describe('interpolateKeyframe', () => {
     expect(interpolateKeyframe(frames, 7)).toBe(true);
   });
 
-  it('interpolates color strings through RGB', () => {
-    const frames: KeyframeEntry[] = [
-      [0, '#000000'],
-      [10, '#ffffff'],
-    ];
-    const mid = interpolateKeyframe(frames, 5) as string;
-    expect(mid).toMatch(/^rgb\(/);
-    // Midpoint should be around grey
-    const nums = mid.match(/\d+/g)!.map(Number);
-    expect(nums[0]).toBeGreaterThan(100);
-    expect(nums[0]).toBeLessThan(160);
+  it.each<[string, KeyframeEntry[], number[]]>([
+    [
+      'numeric strings',
+      [
+        [0, '10'],
+        [2, '90'],
+      ],
+      [10, 50, 90],
+    ],
+    [
+      'numeric strings that also read as hex colors',
+      [
+        [0, '000'],
+        [4, '100'],
+      ],
+      [0, 25, 50, 75, 100],
+    ],
+    [
+      'six-digit numeric strings',
+      [
+        [0, '123456'],
+        [2, '123460'],
+      ],
+      [123456, 123458, 123460],
+    ],
+    [
+      'a number, then a numeric string',
+      [
+        [0, 40],
+        [2, '80'],
+      ],
+      [40, 60, 80],
+    ],
+    [
+      'a numeric string, then a number',
+      [
+        [0, '40'],
+        [2, 80],
+      ],
+      [40, 60, 80],
+    ],
+    [
+      'negative and fractional strings',
+      [
+        [0, '-4'],
+        [2, '2.5'],
+      ],
+      [-4, -0.75, 2.5],
+    ],
+    [
+      'three keyframes, past the first segment',
+      [
+        [0, '0'],
+        [2, '100'],
+        [4, '-100'],
+      ],
+      [0, 50, 100, 0, -100],
+    ],
+  ])('lerps %s exactly as it lerps the same numbers', (_label, frames, expected) => {
+    const asNumbers = frames.map(([frame, value]): KeyframeEntry => [frame, Number(value)]);
+    for (const [frame, value] of expected.entries()) {
+      expect(interpolateKeyframe(frames, frame)).toBeCloseTo(value, 10);
+      expect(interpolateKeyframe(frames, frame)).toBe(interpolateKeyframe(asNumbers, frame));
+    }
   });
 
-  it('falls back to first value for unresolvable color strings', () => {
+  it('holds the first value between two strings that are not numbers, without throwing', () => {
     const frames: KeyframeEntry[] = [
       [0, 'not-a-color'],
       [10, 'also-not'],
     ];
-    // Should not throw — falls back
-    expect(() => interpolateKeyframe(frames, 5)).not.toThrow();
+    expect(interpolateKeyframe(frames, 5)).toBe('not-a-color');
+  });
+});
+
+describe('interpolateColorKeyframe', () => {
+  const redToBlue: KeyframeEntry[] = [
+    [0, 'red'],
+    [2, 'Blue'],
+  ];
+
+  it('interpolates a valid track through RGB, holding the ends', () => {
+    expect([0, 1, 2, 5].map((frame) => interpolateColorKeyframe(redToBlue, frame))).toEqual([
+      'red',
+      '#800080',
+      'Blue',
+      'Blue',
+    ]);
+  });
+
+  it('interpolates color strings through RGB, as #rrggbb', () => {
+    const frames: KeyframeEntry[] = [
+      [0, '#000000'],
+      [10, '#ffffff'],
+    ];
+    expect(interpolateColorKeyframe(frames, 5)).toBe('#808080');
+  });
+
+  it('reads a track of numbers as colors and lerps them through RGB, never as numbers', () => {
+    const frames: KeyframeEntry[] = [
+      [0, 100],
+      [3, 200],
+    ];
+    for (const frame of [1, 2]) {
+      expect(resolveColor(interpolateColorKeyframe(frames, frame))).toEqual(
+        lerpColor(resolveColor('100'), resolveColor('200'), frame / 3),
+      );
+    }
+  });
+
+  it('throws for an empty track rather than reading it as a color', () => {
+    expect(() => interpolateColorKeyframe([], 0)).toThrow('at least one keyframe');
+  });
+
+  it('returns a keyframe color unchanged on its own frame', () => {
+    expect(interpolateColorKeyframe(redToBlue, 0)).toBe('red');
+    expect(interpolateColorKeyframe(redToBlue, 2)).toBe('Blue');
+  });
+
+  it('interpolates within the segment a frame falls in, past the first', () => {
+    const frames: KeyframeEntry[] = [
+      [0, 'red'],
+      [2, '#0f0'],
+      [4, 'blue'],
+      [8, '#000000'],
+    ];
+    expect(interpolateColorKeyframe(frames, 1)).toBe('#808000');
+    expect(interpolateColorKeyframe(frames, 3)).toBe('#008080');
+    expect(interpolateColorKeyframe(frames, 6)).toBe('#000080');
+  });
+
+  it('every in-between color resolves back to the RGB it was lerped to', () => {
+    const pairs: Array<[string, string]> = [
+      ['red', 'blue'],
+      ['#123', 'ABCDEF'],
+      ['claude', '#ffffff'],
+      ['black', 'white'],
+      ['000', '100'],
+      ['123456', '654321'],
+    ];
+    for (const [a, b] of pairs) {
+      const frames: KeyframeEntry[] = [
+        [0, a],
+        [7, b],
+      ];
+      for (let frame = 1; frame < 7; frame++) {
+        const value = interpolateColorKeyframe(frames, frame);
+        expect(value).toMatch(/^#[0-9a-f]{6}$/);
+        expect(resolveColor(value)).toEqual(lerpColor(resolveColor(a), resolveColor(b), frame / 7));
+      }
+    }
+  });
+
+  it.each<[string, KeyframeEntry[], string]>([
+    [
+      'a name that is not a color, past the frame asked for',
+      [
+        [0, 'red'],
+        [9, 'notacolor'],
+      ],
+      'notacolor',
+    ],
+    [
+      'the first of three keyframes',
+      [
+        [0, 'nope'],
+        [4, 'red'],
+        [8, 'blue'],
+      ],
+      'nope',
+    ],
+    [
+      'a number',
+      [
+        [0, 'red'],
+        [4, 7],
+      ],
+      '7',
+    ],
+    [
+      'a boolean',
+      [
+        [0, 'red'],
+        [4, true],
+      ],
+      'true',
+    ],
+  ])('throws for %s, on every frame', (_label, frames, bad) => {
+    for (const frame of [0, 1, 4, 20]) {
+      expect(() => interpolateColorKeyframe(frames, frame)).toThrow(`Unknown color: "${bad}"`);
+    }
   });
 });
 
@@ -183,6 +362,91 @@ describe('compileEffect', () => {
     for (const [, v] of op) {
       expect(v as number).toBeGreaterThanOrEqual(50);
       expect(v as number).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it('pulse without an amplitude keeps its 50–100 ramp, frame for frame', () => {
+    expect(opacities(compileEffect('pulse', {}, 20))).toEqual([
+      75, 83, 90, 95, 99, 100, 99, 95, 90, 83, 75, 67, 60, 55, 51, 50, 51, 55, 60, 67,
+    ]);
+    expect(opacities(compileEffect('pulse', { period: 3, phase: 0.2 }, 7))).toEqual([
+      99, 70, 56, 99, 70, 56, 99,
+    ]);
+  });
+
+  it('twinkle without an amplitude keeps its 40–100 flicker, frame for frame', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      expect(opacities(compileEffect('twinkle', {}, 20))).toEqual([
+        74, 83, 91, 97, 100, 100, 97, 91, 84, 75, 66, 57, 49, 43, 40, 40, 43, 49, 56, 65,
+      ]);
+      random.mockReturnValue(0.999);
+      expect(opacities(compileEffect('twinkle', { period: 4 }, 9))).toEqual([
+        79, 99, 61, 41, 79, 99, 61, 41, 79,
+      ]);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it.each([0.1, 0.25, 1])(
+    'pulse at amplitude %s dips to 100 × (1 − amplitude) at its trough and peaks at 100',
+    (amplitude) => {
+      const values = opacities(compileEffect('pulse', { amplitude }, 20)) as number[];
+      expect(Math.min(...values)).toBe(Math.round(100 * (1 - amplitude)));
+      expect(Math.max(...values)).toBe(100);
+    },
+  );
+
+  it.each([0.2, 1])(
+    'twinkle at amplitude %s flickers between 100 × (1 − amplitude) and 100',
+    (amplitude) => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      try {
+        const values = opacities(compileEffect('twinkle', { amplitude }, 20)) as number[];
+        const floor = Math.round(100 * (1 - amplitude));
+        expect(Math.min(...values)).toBeGreaterThanOrEqual(floor);
+        expect(Math.min(...values)).toBeLessThanOrEqual(floor + 1);
+        expect(Math.max(...values)).toBeGreaterThanOrEqual(99);
+        expect(Math.max(...values)).toBeLessThanOrEqual(100);
+      } finally {
+        random.mockRestore();
+      }
+    },
+  );
+
+  it('amplitude 0.5 on pulse and 0.6 on twinkle reproduce their defaults exactly', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      expect(compileEffect('pulse', { amplitude: 0.5 }, 20)).toEqual(
+        compileEffect('pulse', {}, 20),
+      );
+      expect(compileEffect('twinkle', { amplitude: 0.6 }, 20)).toEqual(
+        compileEffect('twinkle', {}, 20),
+      );
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('amplitude changes float, scroll-left, scroll-right, pulse, twinkle, and drift — no other effect', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const readsAmplitude = EFFECT_NAMES.filter(
+        (name) =>
+          JSON.stringify(compileEffect(name, { amplitude: 0.1 }, 12)) !==
+          JSON.stringify(compileEffect(name, { amplitude: 1 }, 12)),
+      );
+      expect(readsAmplitude).toEqual([
+        'float',
+        'scroll-left',
+        'scroll-right',
+        'pulse',
+        'twinkle',
+        'drift',
+      ]);
+    } finally {
+      random.mockRestore();
     }
   });
 

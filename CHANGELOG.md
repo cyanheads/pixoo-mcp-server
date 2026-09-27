@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.4.0](changelog/1.4.x/1.4.0.md) — 2026-09-27
+
+New pixoo_render_html renders agent-authored HTML, CSS, and Canvas in an isolated headless browser on a virtual clock, with a pixoo page runtime for crisp bitmap text and icons. Animations of more than 40 frames, up to 800, play as one GIF the device downloads from this host.
+
 ## [1.3.0](changelog/1.3.x/1.3.0.md) — 2026-09-26 · ⚠️ Breaking
 
 Stricter tool inputs: unknown nested keys, relative image paths, and effect with animate now fail -32602 instead of being dropped or resolved silently. layout[].action reports only what the frames do, standard and compact text names the characters it draws as ?, and errors carry the request ID.

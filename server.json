@@ -6,14 +6,14 @@
     "url": "https://github.com/cyanheads/pixoo-mcp-server",
     "source": "github"
   },
-  "version": "1.3.0",
+  "version": "1.4.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pixoo-mcp-server",
       "runtimeHint": "bun",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "packageArguments": [
         {
           "type": "positional",
@@ -93,7 +93,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pixoo-mcp-server",
       "runtimeHint": "bun",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "packageArguments": [
         {
           "type": "positional",

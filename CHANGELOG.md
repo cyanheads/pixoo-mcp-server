@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.3.0](changelog/1.3.x/1.3.0.md) — 2026-09-26 · ⚠️ Breaking
+
+Stricter tool inputs: unknown nested keys, relative image paths, and effect with animate now fail -32602 instead of being dropped or resolved silently. layout[].action reports only what the frames do, standard and compact text names the characters it draws as ?, and errors carry the request ID.
+
 ## [1.2.2](changelog/1.2.x/1.2.2.md) — 2026-09-26
 
 Adopts @cyanheads/pixoo-toolkit 0.10.0: animated GIF and WebP push as animations, images take a palette finish, scene elements take blend modes and stroke widths, and text gains a numerals face. Undecodable images fail as invalid_image, and filled circles and JPEG/WebP images render differently.

@@ -1,7 +1,7 @@
 <div align="center">
   <h1>@cyanheads/pixoo-mcp-server</h1>
   <p><b>Render and push styled pixel art, text, dashboards, and animations to Divoom Pixoo LED displays on your local network via MCP. STDIO or Streamable HTTP.</b>
-  <div>7 Tools • 4 Resources</div>
+  <div>8 Tools • 4 Resources</div>
   </p>
 </div>
 

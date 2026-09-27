@@ -18,10 +18,10 @@ import {
   type PixooSize,
   type RGB,
   renderSprite,
-  renderSvgPath,
   resolveColor,
 } from '@cyanheads/pixoo-toolkit';
 import { type Finish, finishFrame } from './finish.js';
+import { drawPlacedIcon } from './icon-draw.js';
 import { ICONS, type IconPaths } from './icons.js';
 import {
   compileEffect,
@@ -33,8 +33,7 @@ import {
 import { fetchRemoteImageBytes, isRemoteSource } from './remote-image.js';
 import {
   boxFits,
-  drawStyledText,
-  FONT_FACES,
+  drawPlacedText,
   type FontVariant,
   type LayoutEntry,
   resolveX,
@@ -43,7 +42,7 @@ import {
   type SemanticY,
   type TextStyle,
 } from './text-engine.js';
-import { type GradientStop, PALETTES, type PaletteName, THEMES, type ThemeName } from './themes.js';
+import { PALETTES, type PaletteName, THEMES, type ThemeName } from './themes.js';
 
 /**
  * Background specification: a solid color string, or an object holding exactly one of
@@ -446,60 +445,6 @@ export function applyBackground(canvas: Canvas, bg: BackgroundSpec): void {
   canvas.clear();
 }
 
-/** Draw an icon's filled parts, then its stroked parts, in one color. */
-function drawIconPaths(
-  canvas: Canvas,
-  paths: IconPaths,
-  color: RGB,
-  svgViewBox: [number, number],
-  targetRect: [number, number, number, number],
-): void {
-  if (paths.fill) renderSvgPath(canvas, paths.fill, color, svgViewBox, targetRect);
-  if (paths.stroke) {
-    renderSvgPath(canvas, paths.stroke, color, svgViewBox, targetRect, { mode: 'stroke' });
-  }
-}
-
-/**
- * Render an icon as a top-to-bottom ramp, the way a text palette paints glyphs: the icon's
- * top ink row takes `stop.from`, its bottom ink row `stop.to`, and each row between takes
- * its even step. Only ink that lands on the canvas counts, so an icon clipped by an edge
- * ramps across the rows still visible.
- */
-function renderIconRamp(
-  canvas: Canvas,
-  paths: IconPaths,
-  svgViewBox: [number, number],
-  targetRect: [number, number, number, number],
-  stop: GradientStop,
-): void {
-  const mask = new Canvas(canvas.width);
-  drawIconPaths(mask, paths, [255, 255, 255], svgViewBox, targetRect);
-  const inkAt = (x: number, y: number) => mask.getPixelRgba(x, y)[3] > 0;
-
-  const rows: number[] = [];
-  for (let y = 0; y < mask.height; y++) {
-    for (let x = 0; x < mask.width; x++) {
-      if (inkAt(x, y)) {
-        rows.push(y);
-        break;
-      }
-    }
-  }
-  const top = rows[0];
-  const bottom = rows.at(-1);
-  if (top === undefined || bottom === undefined) return;
-
-  const from = resolveColor(stop.from);
-  const to = resolveColor(stop.to);
-  for (const y of rows) {
-    const color = lerpColor(from, to, bottom === top ? 0 : (y - top) / (bottom - top));
-    for (let x = 0; x < mask.width; x++) {
-      if (inkAt(x, y)) canvas.setPixel(x, y, color);
-    }
-  }
-}
-
 /** A scene element's layout entry: elements are placed as given and never refit. */
 export type SceneLayoutEntry = LayoutEntry & { action: 'none' };
 
@@ -657,26 +602,18 @@ export function renderElement(
       const color = keyframedColor ?? el.color;
       if (!style.color && color) style.color = color;
       const fontVariant = el.font ?? 'standard';
-      const px = el.x ?? 0;
-      const py = el.y ?? 0;
-      const font = FONT_FACES[fontVariant];
-      const scale = style.scale ?? 1;
-      const textW = measureText(el.text, { font, scale });
-      const textH = font.height * scale;
-      const resolvedX = resolveX(px, textW, canvas.width, dx);
-      const resolvedY = resolveY(py, textH, canvas.height, dy);
-      drawStyledText(target, el.text, resolvedX, resolvedY, style, fontVariant);
+      const box = drawPlacedText(target, el.text, el.x, el.y, style, fontVariant, dx, dy);
       layoutEntries.push({
-        ...placedEntry(elIdx, 'text', { x: resolvedX, y: resolvedY, w: textW, h: textH }, canvas),
+        ...placedEntry(elIdx, 'text', box, canvas),
         font: fontVariant,
-        scale,
+        scale: style.scale ?? 1,
       });
       break;
     }
 
     case 'icon': {
       let paths: IconPaths;
-      let viewBox = '0 0 16 16';
+      let viewBox: string;
 
       if (el.name) {
         // Own keys only: an Object.prototype name such as "constructor" is not an icon.
@@ -696,27 +633,23 @@ export function renderElement(
         throw invalidParams('Icon element requires either "name" or "d" property.');
       }
 
-      const w = el.w ?? 12;
-      const h = el.h ?? 12;
-      const px = el.x ?? 0;
-      const py = el.y ?? 0;
-      const resolvedX = resolveX(px, w, canvas.width, dx);
-      const resolvedY = resolveY(py, h, canvas.height, dy);
-
-      // Resolved even under a palette, so a bad color still fails as invalid_color.
-      const colorSpec = keyframedColor ?? el.color;
-      const color = colorSpec ? resolveColor(colorSpec) : ([255, 255, 255] as RGB);
-      // Parse viewBox string ("0 0 W H") to extract dimensions [W, H]
-      const vbParts = viewBox.split(/\s+/).map(Number);
-      const svgViewBox: [number, number] = [vbParts[2] ?? 16, vbParts[3] ?? 16];
-      const targetRect: [number, number, number, number] = [resolvedX, resolvedY, w, h];
-      if (el.palette) {
-        renderIconRamp(target, paths, svgViewBox, targetRect, PALETTES[el.palette]);
-      } else {
-        drawIconPaths(target, paths, color, svgViewBox, targetRect);
-      }
-
-      layoutEntries.push(placedEntry(elIdx, 'icon', { x: resolvedX, y: resolvedY, w, h }, canvas));
+      const box = drawPlacedIcon(
+        target,
+        paths,
+        viewBox,
+        el.x,
+        el.y,
+        {
+          w: el.w,
+          h: el.h,
+          // Resolved even under a palette, so a bad color still fails as invalid_color.
+          color: keyframedColor ?? el.color,
+          palette: el.palette ? PALETTES[el.palette] : undefined,
+        },
+        dx,
+        dy,
+      );
+      layoutEntries.push(placedEntry(elIdx, 'icon', box, canvas));
       break;
     }
 

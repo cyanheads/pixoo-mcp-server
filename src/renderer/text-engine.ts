@@ -1,5 +1,7 @@
 /**
  * @fileoverview Styled text engine: gradient ramps, shadow, outline, scale, overflow handling.
+ * Browser-safe: it imports the toolkit's `/core` entry, never the main barrel (which loads
+ * `sharp`), so a page bundle can carry it.
  * @module renderer/text-engine
  */
 
@@ -15,7 +17,7 @@ import {
   measureText,
   type RGB,
   resolveColor,
-} from '@cyanheads/pixoo-toolkit';
+} from '@cyanheads/pixoo-toolkit/core';
 import { type GradientStop, PALETTES, type PaletteName } from './themes.js';
 
 /** Font variants a text surface accepts. */
@@ -261,6 +263,31 @@ export function drawStyledText(
 }
 
 /**
+ * Draw text placed the way a scene `text` element places it: `x`/`y` (default 0) resolve
+ * against the canvas for the text's measured size in `fontVariant` at `style.scale`, then
+ * shift by `dx`/`dy`. The scene renderer, `pixoo_display_text`, and the `pixoo` page
+ * runtime all place text here. Returns the drawn box.
+ */
+export function drawPlacedText(
+  canvas: Canvas,
+  text: string,
+  x: SemanticX = 0,
+  y: SemanticY = 0,
+  style: TextStyle = {},
+  fontVariant: FontVariant = 'standard',
+  dx = 0,
+  dy = 0,
+): { x: number; y: number; w: number; h: number } {
+  const font = FONT_FACES[fontVariant];
+  const scale = style.scale ?? 1;
+  const w = measureText(text, { font, scale });
+  const h = font.height * scale;
+  const px = resolveX(x, w, canvas.width, dx);
+  const py = resolveY(y, h, canvas.height, dy);
+  return drawStyledText(canvas, text, px, py, style, fontVariant);
+}
+
+/**
  * Render text with auto-fit logic: text too wide in the standard font falls back to
  * compact when compact fits. Auto-fit never picks `numerals`; only a `fixedFont` does.
  * A `fixedFont` pins the variant: the compact fallback is skipped, so text that
@@ -291,16 +318,7 @@ export function renderAutoFitText(
     action = 'shrunk-to-compact';
   }
 
-  const usedFont = FONT_FACES[fontVariant];
-  const finalWidth = measureText(text, { font: usedFont, scale });
-  const finalHeight = usedFont.height * scale;
-
-  const resolvedX = resolveX(px, finalWidth, size, dx);
-  const resolvedY = resolveY(py, finalHeight, size, dy);
-
-  drawStyledText(canvas, text, resolvedX, resolvedY, style, fontVariant);
-
-  const box = { x: resolvedX, y: resolvedY, w: finalWidth, h: finalHeight };
+  const box = drawPlacedText(canvas, text, px, py, style, fontVariant, dx, dy);
   return {
     element: elementIdx,
     type: 'text',

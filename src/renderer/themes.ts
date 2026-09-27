@@ -3,7 +3,7 @@
  * @module renderer/themes
  */
 
-import type { ColorLike } from '@cyanheads/pixoo-toolkit';
+import type { ColorLike } from '@cyanheads/pixoo-toolkit/core';
 
 /** A gradient stop pair (from → to). */
 export interface GradientStop {

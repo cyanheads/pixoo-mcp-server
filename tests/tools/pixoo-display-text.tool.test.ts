@@ -483,6 +483,24 @@ describe('pixooDisplayText', () => {
         }
       `);
     });
+
+    it('numerals font in an explicit color with a shadow', async () => {
+      expect(
+        await renderHashes({
+          text: '12:45',
+          font: 'numerals',
+          style: { color: '#44ccff', shadow: true },
+        }),
+      ).toMatchInlineSnapshot(`
+        {
+          "layout": [
+            "none numerals @3,23",
+          ],
+          "preview": "b514f4ceffa38ef664a473448454724269d59e2f6ff45a2e220b7055eb4324e8",
+          "pushed": "3c479396b15b17c92c8779fe9bedd7e119032eae9c1e95a448c95f7385259952",
+        }
+      `);
+    });
   });
 
   it('invalid_color forwards the declared recovery on both surfaces', async () => {

@@ -4,7 +4,9 @@
  * @module index
  */
 
-import { createApp } from '@cyanheads/mcp-ts-core';
+import { createApp, disabledTool } from '@cyanheads/mcp-ts-core';
+import { config } from '@cyanheads/mcp-ts-core/config';
+import { getServerConfig } from './config/server-config.js';
 // Resources
 import { pixooDesignGuideResource } from './mcp-server/resources/definitions/pixoo-design-guide.resource.js';
 import { pixooDeviceStatusResource } from './mcp-server/resources/definitions/pixoo-device-status.resource.js';
@@ -18,7 +20,17 @@ import { pixooDiscoverDevices } from './mcp-server/tools/definitions/pixoo-disco
 import { pixooDisplayText } from './mcp-server/tools/definitions/pixoo-display-text.tool.js';
 import { pixooOverlayText } from './mcp-server/tools/definitions/pixoo-overlay-text.tool.js';
 import { pixooPushImage } from './mcp-server/tools/definitions/pixoo-push-image.tool.js';
+import { pixooRenderHtml } from './mcp-server/tools/definitions/pixoo-render-html.tool.js';
+import { getBrowserRenderer, initBrowserRenderer } from './services/browser/browser-renderer.js';
 import { initPixooService } from './services/pixoo/pixoo-service.js';
+
+/**
+ * Under Node the framework, not the runtime, loads `.env`, on its first config read.
+ * Reading it here guarantees that happens before the server config is parsed and
+ * cached, so PIXOO_HTML_ENABLED and every other PIXOO_* value in `.env` apply.
+ */
+void config.environment;
+const { pixooHtmlEnabled } = getServerConfig();
 
 await createApp({
   name: 'pixoo-mcp-server',
@@ -27,6 +39,12 @@ await createApp({
     pixooDisplayText,
     pixooComposeScene,
     pixooPushImage,
+    pixooHtmlEnabled
+      ? pixooRenderHtml
+      : disabledTool(pixooRenderHtml, {
+          reason: 'HTML rendering is turned off in this deployment.',
+          hint: 'Set PIXOO_HTML_ENABLED=true to enable.',
+        }),
     pixooOverlayText,
     pixooControlDevice,
     pixooDiscoverDevices,
@@ -54,7 +72,11 @@ await createApp({
   },
   setup(core) {
     initPixooService(core.config, core.storage);
+    initBrowserRenderer();
   },
-  instructions:
-    'Run pixoo_design_brief with a topic first for craft guidance and live device state, then render with pixoo_display_text for styled text or pixoo_compose_scene for layered scenes, widgets, and animations. Every render tool returns a preview image, so pass push: false to inspect a design before it reaches the Pixoo display.',
+  // The HTML renderer's browser, if one is running, exits and takes its temp profile with it.
+  async teardown() {
+    await getBrowserRenderer().close();
+  },
+  instructions: `Run pixoo_design_brief with a topic first for craft guidance and live device state, then render with pixoo_display_text for styled text or pixoo_compose_scene for layered scenes, widgets, and animations${pixooHtmlEnabled ? '; pixoo_render_html draws anything HTML, CSS, or Canvas can, including generative animation' : ''}. Every render tool returns a preview image, so pass push: false to inspect a design before it reaches the Pixoo display.`,
 });

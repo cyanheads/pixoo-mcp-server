@@ -52,7 +52,8 @@ At typical viewing distance for a 64×64 LED display:
 
 ## Animation Budget
 
-- **40 frames maximum** — device becomes unstable beyond this
+- **Up to 40 frames push frame by frame** — the device becomes unstable past 40 frame pushes
+- **41–800 frames play as one GIF** the device downloads from this host (\`pixoo_compose_scene\` \`frames\`, \`pixoo_push_image\` \`maxFrames\`), so the device must reach this host — behind NAT or a firewall, set \`PIXOO_SERVE_HOST\` and \`PIXOO_SERVE_PORT\` — and speed rounds to 10 ms. \`pixoo_display_text\` stays at 40 or fewer
 - **20 frames at 150ms ≈ 3s loop** — documented sweet spot for ambient scenes
 - **10 frames at 100ms ≈ 1s loop** — snappy, responsive animations
 - **~5s device "Loading..." overlay** when a new animation starts — expected behavior

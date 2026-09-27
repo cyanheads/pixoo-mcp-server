@@ -23,7 +23,11 @@
         "PIXOO_IP": "${user_config.pixoo_ip}",
         "PIXOO_SIZE": "${user_config.pixoo_size}",
         "PIXOO_OUTPUT_DIR": "${user_config.pixoo_output_dir}",
-        "PIXOO_PUSH_MIN_INTERVAL_MS": "${user_config.pixoo_push_min_interval_ms}"
+        "PIXOO_PUSH_MIN_INTERVAL_MS": "${user_config.pixoo_push_min_interval_ms}",
+        "PIXOO_SERVE_HOST": "${user_config.pixoo_serve_host}",
+        "PIXOO_SERVE_PORT": "${user_config.pixoo_serve_port}",
+        "PIXOO_BROWSER_PATH": "${user_config.pixoo_browser_path}",
+        "PIXOO_HTML_ENABLED": "${user_config.pixoo_html_enabled}"
       }
     }
   },
@@ -60,6 +64,34 @@
       "description": "Minimum gap between device pushes, in milliseconds, so rapid pushes don't freeze the device. Defaults to 1000.",
       "required": false,
       "default": "1000"
+    },
+    "pixoo_serve_host": {
+      "type": "string",
+      "title": "Animation Serve Host",
+      "description": "Host the device downloads animations of more than 40 frames from, for NAT or a DNS name. Leave blank to use this computer's address on the network that reaches the device.",
+      "required": false,
+      "default": ""
+    },
+    "pixoo_serve_port": {
+      "type": "string",
+      "title": "Animation Serve Port",
+      "description": "Fixed port for the device's animation download, for firewall rules. Leave blank to pick a free port each time.",
+      "required": false,
+      "default": ""
+    },
+    "pixoo_browser_path": {
+      "type": "string",
+      "title": "Browser Path",
+      "description": "Path to a chrome-headless-shell executable for HTML rendering, such as the one `npx @puppeteer/browsers install chrome-headless-shell@stable --path <dir>` installs. Leave blank to use the newest chrome-headless-shell in Puppeteer's cache (~/.cache/puppeteer).",
+      "required": false,
+      "default": ""
+    },
+    "pixoo_html_enabled": {
+      "type": "string",
+      "title": "HTML Rendering",
+      "description": "Set to false to turn off the pixoo_render_html tool. Leave blank to keep it on.",
+      "required": false,
+      "default": ""
     }
   }
 }

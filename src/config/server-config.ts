@@ -29,6 +29,32 @@ const ServerConfigSchema = z.object({
     .min(0)
     .default(1000)
     .describe('Pacing floor between device pushes in milliseconds.'),
+  pixooServeHost: z
+    .string()
+    .optional()
+    .describe(
+      'Host advertised in the URL the device downloads an animation GIF from, in place of the local address the OS routes to PIXOO_IP. The listener still binds that routed address.',
+    ),
+  pixooServePort: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .optional()
+    .describe('Fixed port for the animation GIF listener; a free port when unset.'),
+  pixooBrowserPath: z
+    .string()
+    .transform((file) => path.resolve(file))
+    .optional()
+    .describe(
+      "Browser executable for HTML rendering. When set, the only browser tried: a path that is not an executable file fails rather than falling back. When unset, the newest chrome-headless-shell in Puppeteer's cache (~/.cache/puppeteer). A relative path resolves against the launch directory, never against PATH.",
+    ),
+  pixooHtmlEnabled: z
+    .stringbool()
+    .default(true)
+    .describe(
+      'Offer pixoo_render_html (default: true). false keeps it registered but disabled, so it leaves tools/list.',
+    ),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
@@ -41,6 +67,10 @@ export function getServerConfig(): ServerConfig {
     pixooSize: 'PIXOO_SIZE',
     pixooOutputDir: 'PIXOO_OUTPUT_DIR',
     pixooPushMinIntervalMs: 'PIXOO_PUSH_MIN_INTERVAL_MS',
+    pixooServeHost: 'PIXOO_SERVE_HOST',
+    pixooServePort: 'PIXOO_SERVE_PORT',
+    pixooBrowserPath: 'PIXOO_BROWSER_PATH',
+    pixooHtmlEnabled: 'PIXOO_HTML_ENABLED',
   });
   return _config;
 }

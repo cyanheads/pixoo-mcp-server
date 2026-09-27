@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { z } from '@cyanheads/mcp-ts-core';
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
   createFetchMock,
@@ -893,5 +893,172 @@ describe('pixooPushImage', () => {
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Saved');
     expect(text).toContain('/tmp/out.png');
+  });
+});
+
+/**
+ * An `n`-frame 64-px GIF at 100 ms per frame. Every frame holds a 4,096-color gradient
+ * whose blue channel shifts from frame to frame, so the frames share few colors.
+ */
+async function gradientGif(n: number): Promise<Uint8Array> {
+  const side = 64;
+  const raw = Buffer.alloc(side * side * 4 * n);
+  for (let k = 0; k < n; k++) {
+    for (let p = 0; p < side * side; p++) {
+      const i = (k * side * side + p) * 4;
+      raw[i] = (p % side) * 4;
+      raw[i + 1] = Math.floor(p / side) * 4;
+      raw[i + 2] = (k * 53) & 255;
+      raw[i + 3] = 255;
+    }
+  }
+  const gif = sharp(raw, {
+    raw: { width: side, height: side * n, channels: 4, pageHeight: side },
+  }).gif({ delay: Array(n).fill(100), loop: 0 });
+  return new Uint8Array(await gif.toBuffer());
+}
+
+/** Frame count, frame size, and distinct opaque colors across every frame of a GIF. */
+async function gifContents(gif: string | Uint8Array) {
+  const image = sharp(gif, { animated: true });
+  const { pages, width, pageHeight } = await image.metadata();
+  const raw = await image.ensureAlpha().raw().toBuffer();
+  const colors = new Set<number>();
+  for (let i = 0; i < raw.length; i += 4) {
+    if (raw[i + 3]! > 0) colors.add((raw[i]! << 16) | (raw[i + 1]! << 8) | raw[i + 2]!);
+  }
+  return { frames: pages, width, height: pageHeight, colors: colors.size };
+}
+
+describe('pixooPushImage — maxFrames', () => {
+  let dir: string;
+  let gif50: string;
+  let gif800: string;
+
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-push-maxframes-'));
+    gif50 = path.join(dir, 'fifty.gif');
+    gif800 = path.join(dir, 'eight-hundred.gif');
+    await fs.writeFile(gif50, await gradientGif(50));
+    await fs.writeFile(gif800, await gradientGif(800));
+  }, 60_000);
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    resetServerConfig();
+    process.env['PIXOO_SIZE'] = '64';
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '0';
+    // The fake device downloads a GIF play from the listener routed to it: loopback.
+    process.env['PIXOO_IP'] = '127.0.0.1';
+    initPixooService(fakeConfig, fakeStorage);
+  });
+
+  afterEach(() => {
+    delete process.env['PIXOO_IP'];
+    delete process.env['PIXOO_SIZE'];
+    delete process.env['PIXOO_PUSH_MIN_INTERVAL_MS'];
+    delete process.env['PIXOO_OUTPUT_DIR'];
+    resetServerConfig();
+  });
+
+  function run(input: Record<string, unknown>) {
+    return runToolContract(pixooPushImage, input as z.input<typeof pixooPushImage.input>);
+  }
+
+  it('without maxFrames, a 50-frame GIF samples to 40 frames pushed frame by frame', async () => {
+    const client = stubDeviceState();
+    const result = await run({ source: gif50, push: true });
+
+    expect(result.structuredContent).toMatchObject({
+      pushed: true,
+      frames: 40,
+      sourceFrames: 50,
+      speed: 125,
+    });
+    expect(client.pushAnimation).toHaveBeenCalledOnce();
+    expect(client.pushAnimation.mock.calls[0]?.[0]).toHaveLength(40);
+    expect(client.playGifUrl).not.toHaveBeenCalled();
+  });
+
+  it('maxFrames: 50 plays all 50 frames as one GIF the device downloads', async () => {
+    const client = stubDeviceState();
+    const result = await run({ source: gif50, maxFrames: 50, push: true });
+
+    expect(result.structuredContent).toMatchObject({
+      pushed: true,
+      frames: 50,
+      sourceFrames: 50,
+      speed: 100,
+    });
+    expect(resultText(result)).toContain('**Frames:** 50 of 50 source frames');
+    expect(client.playGifUrl).toHaveBeenCalledOnce();
+    expect(client.pushAnimation).not.toHaveBeenCalled();
+    const [downloaded] = await Promise.all(client.downloads);
+    expect(await gifContents(downloaded!)).toMatchObject({ frames: 50, width: 64, height: 64 });
+  });
+
+  it('maxFrames: 1 on an animated source pushes its first frame as a still', async () => {
+    const client = stubDeviceState();
+    const result = await run({ source: gif50, maxFrames: 1, push: true });
+
+    expect(result.structuredContent).toMatchObject({ pushed: true, frames: 1, sourceFrames: 50 });
+    expect(result.structuredContent).not.toHaveProperty('speed');
+    expect(client.push).toHaveBeenCalledOnce();
+    expect(client.pushAnimation).not.toHaveBeenCalled();
+  });
+
+  it.each([801, 0, 12.5])('maxFrames: %s fails input validation (-32602)', async (maxFrames) => {
+    const client = stubDeviceState();
+    const result = await run({ source: gif50, maxFrames });
+
+    expect(result.structuredContent).toMatchObject({
+      error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+    });
+    expect(resultText(result)).toContain('maxFrames');
+    expect(client.pushAnimation).not.toHaveBeenCalled();
+    expect(client.playGifUrl).not.toHaveBeenCalled();
+  });
+
+  it('50 frames preview as a 460×460 sheet of 49 tiles', async () => {
+    const result = await run({ source: gif50, maxFrames: 50, push: false });
+    const images = result.content.filter((block) => block.type === 'image');
+    expect(images).toHaveLength(1);
+    const { width, height } = await sharp(
+      Buffer.from((images[0] as { data: string }).data, 'base64'),
+    ).metadata();
+    expect([width, height]).toEqual([460, 460]);
+  });
+
+  it('maxFrames: 800 with finish colors 4 returns 800 frames holding at most 4 colors in all', async () => {
+    const outDir = path.join(dir, 'out');
+    process.env['PIXOO_OUTPUT_DIR'] = outDir;
+    resetServerConfig();
+
+    const result = await run({
+      source: gif800,
+      maxFrames: 800,
+      finish: { colors: 4 },
+      push: false,
+    });
+
+    expect(result.structuredContent).toMatchObject({ frames: 800, sourceFrames: 800 });
+    const source = await gifContents(gif800);
+    expect(source.frames).toBe(800);
+    expect(source.colors).toBeGreaterThan(4);
+    const { outputFiles } = result.structuredContent as { outputFiles: string[] };
+    expect(outputFiles).toHaveLength(1);
+    const saved = await gifContents(outputFiles[0]!);
+    expect(saved).toMatchObject({ frames: 800, width: 64, height: 64 });
+    expect(saved.colors).toBeLessThanOrEqual(4);
+  }, 60_000);
+
+  it('tools/list advertises maxFrames as 1–800, default 40', () => {
+    const schema = z.toJSONSchema(pixooPushImage.input) as unknown as {
+      properties: { maxFrames: { minimum: number; maximum: number; default: number } };
+    };
+    expect(schema.properties.maxFrames).toMatchObject({ minimum: 1, maximum: 800, default: 40 });
   });
 });

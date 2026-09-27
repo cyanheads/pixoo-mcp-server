@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2025", "ESNext.TypedArrays", "DOM"],
+    "types": [],
+    "tsBuildInfoFile": "page-runtime.tsbuildinfo"
+  },
+  "files": ["src/renderer/page-runtime.ts"],
+  "include": [],
+  "exclude": []
+}

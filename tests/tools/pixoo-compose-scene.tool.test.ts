@@ -28,6 +28,7 @@ import {
   resolveColor,
   savePng,
 } from '@cyanheads/pixoo-toolkit';
+import sharp from 'sharp';
 import {
   afterAll,
   afterEach,
@@ -37,6 +38,7 @@ import {
   expect,
   expectTypeOf,
   it,
+  onTestFinished,
   vi,
 } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
@@ -786,6 +788,7 @@ describe('pixooComposeScene', () => {
   describe('image elements fit PIXOO_SIZE', () => {
     it.each([16, 32])('size %i: the pushed frame holds the whole image', async (size) => {
       const dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-size-'));
+      onTestFinished(() => rm(dir, { recursive: true, force: true }));
       const source = path.join(dir, 'quadrants.png');
       const art = new Canvas(64);
       art.fillRect(0, 0, 64, 32, [255, 0, 0]);
@@ -815,12 +818,18 @@ describe('pixooComposeScene', () => {
   });
 
   describe('image and icon w/h stay within 1–256, sprite scale within 1–64', () => {
+    let dir: string;
     let source: string;
 
-    beforeEach(async () => {
-      const dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-bounds-'));
+    // Every case only reads the fixture, so one directory serves the whole block.
+    beforeAll(async () => {
+      dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-bounds-'));
       source = path.join(dir, 'fixture.png');
       await savePng(new Canvas(64).clear([0, 128, 255]), source);
+    });
+
+    afterAll(async () => {
+      await rm(dir, { recursive: true, force: true });
     });
 
     const element = (type: 'image' | 'icon', dims: { w?: number; h?: number }) =>
@@ -2350,18 +2359,20 @@ describe('pixooComposeScene', () => {
   });
 
   describe('saved files: explicit output vs. PIXOO_OUTPUT_DIR', () => {
+    let root: string;
     let outDir: string;
     let target: string;
 
     beforeEach(async () => {
-      const root = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-output-'));
+      root = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-output-'));
       outDir = path.join(root, 'auto');
       target = path.join(root, 'explicit.png');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       delete process.env['PIXOO_OUTPUT_DIR'];
       resetServerConfig();
+      await rm(root, { recursive: true, force: true });
     });
 
     async function render(input: Partial<SceneInput>) {
@@ -2537,7 +2548,7 @@ describe('pixooComposeScene', () => {
     (result.structuredContent as { layout: Entry[] }).layout;
 
   /** Compose `elements` over black and push to a fake device; return the result and the frame. */
-  async function pushScene(elements: TextElementInput[]) {
+  async function pushScene(elements: SceneInput['elements']) {
     const client = stubDeviceState();
     const result = await runToolContract(pixooComposeScene, {
       background: '#000000',
@@ -2942,5 +2953,171 @@ describe('pixooComposeScene', () => {
       expectTypeOf<SceneEntry['action']>().toEqualTypeOf<'none'>();
       expectTypeOf<SceneEntry['element']>().toEqualTypeOf<number>();
     });
+  });
+
+  describe('text and icon elements are pinned byte for byte', () => {
+    /** Each element alone over black; a case's pin is the SHA-256 of the pushed frame's RGBA. */
+    const CASES: Record<string, SceneInput['elements'][number]> = {
+      'text, palette, scale 2, shadow': {
+        type: 'text',
+        text: 'HELLO',
+        x: 'center',
+        y: 4,
+        style: { palette: 'ember', scale: 2, shadow: true },
+      },
+      'text, color, outline, compact': {
+        type: 'text',
+        text: 'Pixoo 64',
+        font: 'compact',
+        x: 2,
+        y: 'bottom',
+        color: '#44ccff',
+        style: { outline: true },
+      },
+      'text, numerals, color': {
+        type: 'text',
+        text: '12:45',
+        font: 'numerals',
+        x: 'center',
+        y: 'center',
+        color: '#ff8800',
+      },
+      'icon, color': { type: 'icon', name: 'check-circle', x: 50, y: 2, color: 'green' },
+      'icon, palette': { type: 'icon', name: 'check-circle', x: 50, y: 2, palette: 'ember' },
+      'icon, palette, 16px': {
+        type: 'icon',
+        name: 'heart',
+        x: 4,
+        y: 40,
+        w: 16,
+        h: 16,
+        palette: 'ice',
+      },
+      'icon, custom path, color': {
+        type: 'icon',
+        d: 'M2 2h20v20H2z',
+        viewBox: '0 0 24 24',
+        x: 20,
+        y: 20,
+        color: '#ff00ff',
+      },
+    };
+
+    it('each case pushes the frame it has always pushed', async () => {
+      const hashes: Record<string, string> = {};
+      for (const [name, element] of Object.entries(CASES)) {
+        hashes[name] = hashOf((await pushScene([element])).frame);
+      }
+      expect(hashes).toMatchInlineSnapshot(`
+        {
+          "icon, color": "db83ea70cfdb0793d4299aeb3a080ca6de905c5a8affa1b472f2a9e0d12279ab",
+          "icon, custom path, color": "e4508531b95cfbefe7c472cd46e215fd639c2ef15dfc12e0fd68ad23eed6b3c1",
+          "icon, palette": "cf495c17502545f86080426f1140d97f8436f9731f7d67099136f44413c32f1e",
+          "icon, palette, 16px": "21c948d30f5e5177e6a456edf7dd6709e5b646a4f184fecb73f5bb87f699d59e",
+          "text, color, outline, compact": "c5966bf34119c7928c6d6a926fea5d56fccbd0cd10d2d485cd3a4b2bdc20fca6",
+          "text, numerals, color": "b3732f0f41c595cd46356cb7c1bb93d11e3339f577f20b95666ff1283c7ad817",
+          "text, palette, scale 2, shadow": "f39c0ed4d78985ee082520d774849dd5458ded8c03bdb729b9729b4b90398f87",
+        }
+      `);
+    });
+  });
+});
+
+describe('pixooComposeScene — up to 800 frames', () => {
+  let outDir: string;
+
+  beforeEach(async () => {
+    resetServerConfig();
+    process.env['PIXOO_SIZE'] = '64';
+    outDir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-long-'));
+  });
+
+  afterEach(async () => {
+    delete process.env['PIXOO_SIZE'];
+    delete process.env['PIXOO_OUTPUT_DIR'];
+    resetServerConfig();
+    await rm(outDir, { recursive: true, force: true });
+  });
+
+  /** Render a floating "HI" over `frames` frames without pushing. */
+  function renderFrames(frames: number, extra: Partial<SceneInput> = {}) {
+    return runToolContract(pixooComposeScene, {
+      background: '#000000',
+      elements: [{ type: 'text', text: 'HI', effect: { name: 'float' } }],
+      frames,
+      push: false,
+      ...extra,
+    });
+  }
+
+  /** The one image block's pixel size. */
+  async function previewSize(result: Awaited<ReturnType<typeof renderFrames>>) {
+    const images = result.content.filter((block) => block.type === 'image');
+    expect(images).toHaveLength(1);
+    const { width, height } = await sharp(
+      Buffer.from((images[0] as { data: string }).data, 'base64'),
+    ).metadata();
+    return [width, height];
+  }
+
+  it('frames: 800 renders all 800 frames', async () => {
+    const result = await renderFrames(800);
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ pushed: false, frames: 800 });
+    expect(resultText(result)).toContain('**Frames:** 800');
+  }, 30_000);
+
+  it.each([801, 0, 2.5])(
+    'frames: %s fails input validation (-32602) naming frames',
+    async (frames) => {
+      const result = await renderFrames(frames);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain('frames');
+    },
+  );
+
+  // 49 1× tiles of 64 px fill the 512 px sheet; 50 tile an even sample of 49 of them.
+  it.each([
+    [49, [460, 460]],
+    [50, [460, 460]],
+    [800, [460, 460]],
+  ])(
+    '%i frames at 64 px preview as a %j sheet',
+    async (frames, size) => {
+      const result = await renderFrames(frames);
+      expect(await previewSize(result)).toEqual(size);
+    },
+    30_000,
+  );
+
+  it.each([
+    ['40 frames save the 8× preview GIF', 40, [512, 512]],
+    ['41 frames save the panel-size GIF the device downloads', 41, [64, 64]],
+  ])('with PIXOO_OUTPUT_DIR, %s', async (_label, frames, size) => {
+    process.env['PIXOO_OUTPUT_DIR'] = outDir;
+    resetServerConfig();
+    const result = await renderFrames(frames, { speed: 15 });
+    const { outputFiles } = result.structuredContent as { outputFiles: string[] };
+    expect(outputFiles).toHaveLength(1);
+    expect(await listFiles(outDir)).toEqual(outputFiles);
+    const { width, pageHeight, pages, delay } = await sharp(outputFiles[0]!, {
+      animated: true,
+    }).metadata();
+    expect([width, pageHeight]).toEqual(size);
+    expect(pages).toBe(frames);
+    // A GIF holds each frame in 10 ms units: speed 15 plays at 20 ms per frame.
+    expect(new Set(delay)).toEqual(new Set([20]));
+  });
+
+  it('tools/list advertises frames as 1–800 and names the GIF path in its description', () => {
+    const schema = z.toJSONSchema(pixooComposeScene.input) as unknown as {
+      properties: { frames: { minimum: number; maximum: number; description: string } };
+    };
+    expect(schema.properties.frames).toMatchObject({ minimum: 1, maximum: 800 });
+    expect(schema.properties.frames.description).toMatch(/1–800/);
+    expect(schema.properties.frames.description).toMatch(/GIF/);
+    expect(schema.properties.frames.description).toMatch(/PIXOO_SERVE_HOST/);
   });
 });

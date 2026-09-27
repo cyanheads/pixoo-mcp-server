@@ -24,16 +24,22 @@ import { finishFrames } from '@/renderer/finish.js';
 import {
   autoSavePreview,
   buildContactSheet,
+  encodePanelGif,
   type PreviewWriter,
   saveGifPreview,
+  savePanelGif,
   savePngPreview,
 } from '@/renderer/preview.js';
 import { fetchRemoteImageBytes, isRemoteSource } from '@/renderer/remote-image.js';
 import { decodeFailureMessage } from '@/renderer/scene-renderer.js';
-import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
+import {
+  type DeviceStateSnapshot,
+  getPixooService,
+  MAX_FRAME_PUSH,
+} from '@/services/pixoo/pixoo-service.js';
 
-/** Frames the device plays without turning unstable; a longer source is sampled down to this. */
-const MAX_FRAMES = 40;
+/** Most frames an animation pushes; past MAX_FRAME_PUSH the device downloads them as one GIF. */
+const MAX_FRAMES = 800;
 
 /** Formats the decoder reports that may hold several frames. */
 const ANIMATED_FORMATS: ReadonlySet<string> = new Set(['gif', 'webp']);
@@ -47,16 +53,17 @@ const MAX_SPEED_MS = 2000;
 
 /**
  * Decode `image` into display-size frames. A source the decoder reports as GIF or WebP
- * loads every frame, sampled evenly down to {@link MAX_FRAMES}; any other format loads
- * as a still. The content decides, not the file extension.
+ * loads every frame, sampled evenly down to `maxFrames`; any other format loads as a
+ * still. The content decides, not the file extension.
  */
 async function loadFrames(
   image: string | Uint8Array,
   placement: Parameters<typeof loadImage>[1],
+  maxFrames: number,
 ): Promise<LoadedAnimation> {
   const { format } = await sharp(image).metadata();
   if (ANIMATED_FORMATS.has(format)) {
-    return loadAnimation(image, { ...placement, maxFrames: MAX_FRAMES });
+    return loadAnimation(image, { ...placement, maxFrames });
   }
   return { frames: [await loadImage(image, placement)], delays: [0], sourceFrames: 1 };
 }
@@ -75,7 +82,7 @@ function loopSpeed(delays: readonly number[]): number {
 export const pixooPushImage = tool('pixoo_push_image', {
   title: 'pixoo_push_image',
   description:
-    'Load an image (absolute local path or https URL), resize it to fit the LED grid, and optionally push it to the display. An animated GIF or WebP pushes as an animation of up to 40 frames, sampled evenly from a longer source and played at the speed that keeps its loop length. Returns the downsampled result as an image content block so you see exactly what the display received — a grid of every frame for an animation. Nearest-neighbor kernel preserves pixel art; use lanczos3 or mitchell for photos. finish reduces the result to a small or fixed palette, optionally dithered.',
+    'Load an image (absolute local path or https URL), resize it to fit the LED grid, and optionally push it to the display. An animated GIF or WebP pushes as an animation of up to maxFrames frames (default 40), sampled evenly from a longer source and played at the speed that keeps its loop length; past 40 frames it plays as one GIF the device downloads from this host. Returns the downsampled result as an image content block so you see exactly what the display received — for an animation, a grid of its frames, evenly sampled once they outnumber what fits the sheet. Nearest-neighbor kernel preserves pixel art; use lanczos3 or mitchell for photos. finish reduces the result to a small or fixed palette, optionally dithered.',
   annotations: { idempotentHint: true, destructiveHint: false, openWorldHint: true },
 
   input: z.object({
@@ -101,6 +108,15 @@ export const pixooPushImage = tool('pixoo_push_image', {
       .describe(
         "Milliseconds per frame for an animated source (10–2000). Default: the source's total duration over the pushed frame count, or 150 when it records no delays. A still ignores it.",
       ),
+    maxFrames: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_FRAMES)
+      .default(MAX_FRAME_PUSH)
+      .describe(
+        'Most frames an animated source pushes (1–800, default 40); a longer source is sampled evenly down to it. Up to 40 push frame by frame; more play as one GIF the device downloads from this host, so the device must reach it (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), and speed rounds to the nearest 10 ms. A still ignores it.',
+      ),
     finish: FinishSchema.optional(),
     push: z
       .boolean()
@@ -109,13 +125,17 @@ export const pixooPushImage = tool('pixoo_push_image', {
   }),
 
   output: z.object({
-    pushed: z.boolean().describe('True when the device acknowledged the push.'),
+    pushed: z
+      .boolean()
+      .describe(
+        'True when the device acknowledged the push; past 40 frames, once it accepted the GIF play, requested the file, and the whole file was handed to the OS to send (the device does not confirm receipt).',
+      ),
     frames: z
       .number()
-      .describe('Frames rendered and pushed: 1 for a still, 2–40 for an animation.'),
+      .describe('Frames rendered and pushed: 1 for a still, 2 to maxFrames for an animation.'),
     sourceFrames: z
       .number()
-      .describe('Frames in the source before sampling down to 40: 1 for a still.'),
+      .describe('Frames in the source before sampling down to maxFrames: 1 for a still.'),
     speed: z
       .number()
       .optional()
@@ -143,7 +163,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
       .array(z.string())
       .optional()
       .describe(
-        'Absolute paths to saved preview files: a PNG for a still, a GIF at the pushed speed for an animation. Present only when PIXOO_OUTPUT_DIR is configured.',
+        'Absolute paths to saved preview files: a PNG for a still, an 8× GIF at the pushed speed for an animation, or past 40 frames the panel-size GIF the device downloads. Present only when PIXOO_OUTPUT_DIR is configured.',
       ),
   }),
 
@@ -173,6 +193,14 @@ export const pixooPushImage = tool('pixoo_push_image', {
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',
       recovery: 'Note the device error code and check the Pixoo documentation.',
+      thrownBy: 'service',
+    },
+    {
+      reason: 'gif_serve_failed',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: 'An animation of more than 40 frames could not be served to the device: its listener failed to open, its URL ran past 255 bytes, or the device did not request the GIF within 10 s of the play, stalled its transfer for 10 s, or dropped it.',
+      recovery:
+        'Make sure the device can reach this host at the address and port in the message (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), that PIXOO_SERVE_PORT is free, and that PIXOO_SERVE_HOST is short; or use 40 frames or fewer, which the device needs no download for.',
       thrownBy: 'service',
     },
     {
@@ -238,11 +266,11 @@ export const pixooPushImage = tool('pixoo_push_image', {
     }
 
     ctx.log.info('Loading and resizing image', { fit: input.fit, kernel: input.kernel });
-    const loaded = await loadFrames(image, {
-      size,
-      fit: input.fit,
-      kernel: input.kernel,
-    }).catch((err: unknown) => {
+    const loaded = await loadFrames(
+      image,
+      { size, fit: input.fit, kernel: input.kernel },
+      input.maxFrames,
+    ).catch((err: unknown) => {
       throw ctx.fail(
         'invalid_image',
         decodeFailureMessage('Image source', input.source, err),
@@ -255,16 +283,25 @@ export const pixooPushImage = tool('pixoo_push_image', {
     const [first] = frames as [Canvas, ...Canvas[]];
     const speed = frames.length > 1 ? (input.speed ?? loopSpeed(delays)) : undefined;
 
-    // The downsampled result (a grid of every frame for an animation) rides content[] as
+    // The downsampled result (a grid of the frames for an animation) rides content[] as
     // an image block. It is deliberately absent from `output` — routing it through
     // ctx.content carries the base64 once instead of duplicating it into structuredContent.
     ctx.content.image((await buildContactSheet(frames)).data, 'image/png');
 
     const baseName = `push-image-${Date.now()}`;
-    const writePreview: PreviewWriter = (dir) =>
-      speed === undefined
-        ? savePngPreview(first, dir, baseName)
-        : saveGifPreview(frames, speed, dir, baseName);
+    // Past MAX_FRAME_PUSH the device downloads the panel-size GIF, so that GIF is the
+    // file kept: encoded at most once, on first use, for the save and the push alike.
+    const viaGif = frames.length > MAX_FRAME_PUSH;
+    let gif: Uint8Array | undefined;
+    const panelGif = (animationSpeed: number) => {
+      gif ??= encodePanelGif(frames, animationSpeed);
+      return gif;
+    };
+    const writePreview: PreviewWriter = (dir) => {
+      if (speed === undefined) return savePngPreview(first, dir, baseName);
+      if (viaGif) return savePanelGif(panelGif(speed), dir, baseName);
+      return saveGifPreview(frames, speed, dir, baseName);
+    };
     const outputFiles = await autoSavePreview(writePreview);
 
     let pushed = false;
@@ -273,7 +310,9 @@ export const pixooPushImage = tool('pixoo_push_image', {
       const svc = getPixooService();
       deviceState = await pushKeepingPreview(
         () =>
-          speed === undefined ? svc.pushFrame(first, ctx) : svc.pushAnimation(frames, speed, ctx),
+          speed === undefined
+            ? svc.pushFrame(first, ctx)
+            : svc.pushAnimation(frames, speed, ctx, viaGif ? panelGif(speed) : undefined),
         outputFiles,
         writePreview,
       );

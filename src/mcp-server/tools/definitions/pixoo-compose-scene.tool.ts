@@ -16,8 +16,10 @@ import { numericValue } from '@/renderer/keyframes.js';
 import {
   autoSavePreview,
   buildContactSheet,
+  encodePanelGif,
   type PreviewWriter,
   saveGifPreview,
+  savePanelGif,
   savePngPreview,
 } from '@/renderer/preview.js';
 import { renderScene } from '@/renderer/scene-renderer.js';
@@ -28,7 +30,11 @@ import {
   fallbackGlyphNotice,
   missingGlyphs,
 } from '@/renderer/text-engine.js';
-import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
+import {
+  type DeviceStateSnapshot,
+  getPixooService,
+  MAX_FRAME_PUSH,
+} from '@/services/pixoo/pixoo-service.js';
 
 // --- Shared sub-schemas ---
 
@@ -533,9 +539,11 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .number()
       .int()
       .min(1)
-      .max(40)
+      .max(800)
       .default(1)
-      .describe('Number of animation frames (1–40, default: 1). 20 frames at 150ms ≈ 3s loop.'),
+      .describe(
+        'Number of animation frames (1–800, default: 1). 20 frames at 150ms ≈ 3s loop. Up to 40 push frame by frame; more play as one GIF the device downloads from this host, so the device must reach it (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), and speed rounds to the nearest 10 ms.',
+      ),
     speed: z
       .number()
       .int()
@@ -556,11 +564,11 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     pushed: z
       .boolean()
       .describe(
-        'True when the device acknowledged the push. False when push: false or push failed.',
+        'True when the device acknowledged the push; past 40 frames, once it accepted the GIF play, requested the file, and the whole file was handed to the OS to send (the device does not confirm receipt). False when push: false.',
       ),
     frames: z
       .number()
-      .describe('Number of frames in the rendered output (1 for static, 2–40 for animations).'),
+      .describe('Number of frames in the rendered output (1 for static, 2–800 for animations).'),
     layout: z.array(LayoutEntrySchema).describe('Layout report for each element.'),
     deviceState: z
       .object({
@@ -585,7 +593,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .array(z.string())
       .optional()
       .describe(
-        'Absolute paths to saved output files: the output path when set, otherwise the PIXOO_OUTPUT_DIR auto-save (PNG for static, GIF for animations). Absent when neither applies.',
+        'Absolute paths to saved output files: the output path when set, otherwise the PIXOO_OUTPUT_DIR auto-save (PNG for static; for animations an 8× GIF, or past 40 frames the panel-size GIF the device downloads). Absent when neither applies.',
       ),
   }),
 
@@ -618,6 +626,14 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',
       recovery: 'Note the device error code and check the Pixoo documentation.',
+      thrownBy: 'service',
+    },
+    {
+      reason: 'gif_serve_failed',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: 'An animation of more than 40 frames could not be served to the device: its listener failed to open, its URL ran past 255 bytes, or the device did not request the GIF within 10 s of the play, stalled its transfer for 10 s, or dropped it.',
+      recovery:
+        'Make sure the device can reach this host at the address and port in the message (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), that PIXOO_SERVE_PORT is free, and that PIXOO_SERVE_HOST is short; or use 40 frames or fewer, which the device needs no download for.',
       thrownBy: 'service',
     },
     {
@@ -714,7 +730,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       throw err;
     }
 
-    // The rendered scene (a grid of every frame for animations) rides content[] as an
+    // The rendered scene (a grid of the frames for animations) rides content[] as an
     // image block. It is deliberately absent from `output` — routing it through
     // ctx.content carries the base64 once instead of duplicating it into structuredContent.
     const isAnimation = renderedFrames.length > 1;
@@ -722,10 +738,19 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     ctx.content.image((await buildContactSheet(renderedFrames)).data, 'image/png');
 
     const baseName = `scene-${Date.now()}`;
-    const writePreview: PreviewWriter = (dir) =>
-      isAnimation
-        ? saveGifPreview(renderedFrames, input.speed, dir, baseName)
-        : savePngPreview(firstFrame, dir, baseName);
+    // Past MAX_FRAME_PUSH the device downloads the panel-size GIF, so that GIF is the
+    // file kept: encoded at most once, on first use, for the save and the push alike.
+    const viaGif = renderedFrames.length > MAX_FRAME_PUSH;
+    let gif: Uint8Array | undefined;
+    const panelGif = () => {
+      gif ??= encodePanelGif(renderedFrames, input.speed);
+      return gif;
+    };
+    const writePreview: PreviewWriter = (dir) => {
+      if (!isAnimation) return savePngPreview(firstFrame, dir, baseName);
+      if (viaGif) return savePanelGif(panelGif(), dir, baseName);
+      return saveGifPreview(renderedFrames, input.speed, dir, baseName);
+    };
 
     // An explicit output path (validated at handler entry) replaces the auto-save.
     let outputFiles: string[];
@@ -752,7 +777,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       deviceState = await pushKeepingPreview(
         () =>
           isAnimation
-            ? svc.pushAnimation(renderedFrames, input.speed, ctx)
+            ? svc.pushAnimation(renderedFrames, input.speed, ctx, viaGif ? panelGif() : undefined)
             : svc.pushFrame(firstFrame, ctx),
         outputFiles,
         writePreview,

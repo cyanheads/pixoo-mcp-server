@@ -1,5 +1,5 @@
 /**
- * @fileoverview The post-render push path shared by the three push tools: keep the
+ * @fileoverview The post-render push path shared by the four push tools: keep the
  * rendered preview when a push fails, and flag a successful push the panel won't show.
  * @module mcp-server/tools/device-push
  */

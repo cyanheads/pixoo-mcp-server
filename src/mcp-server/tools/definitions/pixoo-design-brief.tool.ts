@@ -4,11 +4,16 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { getServerConfig } from '@/config/server-config.js';
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
+import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import { DIM_BRIGHTNESS } from '@/mcp-server/tools/device-push.js';
 import { getIconsByCategory } from '@/renderer/icons.js';
 import { THEME_NAMES } from '@/renderer/themes.js';
-import { getPixooService } from '@/services/pixoo/pixoo-service.js';
+import {
+  BROWSER_UNAVAILABLE_RECOVERY,
+  discoverBrowser,
+} from '@/services/browser/browser-renderer.js';
+import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 const CRAFT_CONTENT: Record<string, string> = {
   text: `## Text Display Guidance
@@ -78,7 +83,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 
   animation: `## Animation Guidance
 
-**Budget:** 40 frames max. 20 frames at 150ms = 3s loop. 10 frames at 100ms = 1s loop. Device shows a "Loading..." overlay for ~5s when a new animation starts.
+**Budget:** Up to 40 frames push frame by frame. Past 40, pixoo_compose_scene, pixoo_push_image, and pixoo_render_html play one GIF of up to 800 frames that the device downloads from this host, so the device must reach it (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), and speed rounds to 10 ms. pixoo_display_text stays at 40 or fewer. 20 frames at 150ms = 3s loop. 10 frames at 100ms = 1s loop. Device shows a "Loading..." overlay for ~5s when a new animation starts.
 
 **Motion hierarchy:** One hero motion + ≤ 2 ambient effects. More creates visual noise at 64px.
 
@@ -108,6 +113,28 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Anti-aliasing:** Pixel art keeps hard edges, and 45-degree diagonals at scale 1 look stairstepped. Where a smooth edge reads better, a scene \`line\` or outline \`circle\` takes \`antialias: true\`, shading each edge pixel by how much of it the stroke covers, and \`strokeWidth\` for a thicker stroke. Bitmaps, sprites, and filled shapes stay hard-edged.`,
 
+  html: `## HTML Page Guidance
+
+pixoo_render_html lays out a page in a square viewport, one CSS pixel per LED (64×64 on a Pixoo-64), and captures it: anything HTML, CSS, SVG, Canvas, or WebGL draws. \`htmlRenderer\` in this brief says whether it can render here: \`available\`, \`disabled\` (PIXOO_HTML_ENABLED=false), or \`no_browser\`.
+
+**The page is the panel:** \`body\` has no margin, scrollbars are hidden, and a page that paints no background renders on black, which the panel shows as unlit. The page's own CSS overrides each — \`body { margin: 4px }\`, a \`background\` on \`html\` or \`body\`. Design on black: a white page lights every LED at once.
+
+**Seamless loops:** Define \`window.render(t, frame)\`. It runs before each capture with \`t = frame / frames\`, from 0 up to (frames − 1) / frames, so motion periodic in \`t\` — \`Math.cos(2 * Math.PI * t)\` — closes the loop with no seam. It may be async. If it throws or rejects, the call fails \`page_error\` naming the frame.
+
+**Virtual clock:** Each frame advances the clock by \`speed\` ms, so frames are deterministic and two calls capture the same pixels. \`requestAnimationFrame\` callbacks run once per frame; \`setTimeout\` and \`setInterval\` fire on virtual time, a nested or repeating timer waiting at least 4 ms; \`performance.now()\` reads 0 at load and \`frame × speed\` at each frame; \`Date\` starts at the real time and then follows the virtual clock. CSS animations and transitions are paused and seeked to the same time. \`requestIdleCallback\` and iframes keep real time, so don't drive motion with them. Workers are blocked.
+
+**No network:** Nothing loads from a network URL — no web fonts, CDN scripts, or remote images. Inline scripts, styles, and SVG, and use \`data:\` or \`blob:\` URLs for assets. A blocked request's URL appears in \`pageErrors\`. Navigating the page away is blocked and reported as \`Blocked navigation: <url>\`; a popup is blocked without its URL being reported.
+
+**Frames:** \`frames\` is 1–800. Up to 40 push frame by frame; more play as one GIF the device downloads from this host, as on pixoo_compose_scene, so the device must reach it (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), and \`speed\` rounds to 10 ms.
+
+**Thin strokes vanish:** At 64px, a 1px line or border that straddles two LEDs, or small browser text, averages into a dim smear or disappears. Use strokes of 2px or more and solid fills. Browser fonts anti-alias at this size; for crisp pixel text use \`pixoo.text\`, below.
+
+**Sampling:** \`native\` (default) captures one CSS pixel per LED: crisp, with positions snapped to whole LEDs. \`supersample\` renders at 8× and averages each 8×8 block into one LED, smoothing transforms, text, SVG, and canvas. Chromium snaps a plain box's edges to whole CSS pixels before scaling, so a box at \`left: 0.5px\` still lands on one LED; move it with \`transform\` for sub-pixel motion.
+
+**Pixel text and icons:** Every page gets a \`pixoo\` global before its own scripts run, a \`<head>\` script included. \`pixoo.context()\` returns the 2D context of one transparent panel-size canvas fixed over the page, the same one on every call. \`pixoo.text(ctx, text, x, y, { font, color, palette, scale, shadow, outline })\` draws the bitmap fonts of pixoo_display_text and returns the \`{ x, y, w, h }\` it drew; \`x\` takes pixels, \`left\`, \`center\`, or \`right\`, and \`y\` pixels, \`top\`, \`center\`, or \`bottom\`, as on a scene \`text\` element. \`pixoo.icon(ctx, name, x, y, { w, h, color, palette })\` draws a registry icon, 12×12 by default. \`pixoo.palettes\` holds the 7 palettes as \`{ from, to }\` stops; \`palette\` takes one's name, and text also takes a stop. \`pixoo.size\` is the panel size. Each lit pixel is one 1×1 \`fillRect\`, and the context is scaled by \`devicePixelRatio\` with smoothing off, so one unit stays one panel pixel under \`supersample\` and the output matches pixoo_compose_scene pixel for pixel. An unknown palette, font, icon, or color throws naming it, as does \`numerals\` text holding a character that font lacks.
+
+**Palette:** \`finish\` reduces the frames to a palette before the preview and push, as on pixoo_push_image: \`colors\` builds one palette shared by every frame, while \`palette\` and \`dither\` apply per frame.`,
+
   troubleshooting: `## Troubleshooting Guide
 
 **Device unreachable:**
@@ -127,9 +154,13 @@ const CRAFT_CONTENT: Record<string, string> = {
 - Use push: false to iterate on designs without affecting the display
 
 **Animation stutters:**
-- Reduce frame count (stay at or below 40)
+- Reduce frame count
 - Increase speed parameter (fewer, slower frames = smoother)
 - Avoid more than 3 simultaneous animated elements
+
+**Animation past 40 frames fails with gif_serve_failed:**
+- The device downloads it from this host, at the address and port the error names; make sure the device can reach them, and behind NAT or a firewall set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT
+- Or keep it to 40 frames or fewer, which push frame by frame with no download
 
 **Color not as expected:**
 - Use #RRGGBB hex, or a named color (names are case-insensitive)
@@ -155,17 +186,68 @@ const NextToolSuggestionSchema = z
 
 type NextToolSuggestion = z.infer<typeof NextToolSuggestionSchema>;
 
+const HTML_RENDERER_STATES = ['available', 'disabled', 'no_browser'] as const;
+type HtmlRendererState = (typeof HTML_RENDERER_STATES)[number];
+
+/** What each state means for the caller, appended to its line in format(). */
+const HTML_RENDERER_NOTES: Record<HtmlRendererState, string> = {
+  available: ' — pixoo_render_html can render pages.',
+  disabled: ' — PIXOO_HTML_ENABLED=false, so pixoo_render_html is not listed.',
+  no_browser: ` — pixoo_render_html fails browser_unavailable until a browser is found. ${BROWSER_UNAVAILABLE_RECOVERY}`,
+};
+
+/**
+ * Whether pixoo_render_html can render here. Discovery only looks for the executable —
+ * the brief never launches a browser.
+ */
+function htmlRendererState(cfg: ServerConfig): Promise<HtmlRendererState> {
+  if (!cfg.pixooHtmlEnabled) return Promise.resolve('disabled');
+  return discoverBrowser({ browserPath: cfg.pixooBrowserPath }).then(
+    () => 'available',
+    (err: unknown) => {
+      if (err instanceof McpError && err.data?.['reason'] === 'browser_unavailable') {
+        return 'no_browser';
+      }
+      throw err;
+    },
+  );
+}
+
+/** An animated scene: the animation topic's suggestion, and the html topic's when HTML is off. */
+function animatedSceneArgs(push: boolean): NextToolSuggestion['args'] {
+  return {
+    background: { theme: 'midnight' },
+    elements: [
+      {
+        type: 'text',
+        text: 'HELLO',
+        x: 'center',
+        y: 'center',
+        style: { palette: 'claude', shadow: true, scale: 2 },
+        effect: { name: 'float', amplitude: 2 },
+      },
+    ],
+    frames: 20,
+    speed: 150,
+    push,
+  };
+}
+
+/** A dot orbiting the panel center once per loop, drawn in SVG so it fits any panel size. */
+const ORBIT_PAGE =
+  '<svg viewBox="0 0 64 64" style="display:block;width:100vw;height:100vh"><circle id="dot" r="6" fill="#ffb000"/></svg><script>const dot = document.getElementById("dot"); window.render = (t) => { const a = 2 * Math.PI * t; dot.setAttribute("cx", 32 + 20 * Math.cos(a)); dot.setAttribute("cy", 32 + 20 * Math.sin(a)); };</script>';
+
 export const pixooDesignBrief = tool('pixoo_design_brief', {
   title: 'pixoo_design_brief',
   description:
-    'Return craft guidance and live device context for a design topic. Covers legibility rules, palette discipline, layout zones, animation budget, and pre-filled next-tool suggestions based on current device state. The orientation tool to run before authoring a scene, dashboard, or animation — or when troubleshooting display issues.',
+    'Return craft guidance and live device context for a design topic. Covers legibility rules, palette discipline, layout zones, animation budget, HTML page authoring, and pre-filled next-tool suggestions based on current device state. The orientation tool to run before authoring a scene, dashboard, animation, or HTML page — or when troubleshooting display issues.',
   annotations: { readOnlyHint: true },
 
   input: z.object({
     topic: z
-      .enum(['text', 'scene', 'dashboard', 'animation', 'pixel-art', 'troubleshooting'])
+      .enum(['text', 'scene', 'dashboard', 'animation', 'pixel-art', 'html', 'troubleshooting'])
       .describe(
-        'Design topic: text (styled text guidance), scene (composition + layout zones), dashboard (widgets + metrics), animation (motion budget + effects), pixel-art (bitmap + sprite guidance), troubleshooting (device + display issues).',
+        'Design topic: text (styled text guidance), scene (composition + layout zones), dashboard (widgets + metrics), animation (motion budget + effects), pixel-art (bitmap + sprite guidance), html (pixoo_render_html pages: loops, clock, sampling), troubleshooting (device + display issues).',
       ),
   }),
 
@@ -196,6 +278,11 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
         screenOn: z.boolean().optional().describe('True if screen is on. Absent when unreachable.'),
       })
       .describe('Live device state snapshot at the time of the request.'),
+    htmlRenderer: z
+      .enum(HTML_RENDERER_STATES)
+      .describe(
+        'Whether pixoo_render_html can render: available; disabled (PIXOO_HTML_ENABLED=false, so the tool is not listed); or no_browser (no browser found, so the tool fails browser_unavailable until one is installed).',
+      ),
     nextToolSuggestions: z
       .array(NextToolSuggestionSchema)
       .describe('Suggested next steps based on topic and device state.'),
@@ -215,12 +302,11 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
     const cfg = getServerConfig();
     const svc = getPixooService();
 
-    // Get device state (don't fail if device unreachable)
-    const deviceStatus = await svc
-      .getStatus(ctx)
-      .catch((): import('@/services/pixoo/pixoo-service.js').DeviceStateSnapshot => ({
-        reachable: false,
-      }));
+    // Get device state (don't fail if device unreachable) and the HTML renderer's state
+    const [deviceStatus, htmlRenderer] = await Promise.all([
+      svc.getStatus(ctx).catch((): DeviceStateSnapshot => ({ reachable: false })),
+      htmlRendererState(cfg),
+    ]);
 
     // Build next-tool suggestions based on topic + device state
     const suggestions: NextToolSuggestion[] = [];
@@ -281,23 +367,32 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       suggestions.push({
         toolName: 'pixoo_compose_scene',
         reason: 'Compose an animated scene.',
-        args: {
-          background: { theme: 'midnight' },
-          elements: [
-            {
-              type: 'text',
-              text: 'HELLO',
-              x: 'center',
-              y: 'center',
-              style: { palette: 'claude', shadow: true, scale: 2 },
-              effect: { name: 'float', amplitude: 2 },
-            },
-          ],
-          frames: 20,
-          speed: 150,
-          push: deviceStatus.reachable,
-        },
+        args: animatedSceneArgs(deviceStatus.reachable),
       });
+    } else if (input.topic === 'html') {
+      if (htmlRenderer === 'disabled') {
+        suggestions.push({
+          toolName: 'pixoo_compose_scene',
+          reason:
+            'pixoo_render_html is turned off (PIXOO_HTML_ENABLED=false); compose layered scenes and animations instead.',
+          args: animatedSceneArgs(deviceStatus.reachable),
+        });
+      } else {
+        suggestions.push({
+          toolName: 'pixoo_render_html',
+          reason:
+            htmlRenderer === 'no_browser'
+              ? `Render a seamless loop once a browser is installed: ${BROWSER_UNAVAILABLE_RECOVERY}`
+              : 'Render a seamless loop: window.render(t) moves a dot once around the panel over 20 frames.',
+          args: {
+            html: ORBIT_PAGE,
+            frames: 20,
+            speed: 100,
+            sampling: 'supersample',
+            push: deviceStatus.reachable,
+          },
+        });
+      }
     } else if (input.topic === 'troubleshooting') {
       if (!deviceStatus.reachable) {
         suggestions.push({
@@ -347,6 +442,7 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
         brightness: deviceStatus.brightness,
         screenOn: deviceStatus.screenOn,
       },
+      htmlRenderer,
       nextToolSuggestions: suggestions,
       availableThemes: THEME_NAMES,
       iconCategories: getIconsByCategory(),
@@ -368,6 +464,9 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
       lines.push(`Brightness: ${result.deviceContext.brightness}`);
     if (result.deviceContext.screenOn !== undefined)
       lines.push(`Screen: ${result.deviceContext.screenOn ? 'On' : 'Off'}`);
+    lines.push(
+      `HTML renderer: **${result.htmlRenderer}**${HTML_RENDERER_NOTES[result.htmlRenderer]}`,
+    );
     lines.push('');
     lines.push('## Next Steps');
     for (const s of result.nextToolSuggestions) {

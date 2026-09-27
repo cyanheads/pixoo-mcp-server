@@ -15,6 +15,9 @@ import { Canvas, type QuantizeOptions, quantize, type RGB } from '@cyanheads/pix
  */
 export type Finish = QuantizeOptions;
 
+/** The toolkit's largest canvas side, in pixels. */
+const MAX_CANVAS_PX = 4096;
+
 /**
  * Apply `finish` to one canvas.
  *
@@ -31,8 +34,8 @@ export function finishFrame(canvas: Canvas, finish: Finish): Canvas {
  * `palette` and `dither` apply to each frame on its own, so dither error never crosses
  * from one frame into the next.
  *
- * @param frames - Frames of one size, up to 4096 stacked rows in all (64 frames of a
- *   64-pixel panel).
+ * @param frames - Frames of one size. `colors` stacks them in columns of up to 4096 rows
+ *   (64 frames of a 64-pixel panel per column), so up to 4096 frames of 64 pixels.
  * @returns New canvases, one per frame; the inputs are never mutated.
  * @throws {Error} The toolkit's `Unknown color` error for an unresolvable palette entry.
  */
@@ -49,13 +52,29 @@ export function finishFrames(frames: readonly Canvas[], finish: Finish): Canvas[
 /**
  * The palette of at most `colors` colors `quantize` builds from every frame's visible
  * pixels at once: the frames stacked into one canvas and reduced without dithering,
- * then the reduced canvas's distinct visible colors read back in raster order.
+ * then the reduced canvas's distinct visible colors read back in raster order. The
+ * stack fills one column of frames top to bottom before starting the next, each column
+ * as tall as fits the toolkit's canvas limit; the unfilled cells of the last column stay
+ * transparent, so they add no color.
  */
 function sharedPalette(frames: readonly Canvas[], colors: number): RGB[] {
   const [first] = frames as readonly [Canvas, ...Canvas[]];
-  const stack = new Canvas(first.width, first.height * frames.length);
+  const { width, height } = first;
+  const perColumn = Math.floor(MAX_CANVAS_PX / height);
+  const stack = new Canvas(
+    width * Math.ceil(frames.length / perColumn),
+    height * Math.min(frames.length, perColumn),
+  );
+  const rowBytes = width * 4;
   frames.forEach((frame, k) => {
-    stack.buffer.set(frame.buffer, k * frame.buffer.length);
+    const left = Math.floor(k / perColumn) * width;
+    const top = (k % perColumn) * height;
+    for (let y = 0; y < height; y++) {
+      stack.buffer.set(
+        frame.buffer.subarray(y * rowBytes, (y + 1) * rowBytes),
+        ((top + y) * stack.width + left) * 4,
+      );
+    }
   });
 
   const buf = quantize(stack, { colors }).buffer;

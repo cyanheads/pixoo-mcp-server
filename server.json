@@ -52,6 +52,31 @@
           "default": "1000"
         },
         {
+          "name": "PIXOO_SERVE_HOST",
+          "description": "Host advertised in the URL the device downloads an animation of more than 40 frames from, for NAT or a DNS name. When unset, the local address the OS routes to PIXOO_IP; the listener binds that address either way.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "PIXOO_SERVE_PORT",
+          "description": "Fixed port for the listener the device downloads an animation of more than 40 frames from, for firewall rules. When unset, a free port.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "PIXOO_BROWSER_PATH",
+          "description": "Browser executable for HTML rendering, such as the chrome-headless-shell that `npx @puppeteer/browsers install chrome-headless-shell@stable --path <dir>` installs. When set, the only browser tried: a path that is not an executable file fails rather than falling back. When unset, the newest chrome-headless-shell in Puppeteer's cache (~/.cache/puppeteer).",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "PIXOO_HTML_ENABLED",
+          "description": "Offer pixoo_render_html. false (or 0, no, off) disables it, removing it from tools/list; unset or true keeps it. A value that is not one of those boolean spellings fails startup.",
+          "format": "boolean",
+          "isRequired": false,
+          "default": "true"
+        },
+        {
           "name": "MCP_LOG_LEVEL",
           "description": "Sets the minimum log level for output (e.g., 'debug', 'info', 'warn').",
           "format": "string",
@@ -105,6 +130,31 @@
           "format": "string",
           "isRequired": false,
           "default": "1000"
+        },
+        {
+          "name": "PIXOO_SERVE_HOST",
+          "description": "Host advertised in the URL the device downloads an animation of more than 40 frames from, for NAT or a DNS name. When unset, the local address the OS routes to PIXOO_IP; the listener binds that address either way.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "PIXOO_SERVE_PORT",
+          "description": "Fixed port for the listener the device downloads an animation of more than 40 frames from, for firewall rules. When unset, a free port.",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "PIXOO_BROWSER_PATH",
+          "description": "Browser executable for HTML rendering, such as the chrome-headless-shell that `npx @puppeteer/browsers install chrome-headless-shell@stable --path <dir>` installs. When set, the only browser tried: a path that is not an executable file fails rather than falling back. When unset, the newest chrome-headless-shell in Puppeteer's cache (~/.cache/puppeteer).",
+          "format": "string",
+          "isRequired": false
+        },
+        {
+          "name": "PIXOO_HTML_ENABLED",
+          "description": "Offer pixoo_render_html. false (or 0, no, off) disables it, removing it from tools/list; unset or true keeps it. A value that is not one of those boolean spellings fails startup.",
+          "format": "boolean",
+          "isRequired": false,
+          "default": "true"
         },
         {
           "name": "MCP_HTTP_HOST",

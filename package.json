@@ -21,8 +21,8 @@
     "server.json"
   ],
   "scripts": {
-    "build": "bun run scripts/build.ts",
-    "rebuild": "bun run scripts/clean.ts && bun run scripts/build.ts",
+    "build": "bun run scripts/build.ts && bun run scripts/build-page-runtime.ts",
+    "rebuild": "bun run scripts/clean.ts && bun run scripts/build.ts && bun run scripts/build-page-runtime.ts",
     "clean": "bun run scripts/clean.ts",
     "devcheck": "bun run scripts/devcheck.ts",
     "audit:fix": "bun audit fix",
@@ -39,6 +39,7 @@
     "release:github": "bun run scripts/release-github.ts",
     "publish-mcp": "mcp-publisher login github -token \"$(security find-generic-password -a \"$USER\" -s mcp-publisher-github-pat -w)\" && mcp-publisher publish",
     "test": "bunx vitest run",
+    "test:browser": "PIXOO_BROWSER_SUITE=1 bunx vitest run --project browser",
     "start:stdio": "MCP_TRANSPORT_TYPE=stdio bun ./dist/index.js",
     "start:http": "MCP_TRANSPORT_TYPE=http bun ./dist/index.js"
   },

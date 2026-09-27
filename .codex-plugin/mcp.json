@@ -5,6 +5,6 @@
     "env": {
       "MCP_TRANSPORT_TYPE": "stdio"
     },
-    "env_vars": ["PIXOO_IP", "PIXOO_SIZE"]
+    "env_vars": ["PIXOO_IP", "PIXOO_SIZE", "PIXOO_BROWSER_PATH"]
   }
 }

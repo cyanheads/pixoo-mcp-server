@@ -5,6 +5,7 @@
  * @module tests/helpers/device-failure
  */
 
+import { rmSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -19,15 +20,23 @@ type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
 const ok = (data: object = {}) => ({ ok: true, data: { error_code: 0, ...data } });
 
 /**
- * Swap the service's device client for a fake whose frame and animation pushes fail
- * with `failure`. Everything above the client — pacing, channel check, failure
- * mapping — runs for real.
+ * Address every fake device answers at. The GIF listener for a push of more than 40
+ * frames binds the local address routed to it, so the listener stays on loopback.
+ */
+const FAKE_DEVICE_IP = '127.0.0.1';
+
+/**
+ * Swap the service's device client for a fake whose frame pushes, animation pushes,
+ * and GIF plays fail with `failure`. Everything above the client — pacing, channel
+ * check, the GIF listener, failure mapping — runs for real.
  */
 export function failDevicePush(failure: PixooFailure): void {
   const client = {
+    ip: FAKE_DEVICE_IP,
     getChannel: vi.fn().mockResolvedValue({ ok: true, data: { SelectIndex: 3 } }),
     push: vi.fn().mockResolvedValue(failure),
     pushAnimation: vi.fn().mockResolvedValue(failure),
+    playGifUrl: vi.fn().mockResolvedValue(failure),
   };
   (getPixooService() as unknown as { client: unknown }).client = client;
 }
@@ -44,8 +53,12 @@ export interface FakeDeviceState {
 
 /** The fake device client {@link stubDeviceState} installs — one Vitest mock per call. */
 export interface FakeDeviceClient {
+  /** Each GIF the fake downloaded from a `playGifUrl` URL, in play order. */
+  downloads: Promise<Uint8Array>[];
   getChannel: Mock;
   getConfig: Mock;
+  ip: string;
+  playGifUrl: Mock;
   push: Mock;
   pushAnimation: Mock;
   setBrightness: Mock;
@@ -54,11 +67,19 @@ export interface FakeDeviceClient {
 
 /**
  * Swap the service's device client for a fake whose pushes succeed and whose
- * read-back reports `state`. Returns the fake so a test can inspect its calls.
+ * read-back reports `state`. A GIF play answers first, then downloads the URL the way
+ * the firmware does. Returns the fake so a test can inspect its calls.
  */
 export function stubDeviceState(state: FakeDeviceState = {}): FakeDeviceClient {
   const channel = state.channel ?? Channel.Custom;
+  const downloads: Promise<Uint8Array>[] = [];
   const client: FakeDeviceClient = {
+    ip: FAKE_DEVICE_IP,
+    downloads,
+    playGifUrl: vi.fn((url: string) => {
+      downloads.push(fetch(url).then(async (res) => new Uint8Array(await res.arrayBuffer())));
+      return Promise.resolve(ok());
+    }),
     getChannel: vi
       .fn()
       .mockResolvedValue(
@@ -119,7 +140,8 @@ export function resultText(result: ToolResult): string {
 
 /**
  * Point `os.tmpdir()` at a fresh, empty directory for one test, so the test sees
- * exactly which temp files the code under test wrote. Call `restore` in `afterEach`.
+ * exactly which temp files the code under test wrote. Call `restore` in `afterEach`:
+ * it puts `TMPDIR` back and deletes the directory with everything written to it.
  */
 export async function isolateTmpdir(): Promise<{ dir: string; restore: () => void }> {
   const previous = process.env['TMPDIR'];
@@ -130,6 +152,7 @@ export async function isolateTmpdir(): Promise<{ dir: string; restore: () => voi
     restore: () => {
       if (previous === undefined) delete process.env['TMPDIR'];
       else process.env['TMPDIR'] = previous;
+      rmSync(dir, { recursive: true, force: true });
     },
   };
 }

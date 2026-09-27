@@ -50,9 +50,37 @@ export default mergeConfig(
           test: {
             name: 'unit',
             include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
-            exclude: ['tests/smoke/**', 'tests/integration/**', 'tests/fuzz/**'],
+            exclude: [
+              'tests/smoke/**',
+              'tests/integration/**',
+              'tests/fuzz/**',
+              'tests/browser/**',
+            ],
+            // Each test file writes to its own temp dir, deleted after the file.
+            setupFiles: ['tests/setup/isolate-tmpdir.ts'],
           },
         },
+        /**
+         * The gated real-browser suite (`bun run test:browser`). It exists only when
+         * PIXOO_BROWSER_SUITE=1, so `bun run test` launches no browser even with
+         * PIXOO_TEST_BROWSER_PATH exported; the global setup fails the run when that
+         * variable does not name an executable.
+         */
+        ...(process.env.PIXOO_BROWSER_SUITE === '1'
+          ? [
+              {
+                extends: true,
+                test: {
+                  name: 'browser',
+                  include: ['tests/browser/**/*.test.ts'],
+                  globalSetup: ['tests/browser/helpers/require-test-browser.ts'],
+                  maxWorkers: 1,
+                  testTimeout: 60_000,
+                  hookTimeout: 60_000,
+                },
+              },
+            ]
+          : []),
         // Add more projects as your suite grows. Each inherits the framework's
         // base config (environment, pool, coverage) and can override freely.
         //

@@ -42,6 +42,13 @@
       "description": "Display size in pixels: 16, 32, or 64. Must match your physical device. Defaults to 64 (Pixoo-64).",
       "required": false,
       "default": "64"
+    },
+    "pixoo_browser_path": {
+      "type": "string",
+      "title": "Browser Path",
+      "description": "Path to a chrome-headless-shell executable for HTML rendering, such as the one `npx @puppeteer/browsers install chrome-headless-shell@stable --path <dir>` installs. Leave blank to use the newest chrome-headless-shell in Puppeteer's cache (~/.cache/puppeteer).",
+      "required": false,
+      "default": ""
     }
   },
   "mcpServers": {
@@ -51,7 +58,8 @@
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
         "PIXOO_IP": "${user_config.pixoo_ip}",
-        "PIXOO_SIZE": "${user_config.pixoo_size}"
+        "PIXOO_SIZE": "${user_config.pixoo_size}",
+        "PIXOO_BROWSER_PATH": "${user_config.pixoo_browser_path}"
       }
     }
   }

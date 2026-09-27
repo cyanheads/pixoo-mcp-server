@@ -17,6 +17,14 @@ import {
   type PixooSize,
 } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
+import { encodePanelGif } from '@/renderer/preview.js';
+import { openGifHost } from '@/services/pixoo/gif-host.js';
+
+/**
+ * Most frames an animation pushes as one `Draw/SendHttpGif` request each — the device
+ * turns unstable past about 40. A longer one plays as a GIF the device downloads.
+ */
+export const MAX_FRAME_PUSH = 40;
 
 /** Device state snapshot returned after operations. */
 export interface DeviceStateSnapshot {
@@ -154,50 +162,94 @@ export class PixooService {
     return result;
   }
 
-  /** Push an animation (multi-frame), respecting the minimum interval pacing. */
-  async pushAnimation(frames: Canvas[], speed: number, ctx: Context): Promise<DeviceStateSnapshot> {
+  /**
+   * Push an animation. Up to {@link MAX_FRAME_PUSH} frames go one `Draw/SendHttpGif`
+   * request each. Past that, the device downloads and loops the panel-size GIF from a
+   * one-shot listener on this host: `gif` when the caller already encoded it from these
+   * frames with `encodePanelGif`, so a caller that also saves it encodes once. The push
+   * then succeeds only once the device has accepted the play and requested the file, and
+   * the whole file has been handed to the OS to send — not confirmed receipt; a listener
+   * that cannot open, a URL over 255 bytes, or a transfer that never completes fails
+   * `gif_serve_failed`.
+   */
+  async pushAnimation(
+    frames: Canvas[],
+    speed: number,
+    ctx: Context,
+    gif?: Uint8Array,
+  ): Promise<DeviceStateSnapshot> {
     const client = this.getClient();
-    const result = await this.pacedPush(() => client.pushAnimation(frames, speed), ctx);
-    return result;
+    if (frames.length <= MAX_FRAME_PUSH) {
+      return await this.pacedPush(() => client.pushAnimation(frames, speed), ctx);
+    }
+    const panelGif = gif ?? encodePanelGif(frames, speed);
+    const cfg = getServerConfig();
+    return await this.queued(async () => {
+      // Opened before any device command, so a failed bind or an overlong URL sends none.
+      const host = await openGifHost(panelGif, {
+        deviceIp: client.ip,
+        serveHost: cfg.pixooServeHost,
+        servePort: cfg.pixooServePort,
+        signal: ctx.signal,
+      });
+      try {
+        return await this.pushNow(async () => {
+          const played = await client.playGifUrl(host.url);
+          // The device accepts the play before it downloads, even from a dead URL.
+          if (played.ok) await host.served();
+          return played;
+        }, ctx);
+      } finally {
+        host.close();
+      }
+    });
   }
 
   /** Serialized, paced device push with Custom channel enforcement. */
-  private async pacedPush(
-    fn: () => Promise<PixooResult>,
-    ctx: Context,
-  ): Promise<DeviceStateSnapshot> {
-    // Serialize pushes through a queue
-    let resolve!: () => void;
-    const token = new Promise<void>((r) => (resolve = r));
+  private pacedPush(fn: () => Promise<PixooResult>, ctx: Context): Promise<DeviceStateSnapshot> {
+    return this.queued(() => this.pushNow(fn, ctx));
+  }
+
+  /** Run `task` once every push queued before it has settled — one device push at a time. */
+  private async queued<T>(task: () => Promise<T>): Promise<T> {
+    const { promise: token, resolve } = Promise.withResolvers<void>();
     const prev = this.pushQueue;
     this.pushQueue = prev.then(() => token);
 
     try {
       await prev;
-
-      // Enforce minimum interval
-      const cfg = getServerConfig();
-      const minInterval = cfg.pixooPushMinIntervalMs;
-      const elapsed = Date.now() - this.lastPushTime;
-      if (elapsed < minInterval) {
-        await new Promise((r) => setTimeout(r, minInterval - elapsed));
-      }
-
-      // Ensure Custom channel
-      await this.ensureCustomChannel(ctx);
-
-      // Execute the push
-      const pushResult = await fn();
-      if (!pushResult.ok) {
-        mapFailure(pushResult);
-      }
-      this.lastPushTime = Date.now();
-
-      // Read back device state (degrade gracefully on failure)
-      return await this.getStatus(ctx);
+      return await task();
     } finally {
       resolve();
     }
+  }
+
+  /** Pace, switch to the Custom channel, run the push, and read back device state. */
+  private async pushNow(
+    fn: () => Promise<PixooResult>,
+    ctx: Context,
+  ): Promise<DeviceStateSnapshot> {
+    // Enforce minimum interval
+    const cfg = getServerConfig();
+    const minInterval = cfg.pixooPushMinIntervalMs;
+    const elapsed = Date.now() - this.lastPushTime;
+    if (elapsed < minInterval) {
+      await new Promise((r) => setTimeout(r, minInterval - elapsed));
+    }
+
+    // Ensure Custom channel
+    await this.ensureCustomChannel(ctx);
+
+    // Cancelled during the wait or the channel switch: send no push command.
+    ctx.signal.throwIfAborted();
+    const pushResult = await fn();
+    if (!pushResult.ok) {
+      mapFailure(pushResult);
+    }
+    this.lastPushTime = Date.now();
+
+    // Read back device state (degrade gracefully on failure)
+    return await this.getStatus(ctx);
   }
 
   /** Switch to Custom channel if not already there. */

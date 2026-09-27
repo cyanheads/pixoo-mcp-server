@@ -4,6 +4,7 @@
  * @module tests/renderer/finish.test
  */
 
+import { createHash } from 'node:crypto';
 import { Canvas, quantize, type RGB } from '@cyanheads/pixoo-toolkit';
 import { describe, expect, it } from 'vitest';
 import { type Finish, finishFrame, finishFrames } from '@/renderer/finish.js';
@@ -38,6 +39,33 @@ function rampFrame(shift: number): Canvas {
     for (let y = 0; y < 12; y++) canvas.setPixel(x, y, hue(shift + (x * 360) / 16));
   }
   return canvas;
+}
+
+/**
+ * A `size`-pixel panel frame: a hue ramp across the columns, shifted by `shift` degrees
+ * and darkening down the rows; the bottom 4 rows are transparent.
+ */
+function panelFrame(size: number, shift: number): Canvas {
+  const canvas = new Canvas(size);
+  for (let x = 0; x < size; x++) {
+    const [r, g, b] = hue(shift + (x * 360) / size);
+    for (let y = 0; y < size - 4; y++) {
+      const v = 1 - y / size;
+      canvas.setPixel(x, y, [Math.round(r * v), Math.round(g * v), Math.round(b * v)]);
+    }
+  }
+  return canvas;
+}
+
+/** `count` panel frames whose hue shift sweeps a full turn. */
+const panelFrames = (count: number, size: number) =>
+  Array.from({ length: count }, (_, k) => panelFrame(size, (k * 360) / count));
+
+/** One SHA-256 over every frame's RGBA bytes, in order. */
+function digestOf(frames: readonly Canvas[]): string {
+  const hash = createHash('sha256');
+  for (const frame of frames) hash.update(frame.buffer);
+  return hash.digest('hex');
 }
 
 /** Distinct RGB of every pixel with a non-zero alpha across `frames`, as `r,g,b`. */
@@ -145,5 +173,81 @@ describe('finishFrames', () => {
     const out = finishFrames(input, { colors: 3, dither: 'bayer4' });
     expect(input.map(hashOf)).toEqual(before);
     for (const [i, frame] of out.entries()) expect(frame).not.toBe(input[i]);
+  });
+
+  // Digests of the output from a single stacked column, the layout every stack of up to
+  // 4096 rows keeps: 64 frames of 64 px finish byte for byte as they always have.
+  it.each([
+    {
+      count: 2,
+      finish: { colors: 4, dither: 'none' },
+      digest: '1df7fbb867b461206f54c4862781bc9fc05efee32a79d88a9189dabc0936697f',
+    },
+    {
+      count: 64,
+      finish: { colors: 4, dither: 'none' },
+      digest: '17b8132483c1765fbbadc37bf36028a603cc9c8d28be71b8c10a6ddc9cae6976',
+    },
+    {
+      count: 64,
+      finish: { colors: 4, dither: 'bayer4' },
+      digest: '5b5db10670c55a790833f768a2c2b175709a67b6a652239ba9457ba64c734dca',
+    },
+    {
+      count: 64,
+      finish: { colors: 16, dither: 'floyd-steinberg' },
+      digest: '4c5dda5637d9ea079b748a059a9cf1a89fe33e5070b1ba4e6ec9481311890a6f',
+    },
+  ] satisfies { count: number; finish: Finish; digest: string }[])(
+    '$count frames of 64 px under $finish.colors colors, dither $finish.dither, finish byte-identically',
+    ({ count, finish, digest }) => {
+      expect(digestOf(finishFrames(panelFrames(count, 64), finish))).toBe(digest);
+    },
+  );
+});
+
+describe('finishFrames past one 4096-row column', () => {
+  /** Every frame keeps its own transparent pixels, the panel frame's bottom 4 rows. */
+  function expectTransparencyKept(out: readonly Canvas[], size: number) {
+    for (const [k, frame] of out.entries()) {
+      expect(transparentPixels(frame), `frame ${k}`).toHaveLength(size * 4);
+    }
+  }
+
+  it('finish: { colors: 4 } over 800 frames of 64 px holds at most 4 colors in all', () => {
+    const source = panelFrames(800, 64);
+    expect(opaqueColors(...source).size).toBeGreaterThan(4);
+    const out = finishFrames(source, { colors: 4 });
+    expect(out).toHaveLength(800);
+    const colors = opaqueColors(...out).size;
+    expect(colors).toBeLessThanOrEqual(4);
+    expect(colors).toBeGreaterThan(1);
+    expectTransparencyKept(out, 64);
+  });
+
+  it.each(DITHERS)(
+    '65 frames of 64 px, one past a single column, share one palette under dither %s',
+    (dither) => {
+      const out = finishFrames(panelFrames(65, 64), { colors: 4, dither });
+      expect(out).toHaveLength(65);
+      expect(opaqueColors(...out).size).toBeLessThanOrEqual(4);
+      expectTransparencyKept(out, 64);
+    },
+  );
+
+  it.each([16, 32])('800 frames of %i px share one palette of at most 4 colors', (size) => {
+    const out = finishFrames(panelFrames(800, size), { colors: 4, dither: 'none' });
+    expect(out).toHaveLength(800);
+    expect(opaqueColors(...out).size).toBeLessThanOrEqual(4);
+    expectTransparencyKept(out, size);
+  });
+
+  it('frames already within colors come back unchanged: the empty cells of a part-filled column add no color', () => {
+    // 130 frames of 64 px fill two columns of 64 and 2 frames of a third.
+    const flat = Array.from({ length: 130 }, (_, k) =>
+      new Canvas(64).clear(k % 2 === 0 ? [255, 0, 0] : [0, 0, 255]),
+    );
+    const out = finishFrames(flat, { colors: 2, dither: 'floyd-steinberg' });
+    expect(out.map(hashOf)).toEqual(flat.map(hashOf));
   });
 });

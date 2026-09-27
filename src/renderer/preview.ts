@@ -1,13 +1,20 @@
 /**
- * @fileoverview Preview encoding utilities: PNG content blocks, contact sheets, and the
- * PNG/GIF preview files written to PIXOO_OUTPUT_DIR or a temp directory.
+ * @fileoverview Preview encoding utilities: PNG content blocks, contact sheets, the
+ * PNG/GIF preview files written to PIXOO_OUTPUT_DIR or a temp directory, and the
+ * panel-size GIF a device downloads and loops.
  * @module renderer/preview
  */
 
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { Canvas, canvasToPng, saveAnimationGif, savePng } from '@cyanheads/pixoo-toolkit';
+import {
+  Canvas,
+  canvasToPng,
+  encodeAnimationGif,
+  saveAnimationGif,
+  savePng,
+} from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 
 /** MCP image content block. */
@@ -35,17 +42,27 @@ export function encodePreviewBlock(canvas: Canvas): ImageContentBlock {
 }
 
 /**
- * Build a contact-sheet preview: every frame, in order, tiled left-to-right and
+ * Build a contact-sheet preview: the frames, in order, tiled left-to-right and
  * top-to-bottom in a `ceil(sqrt(n))`-column grid, each tile an integer upscale that
- * keeps the sheet within the 512px preview budget. A single frame encodes exactly as
+ * keeps the sheet within the 512px preview budget. Every frame is tiled while 1× tiles
+ * of them all fit the budget (49 frames at 64px, 225 at 32px, 784 at 16px); past that,
+ * an even sample of that many fills the grid — frame `floor(k × n / fit)` in tile `k`,
+ * the toolkit's `loadAnimation` sampling. A single frame encodes exactly as
  * {@link encodePreviewBlock} does.
  */
 export async function buildContactSheet(frames: Canvas[]): Promise<ImageContentBlock> {
   const [first] = frames;
   if (!first || frames.length === 1) return encodePreviewBlock(first ?? new Canvas(64));
 
-  const cols = Math.ceil(Math.sqrt(frames.length));
-  const rows = Math.ceil(frames.length / cols);
+  const fit = Math.floor((PREVIEW_BUDGET_PX + SHEET_GAP_PX) / (first.width + SHEET_GAP_PX)) ** 2;
+  const keep = Math.min(frames.length, fit);
+  const kept = new Set(
+    Array.from({ length: keep }, (_, k) => Math.floor((k * frames.length) / keep)),
+  );
+  const tiles = frames.filter((_, i) => kept.has(i));
+
+  const cols = Math.ceil(Math.sqrt(tiles.length));
+  const rows = Math.ceil(tiles.length / cols);
   const scale = Math.max(
     1,
     Math.floor((PREVIEW_BUDGET_PX - (cols - 1) * SHEET_GAP_PX) / (cols * first.width)),
@@ -62,7 +79,7 @@ export async function buildContactSheet(frames: Canvas[]): Promise<ImageContentB
     },
   })
     .composite(
-      frames.map((frame, i) => ({
+      tiles.map((frame, i) => ({
         input: Buffer.from(canvasToPng(frame, scale)),
         left: (i % cols) * pitch,
         top: Math.floor(i / cols) * pitch,
@@ -95,6 +112,28 @@ export async function saveGifPreview(
   await fs.mkdir(dir, { recursive: true });
   const filePath = path.join(dir, `${baseName}.gif`);
   await saveAnimationGif(frames, filePath, speed, 8);
+  return filePath;
+}
+
+/**
+ * Encode animation frames as the GIF a device downloads and loops: one GIF pixel per LED
+ * (the frames' own PIXOO_SIZE, where the toolkit's default scale writes 512×512 for a
+ * 64-pixel panel), opaque — a transparent pixel encodes as unlit black — looping forever,
+ * each frame held for `speed` rounded to 10 ms, the GIF delay unit.
+ */
+export function encodePanelGif(frames: Canvas[], speed: number): Uint8Array {
+  return encodeAnimationGif(frames, speed, 1);
+}
+
+/** Save an {@link encodePanelGif} GIF as `<baseName>.gif` in `dir`; returns the saved path. */
+export async function savePanelGif(
+  gif: Uint8Array,
+  dir: string,
+  baseName: string,
+): Promise<string> {
+  await fs.mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, `${baseName}.gif`);
+  await fs.writeFile(filePath, gif);
   return filePath;
 }
 

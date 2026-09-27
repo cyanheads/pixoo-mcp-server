@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.2.2](changelog/1.2.x/1.2.2.md) — 2026-09-26
+
+Adopts @cyanheads/pixoo-toolkit 0.10.0: animated GIF and WebP push as animations, images take a palette finish, scene elements take blend modes and stroke widths, and text gains a numerals face. Undecodable images fail as invalid_image, and filled circles and JPEG/WebP images render differently.
+
 ## [1.2.1](changelog/1.2.x/1.2.1.md) — 2026-09-26
 
 pixoo_compose_scene checks animate keyframes per property and caps image, icon, and sprite sizes; stroke icons, icon palettes, keyframed colors, and layout fits now render and report as documented. mcp-ts-core ^0.13.6 → ^0.13.9.

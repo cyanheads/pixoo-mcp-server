@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-09-27 03:53:19
+Generated on: 2026-09-27 10:12:05
 
 ```text
 pixoo-mcp-server/
@@ -121,6 +121,7 @@ pixoo-mcp-server/
 │       └── SKILL.md
 ├── scripts/
 │   ├── build-changelog.ts
+│   ├── build-page-runtime.ts
 │   ├── build.ts
 │   ├── check-dependency-specifiers.ts
 │   ├── check-docs-sync.ts
@@ -130,6 +131,7 @@ pixoo-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── find-node-imports.ts
 │   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
@@ -155,30 +157,56 @@ pixoo-mcp-server/
 │   │       │   ├── pixoo-discover-devices.tool.ts
 │   │       │   ├── pixoo-display-text.tool.ts
 │   │       │   ├── pixoo-overlay-text.tool.ts
-│   │       │   └── pixoo-push-image.tool.ts
+│   │       │   ├── pixoo-push-image.tool.ts
+│   │       │   └── pixoo-render-html.tool.ts
 │   │       ├── asset-source-schema.ts
 │   │       ├── device-push.ts
 │   │       └── finish-schema.ts
 │   ├── renderer/
 │   │   ├── finish.ts
+│   │   ├── icon-draw.ts
 │   │   ├── icons.ts
 │   │   ├── keyframes.ts
+│   │   ├── page-runtime.ts
+│   │   ├── page-scripts.ts
 │   │   ├── preview.ts
 │   │   ├── remote-image.ts
 │   │   ├── scene-renderer.ts
 │   │   ├── text-engine.ts
-│   │   └── themes.ts
+│   │   ├── themes.ts
+│   │   └── virtual-clock.ts
 │   ├── services/
+│   │   ├── browser/
+│   │   │   ├── browser-renderer.ts
+│   │   │   └── cdp-pipe.ts
 │   │   └── pixoo/
+│   │       ├── gif-host.ts
 │   │       └── pixoo-service.ts
 │   └── index.ts
 ├── tests/
+│   ├── browser/
+│   │   ├── helpers/
+│   │   │   ├── browser-under-test.ts
+│   │   │   ├── canaries.ts
+│   │   │   ├── net-log.ts
+│   │   │   ├── pipe-child.mjs
+│   │   │   └── require-test-browser.ts
+│   │   ├── capture.test.ts
+│   │   ├── isolation.test.ts
+│   │   ├── lifecycle.test.ts
+│   │   ├── page-runtime.test.ts
+│   │   ├── pipe-transport.test.ts
+│   │   ├── render-html.test.ts
+│   │   ├── storage-and-concurrency.test.ts
+│   │   ├── timeouts-and-crashes.test.ts
+│   │   └── virtual-clock.test.ts
 │   ├── config/
 │   │   └── server-config.test.ts
 │   ├── helpers/
 │   │   ├── canvas-ink.ts
 │   │   ├── device-failure.ts
 │   │   ├── expect-forwarded-recovery.ts
+│   │   ├── fake-browser-renderer.ts
 │   │   ├── image-sources.ts
 │   │   ├── list-extra.ts
 │   │   ├── prototype-color-names.ts
@@ -186,22 +214,34 @@ pixoo-mcp-server/
 │   │   └── zod-object-nodes.ts
 │   ├── prompts/
 │   ├── renderer/
+│   │   ├── browser-safe-imports.test.ts
 │   │   ├── finish.test.ts
 │   │   ├── icons.test.ts
 │   │   ├── keyframes.test.ts
+│   │   ├── page-runtime.test.ts
+│   │   ├── page-scripts.test.ts
 │   │   ├── preview.test.ts
 │   │   ├── remote-image.test.ts
 │   │   ├── scene-renderer.test.ts
 │   │   ├── text-engine.test.ts
-│   │   └── themes.test.ts
+│   │   ├── themes.test.ts
+│   │   └── virtual-clock.test.ts
 │   ├── resources/
 │   │   ├── pixoo-design-guide.resource.test.ts
 │   │   ├── pixoo-device-status.resource.test.ts
 │   │   ├── pixoo-icons.resource.test.ts
 │   │   └── pixoo-themes.resource.test.ts
 │   ├── services/
+│   │   ├── browser/
+│   │   │   ├── browser-renderer.discovery.test.ts
+│   │   │   ├── browser-renderer.test.ts
+│   │   │   ├── cdp-pipe.test.ts
+│   │   │   └── fake-cdp-endpoint.ts
 │   │   └── pixoo/
+│   │       ├── gif-host.test.ts
 │   │       └── pixoo-service.test.ts
+│   ├── setup/
+│   │   └── isolate-tmpdir.ts
 │   ├── tools/
 │   │   ├── pixoo-compose-scene.input-schema.test.ts
 │   │   ├── pixoo-compose-scene.tool.test.ts
@@ -212,7 +252,9 @@ pixoo-mcp-server/
 │   │   ├── pixoo-display-text.tool.test.ts
 │   │   ├── pixoo-overlay-text.tool.test.ts
 │   │   ├── pixoo-push-image.tool.test.ts
+│   │   ├── pixoo-render-html.tool.test.ts
 │   │   └── push-tools.post-push.test.ts
+│   ├── index.html-flag.test.ts
 │   └── index.session-mode.test.ts
 ├── .dockerignore
 ├── .env.example
@@ -234,6 +276,7 @@ pixoo-mcp-server/
 ├── server.json
 ├── tsconfig.build.json
 ├── tsconfig.json
+├── tsconfig.page-runtime.json
 └── vitest.config.ts
 ```
 

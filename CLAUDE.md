@@ -50,7 +50,7 @@ Tailor suggestions to what's actually missing or stale — don't recite the full
 - **Need input the caller didn't supply?** `return ctx.requestInput(...)` and read `ctx.inputs` when the handler is re-entered. Never `await` for user input mid-handler. (`ctx.elicit` was removed in the SDK v2 migration.) The server declares `sessionMode: 'stateless'` because no handler does this today — the first one that does changes it to `{ default: 'stateful', require: 'stateful' }` in `src/index.ts`, `.env.example`, the Dockerfile, and the README.
 - **Secrets in env vars only** — never hardcoded.
 - **Cut noise.** Add only what earns its place: no speculative generality, no guards for states the framework already prevents (Zod-validated params, classified errors), no abstraction until a third caller proves it, no option nothing sets.
-- **Every `PixooResult` checked.** No fire-and-forget device calls. `pushed: true` means `error_code: 0` from the device.
+- **Every `PixooResult` checked.** No fire-and-forget device calls. `pushed: true` means `error_code: 0` from the device — and past 40 frames, that the device requested the GIF and the whole file was handed to the OS to send (the response's `finish`), since `Device/PlayTFGif` acknowledges before it downloads. That is not confirmed receipt: a GIF smaller than the socket send buffer can finish before the device reads it.
 - **Adding an env var requires both files** — `server.json` (`environmentVariables[]`) and `manifest.json` (`mcp_config.env` + `user_config`). `bun run lint:packaging` verifies the names match.
 - **Close the loop on issues.** When implementing work tracked by a GitHub issue, comment on the issue with what landed and close it. Do both — a comment without a close leaves stale issues open; a close without a comment leaves no record of what shipped. The comment is for future readers — state the concrete changes, not the conversation that produced them.
 
@@ -154,7 +154,7 @@ await createApp({
 
 `sessionMode` declares the HTTP session posture in `src/`. `MCP_SESSION_MODE` still wins whenever it carries a meaningful value (an empty string and an unsubstituted `${…}` placeholder read as unset and fall through to the option). Add `require: 'stateful'` when a tool asks the caller for input mid-handler via `ctx.requestInput`: startup then fails with a `ConfigurationError` rather than serving a mode in which a 2025-era client can never answer the prompt. Stdio is never refused.
 
-`teardown(core)` is the `setup()` counterpart — release a watcher, socket, or non-`unref()`'d timer there. It runs after the transport stops and before the logger closes, on every shutdown path. This server passes none: `PixooService` opens a `fetch` per device command and holds no persistent handle. Add one if a service starts keeping a socket, watcher, or ref'd timer.
+`teardown(core)` is the `setup()` counterpart — release a watcher, socket, or non-`unref()`'d timer there. It runs after the transport stops and before the logger closes, on every shutdown path. This server's `teardown` closes the `BrowserRenderer`, whose browser would otherwise outlive the process until its pipe closed. `PixooService` needs none: it opens a `fetch` per device command, and the GIF listener lives for one play and is `unref()`'d.
 
 ---
 
@@ -186,18 +186,23 @@ Pixoo-specific error reasons declared on tools:
 | `device_unreachable` | `ServiceUnavailable` | Toolkit result kind `network`/`timeout` | `true` |
 | `device_http_error` | `ServiceUnavailable` | Non-2xx from the device's HTTP server | `true` for 408, 429, 500, 502–504; `false` otherwise |
 | `device_rejected` | `ServiceUnavailable` | Firmware returned non-zero `error_code` | — |
+| `gif_serve_failed` | `ServiceUnavailable` | An animation past 40 frames could not be served: the one-shot listener could not open, its URL ran past 255 bytes, or the device did not request the GIF within 10 s, stalled its transfer for 10 s, or dropped it | — |
 | `no_device_configured` | `InvalidParams` | Device tool called without `PIXOO_IP` | — |
 | `asset_not_found` | `NotFound` | Image/sprite path or URL unreadable | — |
 | `invalid_image` | `InvalidParams` | Image source or sprite path read but not decodable | — |
 | `invalid_color` | `InvalidParams` | `resolveColor` throw — invalid color name or format | — |
 | `unknown_icon` | `InvalidParams` | Icon name not in registry | — |
 | `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable | `true` |
+| `page_error` | `InvalidParams` | `pixoo_render_html`: the page's `window.render` threw or rejected; the message names the frame | — |
+| `browser_unavailable` | `ConfigurationError` | `pixoo_render_html`: no browser found, `PIXOO_BROWSER_PATH` not an executable file, or the browser failed to start | — |
+| `render_timeout` | `Timeout` | `pixoo_render_html`: the render ran past 30 s (`RENDER_DEADLINE_MS`), or the call was cancelled | — |
+| `render_crashed` | `ServiceUnavailable` | `pixoo_render_html`: the browser or the page crashed; the next render relaunches the browser | `true` |
 
-`PixooService` and `src/renderer/` raise the device, configuration, and asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked. Either way, the framework puts the entry's `recovery` on the wire when a failure carrying that `reason` arrives without a hint — a bare `ctx.fail('reason', message)` or a service throw with `data: { reason }` — as `data.recovery.hint`, mirrored into `content[]` unless the message already contains it. Pass an explicit `{ recovery: { hint } }` only to override it for one occurrence — a throw-site hint wins over the contract, so wording that holds for every occurrence of a reason lives in its `errors[]` entry, not at the throw. Every error envelope also carries `data.requestId`, and `content[]` closes with `(reason … · request <id>)`.
+`PixooService`, `BrowserRenderer`, and `src/renderer/` raise the device, browser, configuration, and asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked. Either way, the framework puts the entry's `recovery` on the wire when a failure carrying that `reason` arrives without a hint — a bare `ctx.fail('reason', message)` or a service throw with `data: { reason }` — as `data.recovery.hint`, mirrored into `content[]` unless the message already contains it. Pass an explicit `{ recovery: { hint } }` only to override it for one occurrence — a throw-site hint wins over the contract, so wording that holds for every occurrence of a reason lives in its `errors[]` entry, not at the throw. Every error envelope also carries `data.requestId`, and `content[]` closes with `(reason … · request <id>)`.
 
 A contract's `retryable` reaches the wire only through `ctx.fail`; a service throw carries it only when the service writes `data.retryable` itself. `classifyDeviceFailure` (in `pixoo-service.ts`) is the one place a failed device call becomes a reason and a retryability — `PixooService` writes both on its push-path throws, and `pixoo_overlay_text` passes the retryability into `ctx.fail` so it overrides the contract default per occurrence.
 
-The three push tools (`pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`) share one post-render path in `src/mcp-server/tools/device-push.ts`. `pushKeepingPreview` rethrows a failed push's error with its code, `reason`, `retryable`, and recovery untouched, adding `data.outputFiles` (the file the call already saved, else a copy in a fresh `os.tmpdir()` directory) and naming the path in the message. The framework drops `ctx.content` blocks from error results, so the file path is how the render survives. On success, `visibilityNotice` turns the post-push `DeviceStateSnapshot` into one `ctx.enrich.notice` (screen off, brightness ≤ 10, not on the custom channel). `ctx.enrich.notice` is last-wins, so a tool with a second notice source composes them into one string.
+The four push tools (`pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`, `pixoo_render_html`) share one post-render path in `src/mcp-server/tools/device-push.ts`. `pushKeepingPreview` rethrows a failed push's error with its code, `reason`, `retryable`, and recovery untouched, adding `data.outputFiles` (the file the call already saved, else a copy in a fresh `os.tmpdir()` directory) and naming the path in the message. Past 40 frames (`MAX_FRAME_PUSH`), `pixoo_compose_scene`, `pixoo_push_image`, and `pixoo_render_html` push through `PixooService.pushAnimation`'s GIF path, and that file is the panel-size GIF the device downloads (`encodePanelGif`), not the 8× preview GIF. The framework drops `ctx.content` blocks from error results, so the file path is how the render survives. On success, `visibilityNotice` turns the post-push `DeviceStateSnapshot` into one `ctx.enrich.notice` (screen off, brightness ≤ 10, not on the custom channel). `ctx.enrich.notice` is last-wins, so a tool with a second notice source composes them into one string.
 
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
@@ -230,15 +235,23 @@ src/
   services/
     pixoo/
       pixoo-service.ts                  # PixooService — toolkit wrapper, pacing, result mapping
+      gif-host.ts                       # One-shot node:http listener the device downloads a >40-frame GIF from
+    browser/
+      browser-renderer.ts               # BrowserRenderer — discovery, launch, per-render isolation, capture (withPage)
+      cdp-pipe.ts                       # DevTools Protocol client over the fd 3/4 pipe; spawnPiped
   renderer/
     themes.ts                           # Theme + palette registry
     icons.ts                            # Icon registry (SVG path data by category)
-    text-engine.ts                      # Gradient ramp + shadow + outline text engine, overflow handling
+    icon-draw.ts                        # Icon drawing: one color, or a top-to-bottom palette ramp
+    text-engine.ts                      # Gradient ramp + shadow + outline text engine, text placement, overflow handling
+    page-runtime.ts                     # Browser entry for the `pixoo` page global (bundled, never imported; own DOM tsconfig)
+    page-scripts.ts                     # Scripts an HTML render injects: virtual clock, panel size, the runtime bundle read from dist/
     scene-renderer.ts                   # Element vocabulary, layout resolver, frame rendering
     keyframes.ts                        # Keyframe interpolation + animation preset compiler
     finish.ts                           # Palette finish (quantize + dither) for one frame, or frames sharing one palette
     preview.ts                          # PNG/contact-sheet/GIF encoding
     remote-image.ts                     # https image fetch into memory for the toolkit loader; stops on ctx.signal
+    virtual-clock.ts                    # Page-side virtual clock injected into HTML renders, the per-frame step, and the page defaults
   mcp-server/
     tools/
       asset-source-schema.ts            # Shared image `source` / sprite `path` schemas: absolute path or URL only
@@ -248,6 +261,7 @@ src/
       pixoo-display-text.tool.ts
       pixoo-compose-scene.tool.ts
       pixoo-push-image.tool.ts
+      pixoo-render-html.tool.ts
       pixoo-overlay-text.tool.ts
       pixoo-control-device.tool.ts
       pixoo-discover-devices.tool.ts
@@ -257,13 +271,21 @@ src/
       pixoo-themes.resource.ts
       pixoo-icons.resource.ts
       pixoo-design-guide.resource.ts
+scripts/
+  build-page-runtime.ts                 # DOM typecheck, Node-import gate, IIFE bundle → dist/page-runtime.js (runs in build/rebuild)
+  find-node-imports.ts                  # Reports Node built-ins and sharp reachable from browser entry points
+tsconfig.page-runtime.json              # DOM-lib program for page-runtime.ts alone; the server's tsconfigs exclude it
 tests/
   index.session-mode.test.ts            # Boots the entry point over HTTP, pins the declared session mode
+  index.html-flag.test.ts               # PIXOO_HTML_ENABLED lists or removes pixoo_render_html
+  browser/                              # Gated suite on a real chrome-headless-shell (`bun run test:browser` only)
   config/                               # Server config parsed from env vars
   helpers/                              # Shared fixtures and assertions (image sources, canvas ink, device failures)
   renderer/                             # Pure renderer unit tests (no device)
   resources/                            # Resource handler tests
+  services/browser/                     # BrowserRenderer and CDP pipe tests against a fake CDP endpoint (no browser)
   services/pixoo/                       # PixooService tests with a fake client
+  setup/                                # Unit-project setup: a per-file temp dir, removed after the file
   tools/                                # Tool handler tests with mock context
 ```
 
@@ -332,7 +354,7 @@ Available skills:
 
 | Command | Purpose |
 |:--------|:--------|
-| `bun run build` | Compile TypeScript |
+| `bun run build` | Compile TypeScript, then build the `pixoo` page runtime bundle (`dist/page-runtime.js`) |
 | `bun run rebuild` | Clean + build |
 | `bun run clean` | Remove build artifacts |
 | `bun run devcheck` | Lint + format + typecheck + security + changelog sync |
@@ -344,7 +366,8 @@ Available skills:
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting (safe fixes only) |
 | `bun run format:unsafe` | Also apply Biome's unsafe autofixes — review the diff |
-| `bun run test` | Run tests (Vitest — use `bun run test`, not `bun test`) |
+| `bun run test` | Run tests (Vitest — use `bun run test`, not `bun test`). Launches no browser |
+| `bun run test:browser` | Gated suite in `tests/browser/` on a real headless browser; set `PIXOO_TEST_BROWSER_PATH` to a `chrome-headless-shell` executable (the script sets `PIXOO_BROWSER_SUITE=1`) |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |
 | `bun run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |

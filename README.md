@@ -23,7 +23,7 @@
 
 ## Overview
 
-Divoom Pixoo LED matrix displays on the local network, with the Pixoo-64 as the primary target and the 16 and 32 also supported. Render and push styled text, layered scenes, dashboards, and animations, or read and change device state. Runs as a stdio process or a local Streamable HTTP server.
+Divoom Pixoo LED matrix displays on the local network, with the Pixoo-64 as the primary target and the 16 and 32 also supported. Render and push styled text, layered scenes, dashboards, animations, and HTML pages, or read and change device state. Runs as a stdio process or a local Streamable HTTP server.
 
 ### Tools
 
@@ -32,6 +32,7 @@ Divoom Pixoo LED matrix displays on the local network, with the Pixoo-64 as the 
 | `pixoo_display_text` | Render styled text with themes, gradients, shadows, and auto-fit, static or animated, and push it |
 | `pixoo_compose_scene` | Compose layered scenes of text, icons, widgets, shapes, bitmaps, images, and sprites, static or animated |
 | `pixoo_push_image` | Resize a local or https image to the LED grid and push it, an animated GIF or WebP as an animation |
+| `pixoo_render_html` | Render an HTML page (CSS, SVG, Canvas, WebGL) in a headless browser at the panel size, still or animated frame by frame on a virtual clock, and push it |
 | `pixoo_overlay_text` | Set or clear a device-rendered scrolling text overlay |
 | `pixoo_control_device` | Read or change brightness, screen state, channel, or clock face |
 | `pixoo_discover_devices` | Find Pixoo devices and their LAN IPs through Divoom's cloud discovery |
@@ -64,16 +65,51 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 - Up to 50 `elements` drawn back-to-front: `text` (in the same three fonts as `pixoo_display_text`), `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image` (absolute path or https URL, with the same `finish` as `pixoo_push_image`), `sprite` (absolute path). The `background` is a solid color, a `v` / `h` / `r` gradient, or a `theme`
 - Every element takes `opacity` (each pixel lands at its own alpha × `opacity`, so soft edges fade evenly) and `blend`: `normal`, `add` (glows and light beams), `screen`, or `multiply`. `line` and outline `circle` take `strokeWidth` and `antialias`, and a `rect` border takes `strokeWidth`, growing inward; either field on a shape that draws no stroke fails validation, naming it
 - Returns `layout[]`: each element's placed box — for a wide or anti-aliased stroke, every pixel it draws — and whether it `fits` on the panel. Elements are placed as given and never refit, so `action` is always `none`. An absolute `output` path saves the first frame as a PNG in place of the `PIXOO_OUTPUT_DIR` auto-save. Typed failures: `asset_not_found`, `invalid_image` (an image or sprite that was read but does not decode), `invalid_color`, `unknown_icon`, `invalid_output_path`
-- Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–40, `speed` 10–2000 ms per frame (default 150). An element takes `effect` or `animate`, not both. An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
+- Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–800, `speed` 10–2000 ms per frame (default 150). Past 40 frames the scene plays as one GIF the device downloads from this host, with `speed` rounded to 10 ms. An element takes `effect` or `animate`, not both. An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
 
 ---
 
 ### `pixoo_push_image` <sub>tool</sub>
 
 - `source` is an absolute local path or an https URL, with downloads capped at 10 MB; `fit` is `contain` (default), `cover`, or `fill`, and `kernel` is `nearest` (default, for pixel art), `lanczos3` (photos), or `mitchell`
-- A source that decodes as an animated GIF or WebP, whatever its file name, pushes as an animation of up to 40 frames, sampled evenly from a longer source. It plays at the source's total duration over the pushed frame count (150 ms when the source records no delays), or at `speed` (10–2000 ms per frame); `frames`, `sourceFrames`, and `speed` report what was pushed
+- A source that decodes as an animated GIF or WebP, whatever its file name, pushes as an animation of up to `maxFrames` frames (1–800, default 40), sampled evenly from a longer source; past 40 frames it plays as one GIF the device downloads from this host. It plays at the source's total duration over the pushed frame count (150 ms when the source records no delays), or at `speed` (10–2000 ms per frame); `frames`, `sourceFrames`, and `speed` report what was pushed
 - `finish` reduces the image to a palette before the push: exactly one of `colors` (2–256, built from the image) or `palette` (1–256 hex or named colors), plus `dither` (`none`, `bayer4`, `floyd-steinberg`). Transparent pixels stay unlit, and an animation's `colors` palette is shared by every frame
-- An unreadable path or URL fails as `asset_not_found`, a source that is read but does not decode (a text file, an HTML page, a truncated download) fails as `invalid_image`, and an unresolvable `finish` palette entry fails as `invalid_color`; the preview is the exact frame the device receives, or a grid of every frame for an animation
+- An unreadable path or URL fails as `asset_not_found`, a source that is read but does not decode (a text file, an HTML page, a truncated download) fails as `invalid_image`, and an unresolvable `finish` palette entry fails as `invalid_color`; the preview is the exact frame the device receives, or a grid of an animation's frames
+
+---
+
+### `pixoo_render_html` <sub>tool</sub>
+
+- `html` is a full document or a body fragment, up to 500,000 characters, laid out in a square viewport one CSS pixel per LED. The page is the panel: `body` has no margin, scrollbars are hidden, and a page that paints no background renders on black (unlit). Its own CSS overrides each
+- `frames` 1–800 (default 1), `speed` 10–2000 ms per frame (default 150). Each frame advances a virtual clock by `speed`: `window.render(t, frame)`, when the page defines it, runs before each capture with `t = frame / frames`, so periodic motion loops seamlessly; `requestAnimationFrame`, `setTimeout` / `setInterval` (4 ms floor for nested and repeating timers), `Date` (starting at the real time), and `performance.now()` (0 at load) follow the same clock, and CSS animations are paused and seeked to it, so every frame is deterministic. `requestIdleCallback` and iframes keep real time. Past 40 frames the page plays as one GIF the device downloads from this host, as on `pixoo_compose_scene`
+- `sampling`: `native` (default) or `supersample`, which renders at 8× and area-averages into each LED, smoothing transforms, text, SVG, and canvas. Chromium snaps a plain box's edges to whole CSS pixels before scaling, so a box at `left: 0.5px` still lands on one LED; move it with `transform` for sub-pixel motion. `finish` takes the same palette reduction as `pixoo_push_image`, applied before the preview
+- Nothing loads from the network and workers are blocked. `pageErrors` returns the page's uncaught errors, `console.error` output, and blocked URLs (a blocked navigation as `Blocked navigation: <url>`): the first 20, each cut to 500 characters. A `window.render` that throws or rejects fails as `page_error`, naming the frame; with no browser found, the call fails as `browser_unavailable` with install steps (see [Prerequisites](#prerequisites)); `render_timeout` and `render_crashed` cover a render past 30 s and a crashed browser or page. `PIXOO_HTML_ENABLED=false` removes the tool
+- Every page gets a `pixoo` global before its own scripts run, for the crisp bitmap text, palettes, and icons that browser anti-aliasing would smear across LEDs:
+  - `pixoo.context()` is the 2D context of a transparent panel-size canvas fixed over the page.
+  - `pixoo.text(ctx, text, x, y, { font, color, palette, scale, shadow, outline })` draws `pixoo_display_text`'s fonts.
+  - `pixoo.icon(ctx, name, x, y, { w, h, color, palette })` draws a registry icon.
+  - `pixoo.palettes` holds the 7 palettes, and `pixoo.size` is the panel size.
+
+  Text and icons drawn this way match `pixoo_compose_scene` pixel for pixel in both sampling modes. An unknown palette, icon, or color throws naming it:
+
+  ```html
+  <script>
+    const ctx = pixoo.context();
+    pixoo.text(ctx, 'HELLO', 'center', 4, { palette: 'ember', scale: 2, shadow: true });
+    pixoo.icon(ctx, 'check-circle', 50, 50, { color: 'green' });
+  </script>
+  ```
+
+- `pixoo_design_brief` with topic `html` covers loops, the clock, sampling, the `pixoo` runtime, and legibility at 64 px. A dot orbiting the panel once per loop:
+
+```json
+{
+  "html": "<svg viewBox=\"0 0 64 64\" style=\"display:block;width:100vw;height:100vh\"><circle id=\"dot\" r=\"6\" fill=\"#ffb000\"/></svg><script>const dot = document.getElementById('dot'); window.render = (t) => { const a = 2 * Math.PI * t; dot.setAttribute('cx', 32 + 20 * Math.cos(a)); dot.setAttribute('cy', 32 + 20 * Math.sin(a)); };</script>",
+  "frames": 20,
+  "speed": 100,
+  "sampling": "supersample"
+}
+```
 
 ---
 
@@ -100,8 +136,8 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 
 ### `pixoo_design_brief` <sub>tool</sub>
 
-- `topic`: `text`, `scene`, `dashboard`, `animation`, `pixel-art`, or `troubleshooting`; works without a reachable device
-- Returns markdown `craftGuidance`, a live `deviceContext`, `nextToolSuggestions` as `{ toolName, reason, args }` with arguments pre-filled for the topic and device state, plus `availableThemes` and `iconCategories`
+- `topic`: `text`, `scene`, `dashboard`, `animation`, `pixel-art`, `html`, or `troubleshooting`; works without a reachable device
+- Returns markdown `craftGuidance`, a live `deviceContext`, `htmlRenderer` (`available`, `disabled` when `PIXOO_HTML_ENABLED=false`, or `no_browser`, found without launching a browser), `nextToolSuggestions` as `{ toolName, reason, args }` with arguments pre-filled for the topic and device state, plus `availableThemes` and `iconCategories`
 
 ---
 
@@ -139,14 +175,14 @@ Pixoo-specific:
 
 - All composition happens on the host in an RGBA canvas pipeline (`@cyanheads/pixoo-toolkit`); the device receives finished RGB frames
 - Pushes switch the device to the custom channel and run one at a time, spaced by `PIXOO_PUSH_MIN_INTERVAL_MS` (default 1000) so rapid pushes don't freeze the device
-- Animations cap at 40 frames, past which the device becomes unstable; `pixoo_push_image` samples a longer GIF or WebP down to 40
+- Up to 40 animation frames push one request each; more frame pushes make the device unstable. Past 40, `pixoo_compose_scene`, `pixoo_push_image`, and `pixoo_render_html` (up to 800 frames) serve one GIF from a one-shot listener on this host, which the device downloads and loops, so the device must be able to reach this host. `pixoo_display_text` stays within 40
 
 Agent-friendly output:
 
-- Preview on every render: `pixoo_display_text`, `pixoo_compose_scene`, and `pixoo_push_image` return the frame as an 8× upscaled PNG image block, pushed or not, so `push: false` checks a design with no device attached. Animations preview as a grid of every frame, since GIF display varies across MCP clients; the GIF itself is saved to `PIXOO_OUTPUT_DIR` when set
+- Preview on every render: `pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`, and `pixoo_render_html` return the frame as an 8× upscaled PNG image block, pushed or not, so `push: false` checks a design with no device attached. Animations preview as a grid of their frames (every frame while 1× tiles fit the 512 px sheet, an even sample past that), since GIF display varies across MCP clients; the GIF itself is saved to `PIXOO_OUTPUT_DIR` when set — an 8× preview GIF, or past 40 frames the panel-size GIF the device downloads
 - Layout transparency: `layout[]` reports every renderer decision (font fallback, scrolling, and whether each box fits on the panel) so agents can refine a design
-- Device truth: `pushed` reflects the device ACK, and the `deviceState` read back after a push comes with a notice naming the fix when the render won't be visible (screen off, brightness ≤ 10, off the custom channel)
-- Renders survive failed pushes: the typed error (`device_unreachable`, `device_http_error`, `device_rejected`, `no_device_configured`) carries `outputFiles` pointing at the saved preview (the `PIXOO_OUTPUT_DIR` copy, or a temp file when that is unset)
+- Device truth: `pushed` reflects the device ACK (past 40 frames, the ACK of the play plus the device's request for the GIF, with the whole file handed to the OS to send; the device does not confirm receipt), and the `deviceState` read back after a push comes with a notice naming the fix when the render won't be visible (screen off, brightness ≤ 10, off the custom channel)
+- Renders survive failed pushes: on all four render tools, the typed error (`device_unreachable`, `device_http_error`, `device_rejected`, `gif_serve_failed`, `no_device_configured`) carries `outputFiles` pointing at the saved preview (the `PIXOO_OUTPUT_DIR` copy, or a temp file when that is unset)
 
 ## Getting started
 
@@ -200,12 +236,17 @@ Or with Docker:
         "run", "-i", "--rm",
         "-e", "MCP_TRANSPORT_TYPE=stdio",
         "-e", "PIXOO_IP=192.168.1.50",
+        "-e", "PIXOO_SERVE_HOST=192.168.1.20",
+        "-e", "PIXOO_SERVE_PORT=8765",
+        "-p", "8765:8765",
         "ghcr.io/cyanheads/pixoo-mcp-server:latest"
       ]
     }
   }
 }
 ```
+
+The device downloads an animation of more than 40 frames from this host, and on Docker's default bridge network the address routed to the device is the container's own, which the device can't reach. Set `PIXOO_SERVE_HOST` to the Docker host's LAN address and publish a fixed `PIXOO_SERVE_PORT`, as above; 40 frames or fewer need neither.
 
 For Streamable HTTP, set the transport and start the server:
 
@@ -218,6 +259,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 PIXOO_IP=192.168.1.50 bun run start:h
 
 - [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
 - A Divoom Pixoo on the local network (Pixoo-64, Pixoo-32, or Pixoo-16).
+- Optional, for the HTML renderer: [chrome-headless-shell](https://developer.chrome.com/docs/automation-and-testing/headless-chrome-shell). `npx @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer` installs it where the server looks by default. Installed anywhere else with `--path <dir>`, set `PIXOO_BROWSER_PATH` to the executable path the install prints. The server launches it headless, with no DevTools port, only when a render needs it.
 
 ### Installation
 
@@ -254,6 +296,10 @@ cp .env.example .env
 | `PIXOO_SIZE` | Display size in pixels: `16`, `32`, or `64`. | `64` |
 | `PIXOO_OUTPUT_DIR` | Directory where render tools save preview PNG and GIF files. A relative path resolves against the directory the server was launched from, so the saved paths it reports are absolute. Unset, previews are returned only in the response. | — |
 | `PIXOO_PUSH_MIN_INTERVAL_MS` | Minimum gap between device pushes, in ms. | `1000` |
+| `PIXOO_SERVE_HOST` | Host advertised in the URL the device downloads an animation of more than 40 frames from, in place of the local address the OS routes to `PIXOO_IP`. The listener binds that routed address either way. Set it behind NAT or in a container. | — |
+| `PIXOO_SERVE_PORT` | Fixed port for that download's one-shot listener, for firewall rules and container port publishing. Unset, a free port per play. | — |
+| `PIXOO_BROWSER_PATH` | Browser executable for HTML rendering. When set, the only browser tried: a path that is not an executable file fails rather than falling back. A relative path resolves against the launch directory. Unset, the newest chrome-headless-shell in Puppeteer's cache (`~/.cache/puppeteer`). The Docker image ships no browser. | — |
+| `PIXOO_HTML_ENABLED` | Offer `pixoo_render_html`. `false` removes it from `tools/list`; a value that is not a boolean fails startup. | `true` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |
 | `MCP_SESSION_MODE` | HTTP session mode: `stateless`, `stateful`, or `auto`. A value set here overrides the server's declared `stateless`. | `stateless` |
@@ -287,14 +333,21 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
   bun run devcheck   # Lint, format, typecheck, security
   bun run test       # Vitest test suite
   bun run lint:mcp   # Validate MCP definitions against spec
+
+  # Real-browser suite for the HTML renderer (opt-in; launches the named browser)
+  PIXOO_TEST_BROWSER_PATH=/path/to/chrome-headless-shell bun run test:browser
   ```
 
 ### Docker
 
 ```sh
 docker build -t pixoo-mcp-server .
-docker run --rm -e PIXOO_IP=192.168.1.50 -p 3010:3010 pixoo-mcp-server
+docker run --rm -e PIXOO_IP=192.168.1.50 -p 3010:3010 \
+  -e PIXOO_SERVE_HOST=192.168.1.20 -e PIXOO_SERVE_PORT=8765 -p 8765:8765 \
+  pixoo-mcp-server
 ```
+
+`PIXOO_SERVE_HOST` (the Docker host's LAN address) and the published `PIXOO_SERVE_PORT` let the device download animations of more than 40 frames from inside the container, as in the stdio configuration above.
 
 The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `/var/log/pixoo-mcp-server`. OpenTelemetry peer dependencies are installed by default; build with `--build-arg OTEL_ENABLED=false` to omit them.
 
@@ -307,7 +360,8 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 | `src/mcp-server/tools/` | Tool definitions (`*.tool.ts`), the shared post-render push path, and the shared `finish` input schema. |
 | `src/mcp-server/resources/` | Resource definitions (`*.resource.ts`). |
 | `src/services/pixoo/` | `PixooService`: wraps `@cyanheads/pixoo-toolkit` with push pacing, result mapping, and device state reads. |
-| `src/renderer/` | Pure rendering pipeline with no device dependency: element renderers, styled-text engine, themes, icons, effect compiler, palette finishing, preview encoding, remote image fetch. |
+| `src/services/browser/` | `BrowserRenderer`: renders HTML in an isolated headless chrome-headless-shell, driven over the DevTools Protocol pipe, and captures it as a panel frame. |
+| `src/renderer/` | Pure rendering pipeline with no device dependency: element renderers, styled-text engine, themes, icons, effect compiler, palette finishing, preview encoding, remote image fetch, and the virtual clock injected into HTML pages. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
 
 ## Development guide

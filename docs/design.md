@@ -1,6 +1,6 @@
 # pixoo-mcp-server — Design
 
-Ground-up redesign of the Pixoo MCP server on `@cyanheads/mcp-ts-core`, with `@cyanheads/pixoo-toolkit` `^0.8.2` as the device/rendering layer. The prior generation (now archived as `pixoo-mcp-server-archive`) proved the declarative compose model but left all visual craft to the calling agent — hand-drawn bitmap letterforms for styled text, manual centering math, palette discipline carried in prompts — and never checked device results, so `pushed: true` meant "I tried."
+Ground-up redesign of the Pixoo MCP server on `@cyanheads/mcp-ts-core`, with `@cyanheads/pixoo-toolkit` `^0.10.0` as the device/rendering layer. The prior generation (now archived as `pixoo-mcp-server-archive`) proved the declarative compose model but left all visual craft to the calling agent — hand-drawn bitmap letterforms for styled text, manual centering math, palette discipline carried in prompts — and never checked device results, so `pushed: true` meant "I tried."
 
 **North star: end-result quality.** Every design choice optimizes for what actually shows on the 64×64 LED matrix — legible, deliberately styled, colored, animated when it helps. Three pillars:
 
@@ -16,7 +16,7 @@ Ground-up redesign of the Pixoo MCP server on `@cyanheads/mcp-ts-core`, with `@c
 |:-----|:------------|:-----------|:------------|
 | `pixoo_display_text` | The 80% case: render styled text (theme, gradient, shadow, outline, auto-fit) and push it. Returns the render as an image. | `text`, `theme`/`style`, `font`, `position`, `align`, `effect`, `push`, `brightness?` | `idempotentHint: true, destructiveHint: false` |
 | `pixoo_compose_scene` | Full scene composition: layered elements (styled text, icons, widgets, shapes, bitmaps, images, sprites) with per-element effects/keyframes, static or animated. Returns the render as an image. | `background`, `elements[]`, `frames`, `speed`, `push` | `idempotentHint: true, destructiveHint: false` |
-| `pixoo_push_image` | Load an image (local path or https URL), resize for the LED grid, push. Returns the downsampled render as an image. | `source`, `fit`, `kernel`, `push` | `idempotentHint: true, destructiveHint: false, openWorldHint: true` (URL fetch) |
+| `pixoo_push_image` | Load an image (local path or https URL), resize for the LED grid, push — an animated GIF or WebP as an animation. Returns the downsampled render as an image. | `source`, `fit`, `kernel`, `speed?`, `finish?`, `push` | `idempotentHint: true, destructiveHint: false, openWorldHint: true` (URL fetch) |
 | `pixoo_overlay_text` | Device-native scrolling text overlay (`Draw/SendHttpText`) — persists over any channel content until cleared. Not previewable (device-rendered). | `mode` (set/clear), `id`, `text`, `font`, `color`, `speed` | `idempotentHint: true, destructiveHint: false` |
 | `pixoo_control_device` | Read or change device state: brightness, screen on/off, channel, clock face. No params = status read. | `brightness?`, `screen?`, `channel?`, `clockFaceId?` | `idempotentHint: true` |
 | `pixoo_discover_devices` | Find Pixoo devices on the LAN (via Divoom's cloud discovery endpoint — needs internet). Setup utility. | `timeoutMs?` | `readOnlyHint: true, openWorldHint: true` |
@@ -47,11 +47,11 @@ Audience: agents producing display-quality output — status dashboards, ambient
 
 ## Requirements
 
-- Device communication exclusively through `@cyanheads/pixoo-toolkit` `^0.8.2` (`PixooClient`, RGBA `Canvas`, fonts, SVG paths, gradients, image loading, PNG/GIF encoding). No wrapper interface around the toolkit client — it is the abstraction.
+- Device communication exclusively through `@cyanheads/pixoo-toolkit` `^0.10.0` (`PixooClient`, RGBA `Canvas`, fonts, SVG paths, gradients, image loading, PNG/GIF encoding). No wrapper interface around the toolkit client — it is the abstraction.
 - Every `PixooResult` checked. No fire-and-forget device calls anywhere in the codebase.
 - Render tools return preview images in the tool response (see Output design). Previews also auto-save to `PIXOO_OUTPUT_DIR` when configured.
 - Push pacing: device tolerates ~1 push/sec and freezes after ~300 rapid pushes — the service serializes device commands with a minimum inter-push interval (default 1000ms).
-- Animations capped at 40 frames (device instability beyond), enforced in schema.
+- Animations capped at 40 frames (device instability beyond): the render tools' frame counts are capped in schema, and `pixoo_push_image` samples a longer GIF or WebP evenly down to 40.
 - `sharp` dependency (image loading) → local stdio/HTTP transports only; Cloudflare Workers is not a target.
 - Display identity: `createApp()` `name` and `title` are both `pixoo-mcp-server`.
 
@@ -67,7 +67,8 @@ This is the heart of the redesign. The archived server's compose tool was a thin
 - **`shadow`** — drop shadow, auto-offset +1/+1, color derived from the background (dark-tinted, never pure black) or explicit.
 - **`outline`** — 1px contrasting rim for legibility against low-contrast backgrounds.
 - **`scale`** — integer multiplier; scale ≥2 produces the chunky block-letter weight.
-- **Auto-fit** — single-line text tries 5×7 → 3×5, then reports the overflow as `scrolling`; `pixoo_display_text`'s `effect: "auto"` animates that scroll. An explicit `font` skips the 3×5 fallback: the text overflows, and scrolls, in the font asked for. Every fit decision is reported in the output (`layout[]`), never silent.
+- **`font`** — `standard` (the toolkit's 5×7) and `compact` (3×5) draw printable ASCII plus `° ← ↑ → ↓ ▲ ▼ ♥ · …`, and draw any other character as `?`. `numerals` (`FONT_DIGITS_11x18`) draws 11×18 digits on one 13-px advance plus space and `: . - + / % ° ?`; text in `numerals` holding any other character fails input validation (`-32602`, naming the characters) instead of drawing the face's `?`. One variant→face map (`FONT_FACES` in `src/renderer/text-engine.ts`) serves both tools.
+- **Auto-fit** — single-line text tries 5×7 → 3×5, then reports the overflow as `scrolling`; `pixoo_display_text`'s `effect: "auto"` animates that scroll. Auto-fit never selects `numerals`. An explicit `font` skips the 3×5 fallback: the text overflows, and scrolls, in the font asked for. Every fit decision is reported in the output (`layout[]`), never silent.
 - Tight proportional metrics, `letterSpacing`, `measureText`-driven alignment come from the toolkit.
 
 ### Semantic layout
@@ -86,21 +87,21 @@ Discriminated union, rendered back-to-front:
 |:-----|:------------------------------|:----------|
 | `text` | Full styled text engine (above) | toolkit fonts + ramp renderer |
 | `icon` | Built-in named icons or custom SVG path. `name` values live in the icon registry, listed at `pixoo://reference/icons` (categories: weather, arrows, status, media); custom icons pass `{ d, viewBox }` where `viewBox` defaults to `"0 0 16 16"` (toolkit default — pass `"0 0 24 24"` for lucide-style sources); `w`/`h` 1–256 (default 12); `color` (default white), or a `palette` painted as a top-to-bottom ramp from the icon's top ink row (`from`) to its bottom ink row (`to`), the way a text palette paints glyphs — `palette` wins over `color`. Each registry icon records which parts fill and which stroke: `sun` and `rain` fill the disk/cloud and stroke the rays/drops, the arrows fill the head and stroke the shaft, `snow`, `wind`, and the four status badges (`check-circle`, `x-circle`, `alert-circle`, `info`) are all stroke; custom `d` paths fill | `renderSvgPath` — even-odd fill (holes, Béziers) for filled parts, `mode: 'stroke'` 1-px lines for stroked parts |
-| `rect` | `gradient` fill option, optional `borderColor` | `fillRect`/`drawRect`/`gradientV/H` |
-| `circle` | unchanged | `fillCircle`/`drawCircle` |
-| `line` | unchanged | `drawLine` |
+| `rect` | `gradient` fill option, optional `borderColor` with a `strokeWidth` border (default 1) that grows inward; the layout box stays `w × h`. `strokeWidth` without `borderColor` fails validation | `fillRect`/`drawRect`/`gradientV/H` |
+| `circle` | `fill: false` outlines take `strokeWidth` (whole pixels, centered on the circle, default 1) and `antialias` (edge pixels shaded by coverage, default false); either field on a filled circle fails validation, naming it. A wide or anti-aliased ring reports a layout box covering every pixel it draws | `fillCircle`/`drawCircle` |
+| `line` | `strokeWidth` (whole pixels, centered on the line, default 1) and `antialias`. A wide or anti-aliased line reports a layout box covering every pixel it draws, so `fits` sees a stroke crossing an edge | `drawLine` |
 | `progress` | Dashboard widget: value/max bar, gradient fill, track color, optional label | rects + text engine |
 | `sparkline` | Dashboard widget: `data[]` → mini line or bar chart, auto-scaled to its box — a line runs from the box's first column to its last and from its bottom row to its top, filling exactly `w × h` | `drawLine`/rects |
 | `bitmap` | unchanged (palette indices + row strings — proven for custom art) | `setPixel` |
 | `pixels` | unchanged (sparse dots: stars, particles) | `setPixel` |
-| `image` | local path or https URL (URL sources are fetched to a temp file server-side — `loadImage` accepts local paths only), loaded onto a canvas of the configured display size, so an image with no `w`/`h` fits the display; `w`/`h` 1–256 | `loadImage` (alpha-preserving) |
+| `image` | local path or https URL (a URL source is downloaded into memory and its bytes passed to `loadImage`, so nothing is written to disk and it renders exactly as the same file from a local path), loaded onto a canvas of the configured display size, so an image with no `w`/`h` fits the display; `w`/`h` 1–256; `finish` (as on `pixoo_push_image`) reduces the loaded image to a palette before it is drawn, on a copy of the cached load, so elements differing only in `finish` share the decode | `loadImage` (alpha-preserving), `quantize` |
 | `sprite` | unchanged (sprite-sheet downsample + recolor); `cols`/`rows` 1–64, `scale` 1–64 | `downsampleSprite`/`renderSprite` |
 
-Per-element: `visible`, `opacity` (0–100, composited via scratch canvas + alpha blend — the RGBA canvas makes true layering work; black pixels land, undrawn stays transparent), and motion (below).
+Per-element: `visible`, `opacity` (0–100), `blend`, and motion (below). An element under `opacity` below 100 or a `blend` other than `normal` draws onto its own transparent layer, which is then composited onto the scene — the RGBA canvas makes true layering work; black pixels land, undrawn stays transparent. `normal` (the default, source-over) lands each layer pixel at its own alpha × `opacity`, so an anti-aliased or soft image edge keeps its falloff as the element fades. `add` (sums the light of both, clamped — glows and light beams), `screen`, and `multiply` scale the layer's alpha by `opacity`, then composite through the toolkit's `Canvas.blit({ mode })`. A cached image canvas is only ever copied onto the layer, never changed. An element at `opacity` 100 with no `blend` draws straight onto the scene.
 
 ### Motion: presets first, keyframes for control
 
-- **`effect`** — named animation presets compiled to keyframes server-side: `float` (gentle y bob), `scroll-left`/`scroll-right`, `pulse` (opacity breathing, 50–100 by default), `blink`, `twinkle` (irregular opacity flicker, 40–100 by default), `drift` (slow x wander), `fade-in`/`fade-out` (opacity ramp). Each takes minimal params (`amplitude`, `period`, `phase`). `amplitude` is movement for `float` (bob height, px), `scroll-*` (2 × amplitude px per frame), and `drift` (up to 4 × amplitude px), default 2; for `pulse` and `twinkle` it is the 0–1 depth of the opacity dip below 100, default 0.5 and 0.6; `blink` and the fades ignore it.
+- **`effect`** — named animation presets compiled to keyframes server-side: `float` (gentle y bob), `scroll-left`/`scroll-right`, `pulse` (opacity breathing, 50–100 by default), `blink`, `twinkle` (irregular opacity flicker, 40–100 by default; the jitter is fixed by the frame index and the element's position in the scene, so it differs between elements and identical scenes render identical frames), `drift` (slow x wander), `fade-in`/`fade-out` (opacity ramp). Each takes minimal params (`amplitude`, `period`, `phase`). `amplitude` is movement for `float` (bob height, px), `scroll-*` (2 × amplitude px per frame), and `drift` (up to 4 × amplitude px), default 2; for `pulse` and `twinkle` it is the 0–1 depth of the opacity dip below 100, default 0.5 and 0.6; `blink` and the fades ignore it.
 - **`animate`** — raw `{ prop: [[frame, value], ...] }` keyframes, kept from the archive (numbers lerp, booleans snap; hold before first/after last). Values are checked and interpolated by property: `dx`, `dy`, and `opacity` take numbers or numeric strings, and a numeric string reads as its number, so `"000"` → `"100"` ramps exactly like `0` → `100`; `visible` takes `true` or `false` and switches at the midpoint between keyframes; only the `color` track lerps through RGB, reading each value as a color and returning `#rrggbb` between keyframes. Every track needs at least one keyframe. An empty track, a value of the wrong type, or a string on `dx`/`dy`/`opacity` that isn't a number fails input validation as `invalid_arguments`, naming the field. A track under any other key is accepted and ignored. Animatable: `dx`, `dy`, `opacity`, `visible`, and `color` on every element that has a `color` field (`text`, `icon`, `rect`, `circle`, `line`, `sparkline`, and each point of `pixels`). A keyframed `color` stands in for the static `color`, so it yields where that does — to an icon or text `palette`, a text `style.color`, a rect `gradient`. Every value in a `color` track is resolved before any frame renders, so one that isn't a color fails as `invalid_color` even when its keyframe lies past the scene's last frame. One of `effect` or `animate` per element.
 - Scene-level `frames` (1–40, default 1) and `speed` (ms/frame, default 150). 20×150 ≈ 3s loop is the documented sweet spot.
 
@@ -108,7 +109,7 @@ Per-element: `visible`, `opacity` (0–100, composited via scratch canvas + alph
 
 ### `pixoo_display_text`
 
-Carved out of compose because it's the dominant ask ("show X on the display") and deserves a zero-thought quality path. Input: `text` (string or lines array), `theme?`, `background?` (color | gradient — overrides theme), `style?` (palette/shadow/outline/scale), `font?` (used as given; omitted, single-line text auto-fits and multi-line text uses 5×7), `position?`, `align?` (multi-line: lines align `left | center | right` within the widest line and `position.x` places that block; omitted, each line is placed by `position.x` on its own), `effect?` (`none | auto | scroll | float | pulse`: `scroll` runs one full scroll cycle — in from the right edge, out through the left — in at most 40 frames, speeding up rather than cutting off for long text; `auto` does the same only when the text overflows; `float`/`pulse` compile to keyframes over 20 frames, as on a scene element; animated results push via `pushAnimation` at 150ms per frame), `push` (default true), `brightness?` (convenience — applied before the push; a brightness failure surfaces as an enrichment warning and does not block the render or push). Output: image content block of the render (a contact sheet when animated), `frames`, `layout[]` fit report (font/scale chosen, overflow action taken), `pushed` (device-acknowledged), `deviceState` post-push, `outputFiles?` (PNG, or GIF when animated). Omitting `effect` and `align` renders exactly the static output the tool produced before either existed.
+Carved out of compose because it's the dominant ask ("show X on the display") and deserves a zero-thought quality path. Input: `text` (string or lines array), `theme?`, `background?` (color | gradient — overrides theme), `style?` (palette/shadow/outline/scale), `font?` (`standard | compact | numerals`, used as given; omitted, single-line text auto-fits and multi-line text uses 5×7), `position?`, `align?` (multi-line: lines align `left | center | right` within the widest line and `position.x` places that block; omitted, each line is placed by `position.x` on its own), `effect?` (`none | auto | scroll | float | pulse`: `scroll` runs one full scroll cycle — in from the right edge, out through the left — in at most 40 frames, speeding up rather than cutting off for long text; `auto` does the same only when the text overflows; `float`/`pulse` compile to keyframes over 20 frames, as on a scene element; animated results push via `pushAnimation` at 150ms per frame), `push` (default true), `brightness?` (convenience — applied before the push; a brightness failure surfaces as an enrichment warning and does not block the render or push). Output: image content block of the render (a contact sheet when animated), `frames`, `layout[]` fit report (font/scale chosen, overflow action taken), `pushed` (device-acknowledged), `deviceState` post-push, `outputFiles?` (PNG, or GIF when animated). Omitting `effect` and `align` renders exactly the static output the tool produced before either existed.
 
 ### `pixoo_compose_scene`
 
@@ -116,7 +117,7 @@ Input: `background` (color | `{ gradient }` | `{ theme }`), `elements[]` (vocabu
 
 ### `pixoo_push_image`
 
-Input: `source` (absolute path or https URL), `fit` (`contain | cover | fill`), `kernel` (`nearest | lanczos3 | mitchell` — nearest for pixel art, lanczos3 for photos), `push`. URL sources require a service-layer step: fetch to a temp file, pass the path to `loadImage`, clean up after render — the toolkit accepts local paths only. The fetch runs under the request's abort signal, so a cancelled call tears the download down (in compose's asset preload too). Output: preview image block of the actual display-size result (the agent sees exactly what downsampling did), `pushed`, `deviceState`.
+Input: `source` (absolute path or https URL), `fit` (`contain | cover | fill`), `kernel` (`nearest | lanczos3 | mitchell` — nearest for pixel art, lanczos3 for photos), `speed?` (10–2000 ms per frame, animations only), `push`. A URL source is downloaded into memory (10 MB cap, declared and streamed) and its bytes passed to the loader, so nothing touches the temp dir. The fetch runs under the request's abort signal, so a cancelled call tears the download down (in compose's asset preload too). A source the decoder reports as GIF or WebP — the content decides, not the extension — loads through `loadAnimation` with `maxFrames: 40`, which samples a longer source evenly and sums the delays each kept frame stands in for; every other format loads through `loadImage`, so a multi-page TIFF shows its first page. More than one frame pushes via `pushAnimation` at one speed: the source's total duration over the pushed frame count, rounded and clamped to 10–2000 ms, so the loop keeps its length (150 ms, the render tools' default, when every delay is 0); `speed` overrides it, and a still ignores it. The median delay was rejected: it keeps motion speed but not loop length. `finish?` reduces the loaded frames to a palette through the toolkit's `quantize` before the preview, so the preview stays exactly what the device receives: exactly one of `colors` (2–256, a palette built from the image) or `palette` (1–256 hex or named colors), plus `dither` (`none` default, `bayer4`, `floyd-steinberg`). Transparent pixels stay unlit and don't count toward `colors`. On an animation, `colors` builds one palette from every kept frame — per-frame palettes let a shifting hue ramp at `colors: 4` hold 16 colors across the loop — while `palette` and `dither` apply per frame. The schema (`src/mcp-server/tools/finish-schema.ts`) and the application (`src/renderer/finish.ts`) are tool-agnostic, shared with the scene `image` element. An unresolvable `palette` entry fails as `invalid_color` before the source is read. A source that is read but does not decode fails as `invalid_image`, naming the source as passed and the decoder's reason. Output: preview image block of the actual display-size result (the agent sees exactly what downsampling did; a contact sheet for an animation), `frames` (1 for a still), `sourceFrames`, `speed` (animations only), `pushed`, `deviceState`, `outputFiles?` (PNG, or a GIF at the pushed speed for an animation — also the file a failed push keeps).
 
 ### `pixoo_overlay_text`
 
@@ -142,12 +143,13 @@ Instruction tool: static craft content per `topic` (`text | scene | dashboard | 
 | `device_http_error` | `ServiceUnavailable` | kind `http` — non-2xx from the device's HTTP server (busy, rebooting, or `PIXOO_IP` answering as something other than a Pixoo) | 408, 429, 500, 502–504 only |
 | `device_rejected` | `ServiceUnavailable` | kind `device` — firmware returned non-zero `error_code`; message includes the device code | no |
 | `no_device_configured` | `InvalidParams` | device tool called without `PIXOO_IP` — recovery: run `pixoo_discover_devices` | no |
-| `asset_not_found` | `NotFound` | image/sprite path or URL unreadable | no |
-| `invalid_color` | `InvalidParams` | strict `resolveColor` throw — the toolkit's message names the offending value and accepted formats; the server appends the valid color names (from `NAMED_COLORS`) and points to `pixoo://reference/themes` for palettes | no |
+| `asset_not_found` | `NotFound` | image/sprite path or URL unreadable, or a sprite path given as a URL — the message names the failure (a missing file, a non-https or unreachable URL, a download over 10 MiB, a sprite URL: sprite sheets take an absolute local path); every occurrence carries the tool's declared recovery | no |
+| `invalid_image` | `InvalidParams` | image source or sprite path read but not decodable (a text file, an HTML page, a truncated download) — message names the `source` or `path` as passed and the decoder's reason; recovery: the source must be a complete PNG, JPEG, GIF, WebP, AVIF, TIFF, or SVG image | no |
+| `invalid_color` | `InvalidParams` | strict `resolveColor` throw — the toolkit's message names the offending value and accepted formats; the server appends the valid color names (from `NAMED_COLORS`) and points to `pixoo://reference/themes` for palettes. `pixoo_push_image` checks its `finish` palette entries before reading the source and names the entry the same way | no |
 | `unknown_icon` | `InvalidParams` | icon name not in registry — message lists categories | no |
 | `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable | yes |
 
-Text overflow is **not** an error — it's a reported fit decision in `layout[]`. Input-schema failures (frame cap, malformed or empty keyframe tracks) are rejected before the handler runs, as `-32602` with the framework's `invalid_arguments` reason and a hint naming the field.
+Text overflow is **not** an error — it's a reported fit decision in `layout[]`. Input-schema failures (frame cap, malformed or empty keyframe tracks, `numerals` text holding characters outside the face) are rejected before the handler runs, as `-32602` with the framework's `invalid_arguments` reason and a hint naming the field.
 
 ## Output design
 
@@ -158,12 +160,12 @@ Text overflow is **not** an error — it's a reported fit decision in `layout[]`
 
   ```ts
   {
-    element: number | 'background',   // index into elements[]; display_text uses 0
+    element: number | 'background',   // index into elements[]; display_text uses the line index
     type: string,                     // element type ('text', 'icon', ...)
     box: { x, y, w, h },              // pixels the element was placed over, dx/dy included
     fits: boolean,                    // the box lies wholly on the canvas
     action: 'none' | 'shrunk-to-compact' | 'scrolling' | 'wrapped' | 'truncated' | 'clipped',
-    font?: 'standard' | 'compact',    // text only — the font actually used
+    font?: 'standard' | 'compact' | 'numerals',  // text only — the font actually used
     scale?: number                    // text only — the scale actually used
   }
   ```
@@ -191,7 +193,7 @@ Rendering is pure — `src/renderer/` is a plain module (no DI ceremony): elemen
 
 | # | Call | Purpose | Gate |
 |:--|:-----|:--------|:-----|
-| 1 | preload assets (`loadImage`/`downsampleSprite`) | once per element, before frame loop | elements present |
+| 1 | preload assets (`loadImage`/`downsampleSprite`) | before frame loop; each distinct load once, however many elements share it — a URL fetched once, a sprite sheet decoded once per path and grid, an image once per source and placement (`loadImage` decodes and places in one call) | elements present |
 | 2 | render frames + encode previews | pure, no device | always |
 | 3 | `getChannel()` | skip switch if already Custom | `push` |
 | 4 | `setChannel(Custom)` + verify | content must be on Custom to display | `push` ∧ not already |
@@ -227,7 +229,8 @@ Each step independently testable; renderer tests need no device.
 - **A failed push keeps its render as a file, not a success result.** Returning `pushed: false` with a notice would hide the device failure and drop the `retryable` signal callers key on.
 - **Element sizes that drive render cost are capped in the schema.** An `image` is resized to exactly `w × h` and a `sprite` paints `scale²` pixels per cell, every one visited even off the canvas, so cost tracks the request rather than the display. `image`/`icon` `w`/`h` stop at 256 (four times the largest panel, room for crop and zoom placements); sprite `scale` stops at 64, where one cell already covers the largest panel, and sprite `cols`/`rows` stop at 64, where the grid already spans the largest panel at `scale: 1` — the downsampler allocates every cell, so the grid is capped on its own, not only through `scale`.
 - **Registry icons declare their stroke parts.** The icon paths are outline-style, and a two-point subpath has no area to fill, so filling everything dropped rays, shafts, and marks. The status badges draw their ring as a stroke rather than a disk, because a mark stroked in the disk's own color would be invisible.
-- **`fits` checks all four edges of the placed box.** An element pushed off the left or top edge is clipped just as one past the right or bottom is.
+- **`fits` checks all four edges of the placed box, in both render tools.** An element pushed off the left or top edge is clipped just as one past the right or bottom is. `pixoo_display_text` and `pixoo_compose_scene` share one check (`boxFits`), so the same text placed the same way reports the same `fits` in either — a line too tall for the panel included, which the 18-px `numerals` face makes routine on a 16-px display.
+- **`numerals` rejects characters outside its face** in the input schema rather than drawing the face's `?`: a readout that shows `72??` is worse than an error naming `F`. Units and labels go in their own `standard` or `compact` element. Auto-fit never selects `numerals`, since switching to it would reject text the caller never restricted.
 - **`pixoo_overlay_text` checks `x`/`y` against `PIXOO_SIZE` in the handler.** Input schemas are built once at import, before the configured size is known, so the advertised `.max(64)` stays the absolute ceiling and the handler enforces the real edge.
 - **Suggestion entries use the `{ toolName, reason, args }` shape** other suggestion-emitting servers use, declared locally until `cyanheads/mcp-ts-core#478` exports it; `args` is always present so a client can execute an entry without a presence check.
 - **No DataCanvas, no mirror, no app tools** — nothing here is analytical row data, and the human-facing surface is the physical display itself.
@@ -238,7 +241,7 @@ Each step independently testable; renderer tests need no device.
 - Device text overlays (`pixoo_overlay_text`) render on-device: no preview possible, and they persist invisibly across channel switches until cleared.
 - `getConfig()` field availability varies by firmware (Pixoo-64 omits `SelectIndex`) — channel reads go through `getChannel()`.
 - Discovery requires internet (Divoom cloud endpoint) even though device control is fully local.
-- No dithering on image downsampling (kernel choice only) — possible future toolkit addition.
+- Previews show the sRGB values pushed, not the panel's response: on a Pixoo-64 at brightness 100, levels 0–4 stay dark and mid-levels render darker than on a monitor, but only the dark floor and that qualitative shift are measured, so a simulated-panel preview (or panel correction of pushed frames) would render an invented curve.
 - Local transports only (`sharp` won't run on Workers).
 
 ## Examples (target schemas, for build reference)

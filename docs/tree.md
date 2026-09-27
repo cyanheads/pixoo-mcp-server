@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-09-26 19:31:09
+Generated on: 2026-09-27 00:28:59
 
 ```text
 pixoo-mcp-server/
@@ -154,8 +154,10 @@ pixoo-mcp-server/
 │   │       │   ├── pixoo-display-text.tool.ts
 │   │       │   ├── pixoo-overlay-text.tool.ts
 │   │       │   └── pixoo-push-image.tool.ts
-│   │       └── device-push.ts
+│   │       ├── device-push.ts
+│   │       └── finish-schema.ts
 │   ├── renderer/
+│   │   ├── finish.ts
 │   │   ├── icons.ts
 │   │   ├── keyframes.ts
 │   │   ├── preview.ts
@@ -172,10 +174,13 @@ pixoo-mcp-server/
 │   │   ├── canvas-ink.ts
 │   │   ├── device-failure.ts
 │   │   ├── expect-forwarded-recovery.ts
+│   │   ├── image-sources.ts
 │   │   ├── list-extra.ts
+│   │   ├── prototype-color-names.ts
 │   │   └── trickle-body.ts
 │   ├── prompts/
 │   ├── renderer/
+│   │   ├── finish.test.ts
 │   │   ├── icons.test.ts
 │   │   ├── keyframes.test.ts
 │   │   ├── preview.test.ts
@@ -184,6 +189,7 @@ pixoo-mcp-server/
 │   │   ├── text-engine.test.ts
 │   │   └── themes.test.ts
 │   ├── resources/
+│   │   ├── pixoo-design-guide.resource.test.ts
 │   │   ├── pixoo-device-status.resource.test.ts
 │   │   ├── pixoo-icons.resource.test.ts
 │   │   └── pixoo-themes.resource.test.ts

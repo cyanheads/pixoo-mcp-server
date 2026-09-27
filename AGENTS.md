@@ -187,6 +187,7 @@ Pixoo-specific error reasons declared on tools:
 | `device_rejected` | `ServiceUnavailable` | Firmware returned non-zero `error_code` | — |
 | `no_device_configured` | `InvalidParams` | Device tool called without `PIXOO_IP` | — |
 | `asset_not_found` | `NotFound` | Image/sprite path or URL unreadable | — |
+| `invalid_image` | `InvalidParams` | Image source or sprite path read but not decodable | — |
 | `invalid_color` | `InvalidParams` | `resolveColor` throw — invalid color name or format | — |
 | `unknown_icon` | `InvalidParams` | Icon name not in registry | — |
 | `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable | `true` |
@@ -234,11 +235,13 @@ src/
     text-engine.ts                      # Gradient ramp + shadow + outline text engine, overflow handling
     scene-renderer.ts                   # Element vocabulary, layout resolver, frame rendering
     keyframes.ts                        # Keyframe interpolation + animation preset compiler
+    finish.ts                           # Palette finish (quantize + dither) for one frame, or frames sharing one palette
     preview.ts                          # PNG/contact-sheet/GIF encoding
-    remote-image.ts                     # https image fetch to a temp file for the toolkit loader; stops on ctx.signal
+    remote-image.ts                     # https image fetch into memory for the toolkit loader; stops on ctx.signal
   mcp-server/
     tools/
       device-push.ts                    # Shared post-render push: preview kept on failure, visibility notice
+      finish-schema.ts                  # Shared `finish` input schema (colors | palette, plus dither)
     tools/definitions/
       pixoo-display-text.tool.ts
       pixoo-compose-scene.tool.ts

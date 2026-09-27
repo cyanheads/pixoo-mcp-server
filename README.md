@@ -31,7 +31,7 @@ Divoom Pixoo LED matrix displays on the local network, with the Pixoo-64 as the 
 |:---|:---|
 | `pixoo_display_text` | Render styled text with themes, gradients, shadows, and auto-fit, static or animated, and push it |
 | `pixoo_compose_scene` | Compose layered scenes of text, icons, widgets, shapes, bitmaps, images, and sprites, static or animated |
-| `pixoo_push_image` | Resize a local or https image to the LED grid and push it |
+| `pixoo_push_image` | Resize a local or https image to the LED grid and push it, an animated GIF or WebP as an animation |
 | `pixoo_overlay_text` | Set or clear a device-rendered scrolling text overlay |
 | `pixoo_control_device` | Read or change brightness, screen state, channel, or clock face |
 | `pixoo_discover_devices` | Find Pixoo devices and their LAN IPs through Divoom's cloud discovery |
@@ -53,15 +53,17 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 ### `pixoo_display_text` <sub>tool</sub>
 
 - `text` as a string or an array of lines; `theme` (`midnight`, `ember`, `claude`, `ice`, `neon`, `forest`, `mono`) sets the background and default palette. `style` takes a `palette` ramp (`ember`, `ice`, `neon`, `fire`, `lavender`, `claude`, `mono`) or a custom `{ from, to }`, plus `shadow`, `outline`, and `scale` 1–8; `position` is semantic or in pixels, and `align` lines up multi-line text
-- `layout[]` reports every fit decision as an `action` (`shrunk-to-compact`, `scrolling`, `truncated`, …). Single-line text falls back from the standard to the compact font unless `font` is set, and text still too wide only scrolls under `effect: "auto"` or `"scroll"`
+- `font`: `standard` (5×7) and `compact` (3×5) draw printable ASCII plus `° ← ↑ → ↓ ▲ ▼ ♥ · …`; `numerals` is an 11×18 digit face for clocks and readouts that draws 0–9, space, and `: . - + / % ° ?`, and text holding any other character fails validation, naming those characters
+- `layout[]` reports every fit decision as an `action` (`none`, `shrunk-to-compact`, or `scrolling`), the `font` used, and whether each line's box `fits` on the panel; a scrolling line's box starts at x 0, where its static frame draws it. Single-line text falls back from the standard to the compact font unless `font` is set — never to `numerals` — and text still too wide only scrolls under `effect: "auto"` or `"scroll"`
 - `effect`: `scroll` makes one pass in up to 40 frames, `auto` scrolls only on overflow, and `float` and `pulse` loop over 20 frames; `frames` reports the count, and the animation pushes as one device animation
 
 ---
 
 ### `pixoo_compose_scene` <sub>tool</sub>
 
-- Up to 50 `elements` drawn back-to-front: `text`, `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image` (absolute path or https URL), `sprite` (absolute path). The `background` is a solid color, a `v` / `h` / `r` gradient, or a `theme`
-- Returns `layout[]`: each element's placed box and whether it `fits` on the panel. An absolute `output` path saves the first frame as a PNG in place of the `PIXOO_OUTPUT_DIR` auto-save. Typed failures: `asset_not_found`, `invalid_color`, `unknown_icon`, `invalid_output_path`
+- Up to 50 `elements` drawn back-to-front: `text` (in the same three fonts as `pixoo_display_text`), `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image` (absolute path or https URL, with the same `finish` as `pixoo_push_image`), `sprite` (absolute path). The `background` is a solid color, a `v` / `h` / `r` gradient, or a `theme`
+- Every element takes `opacity` (each pixel lands at its own alpha × `opacity`, so soft edges fade evenly) and `blend`: `normal`, `add` (glows and light beams), `screen`, or `multiply`. `line` and outline `circle` take `strokeWidth` and `antialias`, and a `rect` border takes `strokeWidth`, growing inward; either field on a shape that draws no stroke fails validation, naming it
+- Returns `layout[]`: each element's placed box — for a wide or anti-aliased stroke, every pixel it draws — and whether it `fits` on the panel. An absolute `output` path saves the first frame as a PNG in place of the `PIXOO_OUTPUT_DIR` auto-save. Typed failures: `asset_not_found`, `invalid_image` (an image or sprite that was read but does not decode), `invalid_color`, `unknown_icon`, `invalid_output_path`
 - Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–40, `speed` 10–2000 ms per frame (default 150). An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
 
 ---
@@ -69,7 +71,9 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 ### `pixoo_push_image` <sub>tool</sub>
 
 - `source` is an absolute local path or an https URL, with downloads capped at 10 MB; `fit` is `contain` (default), `cover`, or `fill`, and `kernel` is `nearest` (default, for pixel art), `lanczos3` (photos), or `mitchell`
-- An unreadable path or URL fails as `asset_not_found`; the preview is the exact resized frame the device receives
+- A source that decodes as an animated GIF or WebP, whatever its file name, pushes as an animation of up to 40 frames, sampled evenly from a longer source. It plays at the source's total duration over the pushed frame count (150 ms when the source records no delays), or at `speed` (10–2000 ms per frame); `frames`, `sourceFrames`, and `speed` report what was pushed
+- `finish` reduces the image to a palette before the push: exactly one of `colors` (2–256, built from the image) or `palette` (1–256 hex or named colors), plus `dither` (`none`, `bayer4`, `floyd-steinberg`). Transparent pixels stay unlit, and an animation's `colors` palette is shared by every frame
+- An unreadable path or URL fails as `asset_not_found`, a source that is read but does not decode (a text file, an HTML page, a truncated download) fails as `invalid_image`, and an unresolvable `finish` palette entry fails as `invalid_color`; the preview is the exact frame the device receives, or a grid of every frame for an animation
 
 ---
 
@@ -135,7 +139,7 @@ Pixoo-specific:
 
 - All composition happens on the host in an RGBA canvas pipeline (`@cyanheads/pixoo-toolkit`); the device receives finished RGB frames
 - Pushes switch the device to the custom channel and run one at a time, spaced by `PIXOO_PUSH_MIN_INTERVAL_MS` (default 1000) so rapid pushes don't freeze the device
-- Animations cap at 40 frames, past which the device becomes unstable
+- Animations cap at 40 frames, past which the device becomes unstable; `pixoo_push_image` samples a longer GIF or WebP down to 40
 
 Agent-friendly output:
 
@@ -300,10 +304,10 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 |:---|:---|
 | `src/index.ts` | `createApp()` entry point: registers tools and resources and initializes the Pixoo service. |
 | `src/config/` | Server-specific environment variable parsing and validation with Zod. |
-| `src/mcp-server/tools/` | Tool definitions (`*.tool.ts`) and the shared post-render push path. |
+| `src/mcp-server/tools/` | Tool definitions (`*.tool.ts`), the shared post-render push path, and the shared `finish` input schema. |
 | `src/mcp-server/resources/` | Resource definitions (`*.resource.ts`). |
 | `src/services/pixoo/` | `PixooService`: wraps `@cyanheads/pixoo-toolkit` with push pacing, result mapping, and device state reads. |
-| `src/renderer/` | Pure rendering pipeline with no device dependency: element renderers, styled-text engine, themes, icons, effect compiler, preview encoding, remote image fetch. |
+| `src/renderer/` | Pure rendering pipeline with no device dependency: element renderers, styled-text engine, themes, icons, effect compiler, palette finishing, preview encoding, remote image fetch. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
 
 ## Development guide

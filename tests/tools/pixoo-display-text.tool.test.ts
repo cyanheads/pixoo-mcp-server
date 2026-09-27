@@ -5,16 +5,29 @@
 
 import { createHash } from 'node:crypto';
 import type { z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
   createMockContext,
   getContentBlocks,
   runToolContract,
 } from '@cyanheads/mcp-ts-core/testing';
-import type { Canvas } from '@cyanheads/pixoo-toolkit';
+import {
+  type BitmapFont,
+  Canvas,
+  drawText,
+  FONT_3x5,
+  FONT_5x7,
+  FONT_DIGITS_11x18,
+  measureText,
+  resolveColor,
+} from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
+import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
 import { pixooDisplayText } from '@/mcp-server/tools/definitions/pixoo-display-text.tool.js';
+import { PALETTES } from '@/renderer/themes.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { inkColors, inkPixels, inkRows } from '../helpers/canvas-ink.js';
 import {
   expectDeviceFailure,
   failDevicePush,
@@ -22,6 +35,11 @@ import {
   stubDeviceState,
 } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
+import {
+  expectInvalidColor,
+  PROTOTYPE_COLOR_INPUTS,
+  PROTOTYPE_NAME_CASES,
+} from '../helpers/prototype-color-names.js';
 
 type DisplayInput = z.input<typeof pixooDisplayText.input>;
 
@@ -353,7 +371,7 @@ describe('pixooDisplayText', () => {
       ).toMatchInlineSnapshot(`
         {
           "layout": [
-            "scrolling standard @-74,28",
+            "scrolling standard @0,28",
           ],
           "preview": "76492a3db134d31773ffb9aa7505cbe9f04c5fe49dea20b409e2448747f596b1",
           "pushed": "a1cf08cbdc1aeea89ec2493c94943f0819cfcdcc1148dc82615d3548ccc449e5",
@@ -727,5 +745,459 @@ describe('pixooDisplayText', () => {
       expect(lastLit(top!.box.y)).toBeGreaterThan(0);
       expect(lastLit(top!.box.y)).toBe(lastLit(bottom!.box.y));
     });
+  });
+
+  describe('an Object.prototype name is not a color', () => {
+    it.each(PROTOTYPE_COLOR_INPUTS)('style.color %j fails as invalid_color', async (name) => {
+      const result = await runToolContract(pixooDisplayText, {
+        text: 'HI',
+        style: { color: name },
+        push: false,
+      });
+      expectInvalidColor(result, pixooDisplayText.errors, name);
+    });
+
+    it.each(PROTOTYPE_NAME_CASES)('background %j fails as invalid_color', async (name) => {
+      const result = await runToolContract(pixooDisplayText, {
+        text: 'HI',
+        background: name,
+        push: false,
+      });
+      expectInvalidColor(result, pixooDisplayText.errors, name);
+    });
+
+    it('named and hex colors still resolve on those surfaces', async () => {
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooDisplayText, {
+        text: 'HI',
+        style: { color: 'Orange' },
+        background: '#00f',
+        push: true,
+      });
+      expect(result.isError).toBeFalsy();
+      const frame = client.push.mock.calls[0]?.[0] as Canvas;
+      expect(frame.getPixelRgba(0, 0).slice(0, 3)).toEqual([0, 0, 255]);
+      expect(inkColors(frame, undefined, [0, 0, 255])).toEqual([[255, 165, 0]]);
+    });
+  });
+
+  describe('printable ASCII renders exactly as it did under toolkit 0.8.2', () => {
+    // Printable ASCII (32–126), split into lines that fit 64 px in each font. The
+    // expected hashes and boxes were recorded from this server on @cyanheads/pixoo-toolkit
+    // 0.8.2, before the non-ASCII glyphs were added to both fonts.
+    const STANDARD = [
+      ' !"#$%&\'()*+,',
+      '-./01234567',
+      '89:;<=>?@ABC',
+      'DEFGHIJKLMN',
+      'OPQRSTUVWX',
+      'YZ[\\]^_`abc',
+      'defghijklmn',
+      'opqrstuvwx',
+      'yz{|}~',
+    ];
+    const COMPACT = [
+      ' !"#$%&\'()*+,-./01',
+      '23456789:;<=>?@AB',
+      'CDEFGHIJKLMNOPQR',
+      'STUVWXYZ[\\]^_`abc',
+      'defghijklmnopqrst',
+      'uvwxyz{|}~',
+    ];
+
+    /** Push `input`; return each layout entry as a line and the hash of the pushed frame. */
+    async function pushedFrame(input: DisplayInput) {
+      const { getPixooService } = await import('@/services/pixoo/pixoo-service.js');
+      const pushed: Canvas[] = [];
+      vi.spyOn(getPixooService(), 'pushFrame').mockImplementation(async (canvas) => {
+        pushed.push(canvas);
+        return fakeDeviceState;
+      });
+      const result = await pixooDisplayText.handler(
+        pixooDisplayText.input.parse({ ...input, push: true }),
+        createMockContext({ errors: pixooDisplayText.errors }),
+      );
+      expect(pushed).toHaveLength(1);
+      return {
+        layout: result.layout.map(
+          (e) =>
+            `${e.action} ${e.font} @${e.box.x},${e.box.y} ${e.box.w}x${e.box.h} fits:${e.fits}`,
+        ),
+        pushed: sha256(Buffer.from(pushed[0]!.buffer)),
+      };
+    }
+
+    const styled = { theme: 'midnight', style: { palette: 'ice', shadow: true } } as const;
+
+    it('standard, first five lines, with a palette ramp and shadow over a theme', async () => {
+      expect(
+        await pushedFrame({ text: STANDARD.slice(0, 5), font: 'standard', ...styled }),
+      ).toEqual({
+        layout: [
+          'none standard @2,12 60x7 fits:true',
+          'none standard @2,20 59x7 fits:true',
+          'none standard @1,28 62x7 fits:true',
+          'none standard @0,36 63x7 fits:true',
+          'none standard @2,44 59x7 fits:true',
+        ],
+        pushed: '4782a1dab1e6f18674fe294c8403dfb369854304e1595676ec86d38b2acc18ce',
+      });
+    });
+
+    it('standard, last four lines, with a palette ramp and shadow over a theme', async () => {
+      expect(await pushedFrame({ text: STANDARD.slice(5), font: 'standard', ...styled })).toEqual({
+        layout: [
+          'none standard @2,16 59x7 fits:true',
+          'none standard @2,24 59x7 fits:true',
+          'none standard @2,32 59x7 fits:true',
+          'none standard @18,40 27x7 fits:true',
+        ],
+        pushed: 'a32b8bac2ce460f4729e5895e792bd0c520d91003bbb00a99d2b1c668ff13ccb',
+      });
+    });
+
+    it('compact, every line, flat white at the top-left', async () => {
+      expect(
+        await pushedFrame({ text: COMPACT, font: 'compact', position: { x: 'left', y: 'top' } }),
+      ).toEqual({
+        layout: [
+          'none compact @0,0 62x5 fits:true',
+          'none compact @0,6 64x5 fits:true',
+          'none compact @0,12 63x5 fits:true',
+          'none compact @0,18 64x5 fits:true',
+          'none compact @0,24 64x5 fits:true',
+          'none compact @0,30 37x5 fits:true',
+        ],
+        pushed: '07c0b98e7696378576da5f26e19cdcfde40b89c1d626da0a8b424a0a7460bc53',
+      });
+    });
+  });
+
+  /** The ink the toolkit draws for `text` in `face` at (`x`, `y`), white on an empty canvas. */
+  function toolkitInk(text: string, face: BitmapFont, x = 0, y = 0): string[] {
+    const canvas = new Canvas(64);
+    drawText(canvas, text, x, y, [255, 255, 255], { font: face });
+    return inkPixels(canvas);
+  }
+
+  /** Push `input` to a fake device; return the result and the single frame it received. */
+  async function pushOne(input: DisplayInput) {
+    const client = stubDeviceState();
+    const result = await runToolContract(pixooDisplayText, { ...input, push: true });
+    expect(result.isError).toBeFalsy();
+    expect(client.push).toHaveBeenCalledOnce();
+    return { result, frame: client.push.mock.calls[0]?.[0] as Canvas };
+  }
+
+  type Entry = {
+    action: string;
+    box: { x: number; y: number; w: number; h: number };
+    fits: boolean;
+    font?: string;
+    scale?: number;
+  };
+  const layoutOf = (result: Awaited<ReturnType<typeof runToolContract>>) =>
+    (result.structuredContent as { layout: Entry[] }).layout;
+
+  describe('the non-ASCII glyphs in standard and compact', () => {
+    const FACES = { standard: FONT_5x7, compact: FONT_3x5 } as const;
+
+    it.each([
+      ['72°F', 'standard', '72?F'],
+      ['72°F', 'compact', '72?F'],
+      ['▲3 ▼2', 'standard', '?3 ?2'],
+      ['▲3 ▼2', 'compact', '?3 ?2'],
+    ] as const)('%s draws its own glyphs in %s, not %s', async (text, font, asQuestionMarks) => {
+      const white = { position: { x: 0, y: 0 }, style: { color: '#ffffff' } } as const;
+      const { result, frame } = await pushOne({ text, font, ...white });
+      const ink = inkPixels(frame, [0, 0, 0]);
+      expect(ink).toEqual(toolkitInk(text, FACES[font]));
+      expect(ink).not.toEqual(toolkitInk(asQuestionMarks, FACES[font]));
+      expect(layoutOf(result)[0]).toMatchObject({ font, fits: true });
+    });
+
+    it.each(['standard', 'compact'] as const)(
+      'each of ° ← ↑ → ↓ ▲ ▼ ♥ · … draws its own glyph in %s',
+      async (font) => {
+        const symbols = '°←↑→↓▲▼♥·…';
+        const white = { position: { x: 0, y: 0 }, style: { color: '#ffffff' } } as const;
+        for (const ch of symbols) {
+          const { frame } = await pushOne({ text: ch, font, ...white });
+          const ink = inkPixels(frame, [0, 0, 0]);
+          expect(ink, ch).toEqual(toolkitInk(ch, FACES[font]));
+          expect(ink, ch).not.toEqual(toolkitInk('?', FACES[font]));
+        }
+      },
+    );
+  });
+
+  describe('the numerals font', () => {
+    it('renders 12:45 as a 58×18 box in the 11×18 face, reported as numerals on both surfaces', async () => {
+      const { result, frame } = await pushOne({ text: '12:45', font: 'numerals' });
+      expect(layoutOf(result)).toEqual([
+        {
+          element: 0,
+          type: 'text',
+          box: { x: 3, y: 23, w: 58, h: 18 },
+          fits: true,
+          action: 'none',
+          font: 'numerals',
+          scale: 1,
+        },
+      ]);
+      expect(resultText(result)).toContain(
+        '[0] text @ (3,23) 58×18 fits:true action:none font:numerals scale:1',
+      );
+      expect(inkPixels(frame, [0, 0, 0])).toEqual(toolkitInk('12:45', FONT_DIGITS_11x18, 3, 23));
+    });
+
+    it('with font omitted, 12:45 still lays out in standard', async () => {
+      const { result } = await pushOne({ text: '12:45' });
+      expect(layoutOf(result)[0]).toMatchObject({
+        font: 'standard',
+        action: 'none',
+        box: { w: measureText('12:45', { font: FONT_5x7 }), h: 7 },
+      });
+      expect(resultText(result)).toContain('font:standard');
+    });
+
+    it('auto-fit never picks numerals: digits too wide for 5×7 shrink to compact', async () => {
+      const digits = '0123456789012';
+      expect(measureText(digits, { font: FONT_5x7 })).toBeGreaterThan(64);
+      const { result } = await pushOne({ text: digits });
+      expect(layoutOf(result)[0]).toMatchObject({ font: 'compact', action: 'shrunk-to-compact' });
+    });
+
+    it('at scale 2, 12:45 (116 px) on a 64-px panel reports scrolling and stays in numerals', async () => {
+      const { result } = await pushOne({ text: '12:45', font: 'numerals', style: { scale: 2 } });
+      expect(layoutOf(result)[0]).toMatchObject({
+        font: 'numerals',
+        action: 'scrolling',
+        fits: false,
+        scale: 2,
+        box: { w: 116, h: 36 },
+      });
+      expect(resultText(result)).toContain('116×36 fits:false action:scrolling font:numerals');
+    });
+
+    it('effect auto scrolls overflowing numerals, every frame in the 11×18 face', async () => {
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooDisplayText, {
+        text: '12:45',
+        font: 'numerals',
+        style: { scale: 2 },
+        effect: 'auto',
+        push: true,
+      });
+      const frames = client.pushAnimation.mock.calls[0]?.[0] as Canvas[];
+      expect(frames.length).toBeGreaterThan(1);
+      expect(layoutOf(result)[0]).toMatchObject({ font: 'numerals', action: 'scrolling' });
+      const heights = frames.map((f) => {
+        const rows = inkRows(f, [0, 0, 0]);
+        return rows.length === 0 ? 0 : rows.at(-1)! - rows[0]! + 1;
+      });
+      expect(Math.max(...heights)).toBe(36);
+    });
+
+    it('stacks multi-line numerals 19 px apart, each line in numerals', async () => {
+      const { result } = await pushOne({ text: ['12', '45'], font: 'numerals' });
+      expect(layoutOf(result)).toMatchObject([
+        { font: 'numerals', box: { x: 19, y: 13, w: 26, h: 18 }, fits: true },
+        { font: 'numerals', box: { x: 19, y: 32, w: 26, h: 18 }, fits: true },
+      ]);
+    });
+
+    it('palette, shadow, and scale apply unchanged', async () => {
+      const { frame } = await pushOne({
+        text: '1',
+        font: 'numerals',
+        style: { palette: 'ember', shadow: true, scale: 2 },
+      });
+      const rows = inkRows(frame, [0, 0, 0]);
+      // The 36 rows of the glyph at scale 2 (y 14–49), then one row of shadow below.
+      expect([rows[0], rows.at(-1)]).toEqual([14, 50]);
+      const { from, to } = PALETTES.ember;
+      expect(inkColors(frame, 14, [0, 0, 0])).toEqual([resolveColor(from)]);
+      expect(inkColors(frame, 49, [0, 0, 0])).toContainEqual(resolveColor(to));
+      expect(inkColors(frame, 50, [0, 0, 0])).toEqual([[20, 15, 10]]);
+    });
+
+    it('outline applies unchanged: a black rim one pixel around the glyph', async () => {
+      const bg = resolveColor('#203040');
+      const { frame } = await pushOne({
+        text: '1',
+        font: 'numerals',
+        background: '#203040',
+        style: { color: '#ffffff', outline: true },
+      });
+      // The glyph sits at y 23–40; the rim adds one row above and below.
+      const rows = inkRows(frame, bg);
+      expect([rows[0], rows.at(-1)]).toEqual([22, 41]);
+      expect(inkColors(frame, 22, bg)).toEqual([[0, 0, 0]]);
+      expect(inkColors(frame, 30, bg)).toEqual(
+        expect.arrayContaining([
+          [0, 0, 0],
+          [255, 255, 255],
+        ]),
+      );
+    });
+
+    it.each([
+      ['72°F', '"F"'],
+      ['am', '"a", "m"'],
+      [['12', 'am'], '"a", "m"'],
+      ['9 ♥ 7×', '"♥", "×"'],
+    ] as const)(
+      '%j in numerals fails -32602 naming %s; nothing is rendered or pushed',
+      async (text, named) => {
+        const client = stubDeviceState();
+        const result = await runToolContract(pixooDisplayText, {
+          text: typeof text === 'string' ? text : [...text],
+          font: 'numerals',
+          push: true,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+        });
+        expect(JsonRpcErrorCode.InvalidParams).toBe(-32602);
+        expect(resultText(result)).toContain(`Characters not in the numerals font: ${named}.`);
+        expect(JSON.stringify(result.structuredContent)).toContain('text');
+        expect(result.content.some((block) => block.type === 'image')).toBe(false);
+        expect(client.push).not.toHaveBeenCalled();
+        expect(client.pushAnimation).not.toHaveBeenCalled();
+      },
+    );
+
+    it('the input root stays strict: an undeclared argument is still rejected by name', async () => {
+      const result = await runToolContract(pixooDisplayText, {
+        text: '12',
+        font: 'numerals',
+        push: false,
+        fontSize: 18,
+      } as DisplayInput);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain('fontSize');
+    });
+
+    it('every character the face holds is accepted', async () => {
+      const { result } = await pushOne({ text: ['0123', '4567', '89 :'], font: 'numerals' });
+      expect(layoutOf(result)).toHaveLength(3);
+      const symbols = await pushOne({ text: '.-+/%°?', font: 'numerals' });
+      expect(layoutOf(symbols.result)[0]).toMatchObject({ font: 'numerals' });
+    });
+
+    it('the same characters are accepted in standard and compact', async () => {
+      for (const font of ['standard', 'compact'] as const) {
+        const { result } = await pushOne({ text: '72°F am', font });
+        expect(layoutOf(result)[0]).toMatchObject({ font });
+      }
+    });
+  });
+
+  describe('layout fits: the placed box lies wholly on the panel, all four edges', () => {
+    /** Run `input` on a `size`-pixel panel without a push. */
+    async function layoutOn(size: number, input: DisplayInput) {
+      process.env['PIXOO_SIZE'] = String(size);
+      resetServerConfig();
+      const result = await runToolContract(pixooDisplayText, { ...input, push: false });
+      expect(result.isError).toBeFalsy();
+      return { result, layout: layoutOf(result) };
+    }
+
+    it('PIXOO_SIZE 16: "1" at scale 3 is 21 px tall on a 16-px panel — fits: false', async () => {
+      const { result, layout } = await layoutOn(16, { text: '1', style: { scale: 3 } });
+      expect(layout[0]).toMatchObject({ box: { x: 3, y: -3, w: 9, h: 21 }, fits: false });
+      expect(resultText(result)).toContain('(3,-3) 9×21 fits:false');
+    });
+
+    it('PIXOO_SIZE 16: an 18-px numeral that fits the width still overflows the height', async () => {
+      const { layout } = await layoutOn(16, { text: '1', font: 'numerals' });
+      expect(layout[0]).toMatchObject({
+        font: 'numerals',
+        action: 'none',
+        box: { x: 1, y: -1, w: 13, h: 18 },
+        fits: false,
+      });
+    });
+
+    // "Hi" is 9×7 in 5×7.
+    it.each([
+      ['off the left edge', false, { x: -1, y: 0 }],
+      ['off the right edge', false, { x: 56, y: 0 }],
+      ['off the top edge', false, { x: 0, y: -1 }],
+      ['off the bottom edge', false, { x: 0, y: 58 }],
+      ['flush with the right and bottom edges', true, { x: 55, y: 57 }],
+      ['flush with the left and top edges', true, { x: 0, y: 0 }],
+    ] as const)('single line %s: fits %s', async (_label, fits, position) => {
+      const { result, layout } = await layoutOn(64, { text: 'Hi', position });
+      expect(layout[0]).toMatchObject({ box: { ...position, w: 9, h: 7 }, action: 'none', fits });
+      expect(resultText(result)).toContain(`fits:${fits}`);
+    });
+
+    it('multi-line: a line above the top edge does not fit; the line below it does', async () => {
+      const { layout } = await layoutOn(64, { text: ['AB', 'CD'], position: { y: -4 } });
+      expect(layout.map((e) => [e.box.y, e.fits])).toEqual([
+        [-4, false],
+        [4, true],
+      ]);
+    });
+
+    it('multi-line: lines left of the panel do not fit', async () => {
+      const { layout } = await layoutOn(64, { text: ['AB', 'CD'], position: { x: -1 } });
+      expect(layout.map((e) => [e.box.x, e.fits])).toEqual([
+        [-1, false],
+        [-1, false],
+      ]);
+    });
+
+    it('multi-line: a stack taller than the panel reports its outer lines as not fitting', async () => {
+      const { layout } = await layoutOn(16, { text: ['1', '2', '3'] });
+      expect(layout.map((e) => [e.box.y, e.fits])).toEqual([
+        [-4, false],
+        [4, true],
+        [12, false],
+      ]);
+    });
+
+    it('a scrolling line reports the box its static frame draws, from x = 0', async () => {
+      const text = 'SCROLLING TICKER TEXT THAT OVERFLOWS';
+      const { result, frame } = await pushOne({ text, style: { color: '#ffffff' } });
+      const [entry] = layoutOf(result);
+      expect(entry).toMatchObject({ action: 'scrolling', box: { x: 0, y: 28, h: 7 }, fits: false });
+      expect(resultText(result)).toContain(`(0,28) ${entry!.box.w}×7 fits:false action:scrolling`);
+      expect(inkPixels(frame, [0, 0, 0])).toEqual(toolkitInk(text, FONT_5x7, 0, 28));
+    });
+
+    it.each([
+      [16, { text: '1', style: { scale: 3 } }, { type: 'text', text: '1', style: { scale: 3 } }],
+      [64, { text: 'Hi', position: { x: 60, y: 2 } }, { type: 'text', text: 'Hi', x: 60, y: 2 }],
+      [64, { text: 'Hi', position: { x: 2, y: -2 } }, { type: 'text', text: 'Hi', x: 2, y: -2 }],
+      [
+        64,
+        { text: '12:45', font: 'numerals', position: { x: 'center', y: 'bottom' } },
+        { type: 'text', text: '12:45', font: 'numerals', x: 'center', y: 'bottom' },
+      ],
+    ] as const)(
+      'on a %i-px panel, %j reports the box and fits pixoo_compose_scene reports',
+      async (size, display, element) => {
+        const { layout } = await layoutOn(size, display as DisplayInput);
+        const scene = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          elements: [
+            {
+              ...element,
+              x: 'x' in element ? element.x : 'center',
+              y: 'y' in element ? element.y : 'center',
+            } as z.input<typeof pixooComposeScene.input>['elements'][number],
+          ],
+          push: false,
+        });
+        const [sceneEntry] = layoutOf(scene);
+        expect(sceneEntry).toMatchObject({ box: layout[0]!.box, fits: layout[0]!.fits });
+      },
+    );
   });
 });

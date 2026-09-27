@@ -11,6 +11,7 @@ import { pixooOverlayText } from '@/mcp-server/tools/definitions/pixoo-overlay-t
 import { getPixooService, initPixooService } from '@/services/pixoo/pixoo-service.js';
 import { expectDeviceFailure, resultText } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
+import { expectInvalidColor, PROTOTYPE_COLOR_INPUTS } from '../helpers/prototype-color-names.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -112,6 +113,39 @@ describe('pixooOverlayText', () => {
       expect.objectContaining({ color: [255, 165, 0] }),
       expect.anything(),
     );
+  });
+
+  describe('an Object.prototype name is not a color', () => {
+    const setOverlay = async (color: string) => {
+      const sendText = vi
+        .spyOn(getPixooService(), 'sendText')
+        .mockResolvedValue({ ok: true } as never);
+      const result = await runToolContract(pixooOverlayText, {
+        mode: 'set',
+        id: 0,
+        text: 'Hi',
+        color,
+      });
+      return { sendText, result };
+    };
+
+    it.each(PROTOTYPE_COLOR_INPUTS)(
+      'color %j fails as invalid_color, sending nothing',
+      async (name) => {
+        const { sendText, result } = await setOverlay(name);
+        expectInvalidColor(result, pixooOverlayText.errors, name);
+        expect(sendText).not.toHaveBeenCalled();
+      },
+    );
+
+    it('a hex color still resolves', async () => {
+      const { sendText, result } = await setOverlay('#0f0');
+      expect(result.isError).toBeFalsy();
+      expect(sendText).toHaveBeenCalledWith(
+        expect.objectContaining({ color: [0, 255, 0] }),
+        expect.anything(),
+      );
+    });
   });
 
   describe('forwards the declared recovery on both surfaces', () => {

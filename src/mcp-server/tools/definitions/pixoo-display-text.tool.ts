@@ -5,14 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import {
-  Canvas,
-  FONT_3x5,
-  FONT_5x7,
-  measureText,
-  NAMED_COLORS,
-  type PixooSize,
-} from '@cyanheads/pixoo-toolkit';
+import { Canvas, measureText, NAMED_COLORS, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
 import {
@@ -30,9 +23,14 @@ import {
   type TextElement,
 } from '@/renderer/scene-renderer.js';
 import {
+  boxFits,
+  describeMissingNumerals,
   drawStyledText,
+  FONT_FACES,
+  FONT_VARIANTS,
   type FontVariant,
   type LayoutEntry,
+  missingNumeralGlyphs,
   renderAutoFitText,
   resolveX,
   scrollCycle,
@@ -147,84 +145,95 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     'Render styled text (theme, gradient, shadow, outline, auto-fit) onto the Pixoo display and push it, static or animated with a scroll, float, or pulse effect. Returns the render as an image content block for immediate inspection. The primary tool for text-only display — for layers, icons, widgets, or per-element motion use pixoo_compose_scene. Run pixoo_design_brief with topic "text" first for palette and legibility guidance.',
   annotations: { idempotentHint: true, destructiveHint: false },
 
-  input: z.object({
-    text: z
-      .union([
-        z.string().describe('Single string of text to display.'),
-        z.array(z.string()).describe('Lines of text.'),
-      ])
-      .describe('Text to display. String or array of lines.'),
-    theme: z
-      .enum(['midnight', 'ember', 'claude', 'ice', 'neon', 'forest', 'mono'])
-      .optional()
-      .describe('Named scene theme — sets background gradient and default text palette.'),
-    background: z
-      .union([
-        z.string().describe('Solid CSS hex color.'),
-        z
-          .object({
-            gradient: z
-              .object({
-                type: z.enum(['v', 'h']).describe('v = vertical, h = horizontal.'),
-                from: z.string().describe('Gradient start color.'),
-                to: z.string().describe('Gradient end color.'),
-              })
-              .describe('Gradient background specification.'),
-          })
-          .describe('Gradient background object.'),
-      ])
-      .optional()
-      .describe('Background color or gradient. Overrides theme background when set.'),
-    style: StyleSchema.optional().describe('Text style: palette, shadow, outline, scale.'),
-    font: z
-      .enum(['standard', 'compact'])
-      .optional()
-      .describe(
-        'Font variant: standard (5×7) or compact (3×5), used as given — text too wide for it overflows rather than switching font. Omitted, single-line text tries standard and falls back to compact when standard overflows; multi-line text uses standard.',
-      ),
-    position: z
-      .object({
-        x: z
-          .union([
-            z.number().describe('Absolute pixel X coordinate (0 = left edge).'),
-            z.enum(['left', 'center', 'right']).describe('Semantic horizontal alignment.'),
-          ])
-          .optional()
-          .describe('X position or alignment (default: center).'),
-        y: z
-          .union([
-            z.number().describe('Absolute pixel Y coordinate (0 = top edge).'),
-            z.enum(['top', 'center', 'bottom']).describe('Semantic vertical alignment.'),
-          ])
-          .optional()
-          .describe('Y position or alignment (default: center).'),
-      })
-      .optional()
-      .describe('Text position on the display.'),
-    align: z
-      .enum(['left', 'center', 'right'])
-      .optional()
-      .describe(
-        'Multi-line text: align every line within the widest line, then place that block with position.x. Omit to place each line by position.x on its own.',
-      ),
-    effect: z
-      .enum(['none', 'auto', 'scroll', 'float', 'pulse'])
-      .optional()
-      .describe(
-        'Animation effect. scroll runs the text across the display once, in up to 40 frames; auto scrolls only when the text is too wide to fit; float (gentle bob) and pulse (breathing brightness) loop over 20 frames. An animated result is pushed as an animation and previewed as a grid of its frames. none or omitted renders one static frame.',
-      ),
-    push: z
-      .boolean()
-      .default(true)
-      .describe('Push the rendered frame to the device (default: true).'),
-    brightness: z
-      .number()
-      .int()
-      .min(0)
-      .max(100)
-      .optional()
-      .describe('Set device brightness before push (0–100). Failure is a warning, not an error.'),
-  }),
+  input: z
+    .object({
+      text: z
+        .union([
+          z.string().describe('Single string of text to display.'),
+          z.array(z.string()).describe('Lines of text.'),
+        ])
+        .describe('Text to display. String or array of lines.'),
+      theme: z
+        .enum(['midnight', 'ember', 'claude', 'ice', 'neon', 'forest', 'mono'])
+        .optional()
+        .describe('Named scene theme — sets background gradient and default text palette.'),
+      background: z
+        .union([
+          z.string().describe('Solid CSS hex color.'),
+          z
+            .object({
+              gradient: z
+                .object({
+                  type: z.enum(['v', 'h']).describe('v = vertical, h = horizontal.'),
+                  from: z.string().describe('Gradient start color.'),
+                  to: z.string().describe('Gradient end color.'),
+                })
+                .describe('Gradient background specification.'),
+            })
+            .describe('Gradient background object.'),
+        ])
+        .optional()
+        .describe('Background color or gradient. Overrides theme background when set.'),
+      style: StyleSchema.optional().describe('Text style: palette, shadow, outline, scale.'),
+      font: z
+        .enum(FONT_VARIANTS)
+        .optional()
+        .describe(
+          'Font variant, used as given — text too wide for it overflows rather than switching font: standard (5×7) or compact (3×5), each printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · …; or numerals (11×18 digits for clocks and readouts), which draws only 0–9, space, and : . - + / % ° ?, so text holding any other character is rejected. Omitted, single-line text tries standard and falls back to compact when standard overflows; multi-line text uses standard.',
+        ),
+      position: z
+        .object({
+          x: z
+            .union([
+              z.number().describe('Absolute pixel X coordinate (0 = left edge).'),
+              z.enum(['left', 'center', 'right']).describe('Semantic horizontal alignment.'),
+            ])
+            .optional()
+            .describe('X position or alignment (default: center).'),
+          y: z
+            .union([
+              z.number().describe('Absolute pixel Y coordinate (0 = top edge).'),
+              z.enum(['top', 'center', 'bottom']).describe('Semantic vertical alignment.'),
+            ])
+            .optional()
+            .describe('Y position or alignment (default: center).'),
+        })
+        .optional()
+        .describe('Text position on the display.'),
+      align: z
+        .enum(['left', 'center', 'right'])
+        .optional()
+        .describe(
+          'Multi-line text: align every line within the widest line, then place that block with position.x. Omit to place each line by position.x on its own.',
+        ),
+      effect: z
+        .enum(['none', 'auto', 'scroll', 'float', 'pulse'])
+        .optional()
+        .describe(
+          'Animation effect. scroll runs the text across the display once, in up to 40 frames; auto scrolls only when the text is too wide to fit; float (gentle bob) and pulse (breathing brightness) loop over 20 frames. An animated result is pushed as an animation and previewed as a grid of its frames. none or omitted renders one static frame.',
+        ),
+      push: z
+        .boolean()
+        .default(true)
+        .describe('Push the rendered frame to the device (default: true).'),
+      brightness: z
+        .number()
+        .int()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe('Set device brightness before push (0–100). Failure is a warning, not an error.'),
+    })
+    .superRefine((input, ctx) => {
+      if (input.font !== 'numerals') return;
+      const missing = missingNumeralGlyphs([input.text].flat().join(''));
+      if (missing.length === 0) return;
+      ctx.addIssue({
+        code: 'custom',
+        path: ['text'],
+        message: `${describeMissingNumerals(missing)} Set units and labels in the standard or compact font, or use pixoo_compose_scene to place a numerals text element beside a standard or compact label.`,
+      });
+    }),
 
   output: z.object({
     pushed: z.boolean().describe('True when the device acknowledged the push.'),
@@ -254,7 +263,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
             action: z
               .enum(['none', 'shrunk-to-compact', 'scrolling', 'wrapped', 'truncated', 'clipped'])
               .describe('Overflow action taken by the renderer.'),
-            font: z.enum(['standard', 'compact']).optional().describe('Font variant used.'),
+            font: z.enum(FONT_VARIANTS).optional().describe('Font variant used.'),
             scale: z.number().optional().describe('Scale factor applied.'),
           })
           .describe('Layout report entry for one element.'),
@@ -402,22 +411,23 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
         // When the text overflows and scrolls, frame 0 renders at x=size (off-canvas),
         // producing a solid-background preview. Re-render the preview canvas with the
-        // text at x=0 so the preview shows legible text.
+        // text at x=0 so the preview shows legible text, and report the box it draws.
         if (entry.action === 'scrolling') {
           applyBackground(canvas, bg);
           drawStyledText(canvas, combinedText, 0, entry.box.y, style, font);
+          entry.box.x = 0;
         }
         placements.push({
           text: combinedText,
-          x: entry.action === 'scrolling' ? 0 : entry.box.x,
+          x: entry.box.x,
           y: entry.box.y,
           w: entry.box.w,
           font,
         });
       } else {
         // Multi-line: stack lines vertically
-        const fontVariant = input.font === 'compact' ? 'compact' : 'standard';
-        const font = fontVariant === 'compact' ? FONT_3x5 : FONT_5x7;
+        const fontVariant = input.font ?? 'standard';
+        const font = FONT_FACES[fontVariant];
         const scale = style.scale ?? 1;
         const lineH = font.height * scale + 1;
         const totalH = lines.length * lineH;
@@ -442,11 +452,12 @@ export const pixooDisplayText = tool('pixoo_display_text', {
             : resolveX(input.position?.x ?? 'center', lineW, size, 0);
           const lineY = startY + li * lineH;
           drawStyledText(canvas, lineText, lineX, lineY, style, fontVariant);
+          const box = { x: lineX, y: lineY, w: lineW, h: font.height * scale };
           layoutEntries.push({
             element: li,
             type: 'text',
-            box: { x: lineX, y: lineY, w: lineW, h: font.height * scale },
-            fits: lineX + lineW <= size && lineY + font.height * scale <= size,
+            box,
+            fits: boxFits(box, size, size),
             action: 'none',
             font: fontVariant,
             scale,

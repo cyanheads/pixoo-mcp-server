@@ -36,12 +36,27 @@ export const EFFECT_NAMES: EffectName[] = [
 ];
 
 /**
+ * A fixed value in [0, 1) for one frame of one element: a 32-bit integer hash of the pair,
+ * so a render repeats exactly while neighbouring frames and elements still land far apart.
+ */
+function flicker(frame: number, element: number): number {
+  let h = Math.imul(frame, 0x9e3779b1) ^ Math.imul(element + 1, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32;
+}
+
+/**
  * Compile a named effect preset into a keyframe map.
  *
  * `amplitude` is pixels of movement for `float`, `scroll-left`/`scroll-right` (speed), and
  * `drift`, default 2. For `pulse` and `twinkle` it is the depth of the opacity dip below 100,
  * on a 0–1 scale: default 0.5 for `pulse` (a 50–100 ramp) and 0.6 for `twinkle` (40–100).
  * `blink`, `fade-in`, and `fade-out` ignore it.
+ *
+ * `twinkle` jitters each frame's phase by an amount fixed by the frame and `element`, the
+ * element's index in the scene, so the flicker is irregular and differs between elements
+ * while identical scenes render identically.
  */
 export function compileEffect(
   name: EffectName,
@@ -51,6 +66,7 @@ export function compileEffect(
     phase?: number;
   },
   totalFrames: number,
+  element = 0,
 ): KeyframeMap {
   const amp = opts.amplitude ?? 2;
   const period = opts.period ?? totalFrames;
@@ -104,7 +120,7 @@ export function compileEffect(
       const frames: KeyframeEntry[] = [];
       for (let i = 0; i < totalFrames; i++) {
         const t = (i / period + phase) * 2 * Math.PI;
-        const brightness = 0.5 + 0.5 * Math.sin(t + Math.random() * 0.3);
+        const brightness = 0.5 + 0.5 * Math.sin(t + flicker(i, element) * 0.3);
         frames.push([i, Math.round(100 - depth + depth * brightness)]);
       }
       return { opacity: frames };

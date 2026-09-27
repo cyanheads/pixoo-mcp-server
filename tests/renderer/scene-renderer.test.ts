@@ -9,15 +9,29 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createFetchMock, createMockContext } from '@cyanheads/mcp-ts-core/testing';
-import { Canvas, lerpColor, type RGB, resolveColor, savePng } from '@cyanheads/pixoo-toolkit';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  type BlendMode,
+  Canvas,
+  downsampleSprite,
+  drawText,
+  FONT_DIGITS_11x18,
+  lerpColor,
+  loadImage,
+  type RGB,
+  resolveColor,
+  savePng,
+} from '@cyanheads/pixoo-toolkit';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Finish, finishFrame } from '@/renderer/finish.js';
 import { ICON_NAMES } from '@/renderer/icons.js';
 import type { KeyframeEntry } from '@/renderer/keyframes.js';
 import {
   type AssetCache,
   applyBackground,
+  type CircleElement,
   type IconElement,
   type ImageElement,
+  type LineElement,
   type ProgressElement,
   preloadAssets,
   type RectElement,
@@ -32,7 +46,25 @@ import {
 import type { LayoutEntry } from '@/renderer/text-engine.js';
 import { PALETTES, type PaletteName } from '@/renderer/themes.js';
 import { hashOf, inkColors, inkPixels, inkRows, isInk } from '../helpers/canvas-ink.js';
+import {
+  expectNamesOnly,
+  type ImageSources,
+  NOT_IMAGE_REASON,
+  TRUNCATED_JPEG_REASON,
+  withServedSources,
+  writeImageSources,
+} from '../helpers/image-sources.js';
 import { trickleRoute } from '../helpers/trickle-body.js';
+
+// The loaders run for real; wrapping them counts how many loads a preload starts.
+vi.mock('@cyanheads/pixoo-toolkit', async (importOriginal) => {
+  const toolkit = await importOriginal<typeof import('@cyanheads/pixoo-toolkit')>();
+  return {
+    ...toolkit,
+    downsampleSprite: vi.fn(toolkit.downsampleSprite),
+    loadImage: vi.fn(toolkit.loadImage),
+  };
+});
 
 /** Empty asset cache — no images or sprites preloaded. */
 function emptyCache(): AssetCache {
@@ -66,6 +98,14 @@ let fixtureDir: string;
 let redPngPath: string;
 /** A 64×64 PNG in four quadrants: red top-left, blue top-right, green bottom-left, yellow bottom-right. */
 let quadrantPngPath: string;
+/**
+ * A 64×64 soft-edged canvas — white at alpha 64 over the top half, opaque white over the
+ * bottom-left quadrant, transparent elsewhere — saved flattened over black, as `savePng`
+ * writes by default: an opaque PNG of #404040, white, and black.
+ */
+let flattenedPngPath: string;
+/** The same soft-edged canvas saved with its alpha, at 64×64. */
+let softPngPath: string;
 
 beforeAll(async () => {
   fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-scene-renderer-'));
@@ -81,6 +121,16 @@ beforeAll(async () => {
   quadrants.fillRect(32, 32, 32, 32, [...YELLOW]);
   quadrantPngPath = path.join(fixtureDir, 'quadrants.png');
   await savePng(quadrants, quadrantPngPath);
+
+  const soft = new Canvas(64);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 64; x++) soft.setPixel(x, y, [255, 255, 255], 64);
+  }
+  soft.fillRect(0, 32, 32, 32, [255, 255, 255]);
+  flattenedPngPath = path.join(fixtureDir, 'flattened.png');
+  await savePng(soft, flattenedPngPath);
+  softPngPath = path.join(fixtureDir, 'soft.png');
+  await savePng(soft, softPngPath, 1, { alpha: true });
 });
 
 afterAll(async () => {
@@ -669,11 +719,272 @@ describe('renderScene — elements with no keyframed color', () => {
     );
     expect(frames.map(hashOf)).toMatchInlineSnapshot(`
       [
-        "d171624a4d349a28719edbf939573f2c4dda5757ce2e65a409a7bdd0ace21255",
-        "aa7a11426df5cbaa54bfdfb297c10594ee9de9ced78ddbf97d838afe886e7a7e",
-        "9ee2da2b742bc98b0db94fee4212127d42eaa6f44acfc44cb1b0b9f5d35d6112",
+        "17d9084eb66ff3b30985f2bb8ff496a8d9223970d31fb0e6ca7571bb611731a3",
+        "1fb70ed52b459bb8e9e94e2cb0a765b5f260fb3a732896fb396ae887954268f2",
+        "5fbf8a91ebf019ebb5555e117e0422e8c8ef2fecc65f338e74b6f7f6db0a4e28",
       ]
     `);
+  });
+});
+
+// ─── renderScene — a broad scene, pinned ──────────────────────────────────────
+
+describe('renderScene — a broad scene', () => {
+  /**
+   * Every element type, the deterministic effects, every keyframe track (fractional
+   * steps included), opacity on opaque content, and images placed, finished, and faded.
+   */
+  function broadScene(): SceneElement[] {
+    return [
+      {
+        type: 'text',
+        text: 'HI',
+        x: 2,
+        y: 2,
+        color: '#ffa500',
+        style: { shadow: true },
+        effect: { name: 'float' },
+      },
+      {
+        type: 'text',
+        text: 'ok',
+        font: 'compact',
+        x: 'right',
+        y: 'top',
+        style: { palette: 'ice', outline: true },
+      },
+      {
+        type: 'text',
+        text: 'AB',
+        x: 'center',
+        y: 'bottom',
+        style: { scale: 2 },
+        animate: {
+          color: [
+            [0, '#ff0000'],
+            [3, '#00ff00'],
+          ],
+        },
+      },
+      { type: 'icon', name: 'star', x: 40, y: 2, color: '#44ccff', effect: { name: 'pulse' } },
+      { type: 'icon', name: 'heart', x: 50, y: 14, w: 10, h: 10, palette: 'fire', opacity: 70 },
+      {
+        type: 'icon',
+        d: 'M2 2 L14 2 L8 14 Z',
+        x: 26,
+        y: 14,
+        w: 8,
+        h: 8,
+        color: 'lime',
+        animate: {
+          visible: [
+            [0, true],
+            [2, false],
+          ],
+        },
+      },
+      {
+        type: 'rect',
+        x: 2,
+        y: 20,
+        w: 20,
+        h: 6,
+        gradient: { type: 'h', from: '#ff0000', to: '#0000ff' },
+        borderColor: '#ffffff',
+        effect: { name: 'blink', period: 2 },
+      },
+      {
+        type: 'rect',
+        x: 24,
+        y: 26,
+        w: 12,
+        h: 8,
+        color: '#8844ff',
+        borderColor: '#ffff00',
+        opacity: 60,
+        animate: {
+          dy: [
+            [0, 0],
+            [3, 2],
+          ],
+        },
+      },
+      {
+        type: 'circle',
+        cx: 40,
+        cy: 24,
+        radius: 5,
+        color: '#00ff00',
+        animate: {
+          dx: [
+            [0, 0],
+            [3, 5],
+          ],
+        },
+      },
+      { type: 'circle', cx: 20, cy: 40, radius: 6, fill: false, effect: { name: 'drift' } },
+      {
+        type: 'line',
+        x0: 0,
+        y0: 40,
+        x1: 63,
+        y1: 44,
+        color: '#ffff00',
+        animate: {
+          opacity: [
+            [0, 100],
+            [3, 20],
+          ],
+        },
+      },
+      {
+        type: 'line',
+        x0: 60,
+        y0: 10,
+        x1: 52,
+        y1: 30,
+        color: 'orange',
+        effect: { name: 'scroll-left', amplitude: 1 },
+      },
+      {
+        type: 'progress',
+        x: 2,
+        y: 28,
+        w: 20,
+        h: 5,
+        value: 7,
+        max: 10,
+        palette: 'neon',
+        label: '70',
+        opacity: 80,
+      },
+      { type: 'sparkline', x: 2, y: 46, w: 30, h: 10, data: [1, 4, 2, 6, 3] },
+      {
+        type: 'sparkline',
+        kind: 'bar',
+        x: 34,
+        y: 46,
+        w: 14,
+        h: 8,
+        data: [3, 1, 4, 1, 5],
+        color: '#ff00ff',
+        effect: { name: 'fade-in' },
+      },
+      {
+        type: 'bitmap',
+        x: 52,
+        y: 30,
+        rows: ['0110', '1..1', '0110'],
+        palette: ['#ff0000', '#00ffff'],
+        effect: { name: 'fade-out' },
+      },
+      {
+        type: 'pixels',
+        data: [
+          { x: 60, y: 60, color: '#ff00ff' },
+          { x: 62, y: 58, color: '#ffffff' },
+        ],
+        animate: {
+          color: [
+            [0, '#ff00ff'],
+            [3, '#00ffff'],
+          ],
+        },
+      },
+      { type: 'image', source: quadrantPngPath, x: 44, y: 44, w: 16, h: 16, opacity: 50 },
+      {
+        type: 'image',
+        source: redPngPath,
+        x: 34,
+        y: 36,
+        w: 8,
+        h: 8,
+        finish: { palette: ['#000000', '#ff8800'] },
+      },
+      { type: 'image', source: flattenedPngPath, x: 0, y: 48, w: 16, h: 16 },
+      {
+        type: 'sprite',
+        path: redPngPath,
+        cols: 4,
+        rows: 4,
+        x: 'left',
+        y: 56,
+        scale: 2,
+        bodyColor: '#00ffff',
+      },
+    ];
+  }
+
+  /** Each layout entry as one line: index, type, box, and fit. */
+  function layoutLines(entries: LayoutEntry[]): string[] {
+    return entries.map(
+      ({ element, type, box, fits }) =>
+        `${element} ${type} ${box.x},${box.y} ${box.w}×${box.h} ${fits}`,
+    );
+  }
+
+  it('renders byte-identically, frame by frame, with the same layout', async () => {
+    const { frames, layoutEntries } = await renderScene(
+      { gradient: { type: 'r', from: '#101020', to: '#302010' } },
+      broadScene(),
+      4,
+      createMockContext(),
+      64,
+    );
+    expect(frames.map(hashOf)).toMatchInlineSnapshot(`
+      [
+        "007bdfccdd8059072f3a62ce57e1f05d0b3f8ce42a693cb8c1f94e8aa9cbb731",
+        "4a6c43d16fdc8fc390f8e7b1712b4b57a0aeb6562dc260903f81b0a2c9a2ede4",
+        "8ec68ecb7c75cdc2a9e55a398c62d913c6e75f5f76f664abdfa8b0ffa0d245d2",
+        "308fcf11e46731273482c324e78219121af6e1189fdde69e83183e2ede6be47d",
+      ]
+    `);
+    expect(layoutLines(layoutEntries)).toMatchInlineSnapshot(`
+      [
+        "0 text 2,2 9×7 true",
+        "1 text 57,0 7×5 true",
+        "2 text 21,50 22×14 true",
+        "3 icon 40,2 12×12 true",
+        "4 icon 50,14 10×10 true",
+        "5 icon 26,14 8×8 true",
+        "6 rect 2,20 20×6 true",
+        "7 rect 24,26 12×8 true",
+        "8 circle 35,19 11×11 true",
+        "9 circle 14,34 13×13 true",
+        "10 line 0,40 64×5 true",
+        "11 line 52,10 9×21 true",
+        "12 progress 2,28 20×5 true",
+        "13 sparkline 2,46 30×10 true",
+        "14 sparkline 34,46 14×8 true",
+        "15 bitmap 52,30 4×3 true",
+        "16 pixels 60,58 3×3 true",
+        "17 image 44,44 16×16 true",
+        "18 image 34,36 8×8 true",
+        "19 image 0,48 16×16 true",
+        "20 sprite 0,56 8×8 true",
+      ]
+    `);
+  });
+
+  it('renders byte-identically with blend, strokeWidth, and antialias set to their defaults', async () => {
+    /** The element with every new field it accepts at its default. */
+    const withDefaults = (el: SceneElement): SceneElement => {
+      const blended = { ...el, blend: 'normal' } as SceneElement;
+      if (blended.type === 'line' || (blended.type === 'circle' && blended.fill === false)) {
+        return { ...blended, strokeWidth: 1, antialias: false };
+      }
+      if (blended.type === 'rect' && blended.borderColor) return { ...blended, strokeWidth: 1 };
+      return blended;
+    };
+    const background = { gradient: { type: 'r', from: '#101020', to: '#302010' } } as const;
+    const render = (elements: SceneElement[]) =>
+      renderScene(background, elements, 4, createMockContext(), 64);
+    const [plain, defaults] = await Promise.all([
+      render(broadScene()),
+      render(broadScene().map(withDefaults)),
+    ]);
+    expect(defaults.frames.map(hashOf)).toEqual(plain.frames.map(hashOf));
+    expect(layoutLines(defaults.layoutEntries)).toEqual(layoutLines(plain.layoutEntries));
   });
 });
 
@@ -979,33 +1290,41 @@ describe('renderScene — effect amplitude', () => {
   it.each(['pulse', 'twinkle'] as const)(
     '%s at amplitude 0.1 and 1 renders different frames',
     async (name) => {
-      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-      try {
-        const render = (amplitude: number) =>
-          renderScene(
-            '#000000',
-            [
-              {
-                type: 'rect',
-                x: 0,
-                y: 0,
-                w: 4,
-                h: 4,
-                color: '#ffffff',
-                effect: { name, amplitude },
-              },
-            ],
-            6,
-            createMockContext(),
-            64,
-          );
-        const [shallow, deep] = await Promise.all([render(0.1), render(1)]);
-        expect(shallow.frames.map(hashOf)).not.toEqual(deep.frames.map(hashOf));
-      } finally {
-        random.mockRestore();
-      }
+      const render = (amplitude: number) =>
+        renderScene(
+          '#000000',
+          [{ type: 'rect', x: 0, y: 0, w: 4, h: 4, color: '#ffffff', effect: { name, amplitude } }],
+          6,
+          createMockContext(),
+          64,
+        );
+      const [shallow, deep] = await Promise.all([render(0.1), render(1)]);
+      expect(shallow.frames.map(hashOf)).not.toEqual(deep.frames.map(hashOf));
     },
   );
+});
+
+// ─── renderScene — twinkle ────────────────────────────────────────────────────
+
+describe('renderScene — twinkle', () => {
+  /** Two white squares twinkling side by side over black, 12 frames. */
+  const twinklers = (): SceneElement[] => [
+    { type: 'rect', x: 0, y: 0, w: 4, h: 4, color: '#ffffff', effect: { name: 'twinkle' } },
+    { type: 'rect', x: 8, y: 0, w: 4, h: 4, color: '#ffffff', effect: { name: 'twinkle' } },
+  ];
+  const render = () => renderScene('#000000', twinklers(), 12, createMockContext(), 64);
+
+  it('identical scenes render identical frames', async () => {
+    const [first, second] = await Promise.all([render(), render()]);
+    expect(second.frames.map(hashOf)).toEqual(first.frames.map(hashOf));
+  });
+
+  it('two twinkling elements flicker out of step with each other', async () => {
+    const { frames } = await render();
+    const left = frames.map((frame) => frame.getPixelRgba(1, 1)[0]);
+    const right = frames.map((frame) => frame.getPixelRgba(9, 1)[0]);
+    expect(left).not.toEqual(right);
+  });
 });
 
 // ─── renderElement — text ─────────────────────────────────────────────────────
@@ -1030,6 +1349,34 @@ describe('renderElement — text', () => {
     renderElement(canvas, el, 0, 0, 1, emptyCache(), entries);
     // Standard font height is 7; scale 2 → 14
     expect(entries[0]!.box.h).toBe(14);
+  });
+
+  it('font numerals draws in the 11×18 face and reports numerals', () => {
+    const canvas = new Canvas(64);
+    const entries: LayoutEntry[] = [];
+    const el: TextElement = { type: 'text', text: '12:45', font: 'numerals', x: 2, y: 40 };
+    renderElement(canvas, el, 0, 0, 1, emptyCache(), entries);
+    expect(entries).toEqual([
+      {
+        element: 0,
+        type: 'text',
+        box: { x: 2, y: 40, w: 58, h: 18 },
+        fits: true,
+        action: 'none',
+        font: 'numerals',
+        scale: 1,
+      },
+    ]);
+    const expected = new Canvas(64);
+    drawText(expected, '12:45', 2, 40, [255, 255, 255], { font: FONT_DIGITS_11x18 });
+    expect(inkPixels(canvas)).toEqual(inkPixels(expected));
+  });
+
+  it('a numerals element 18 px tall at y 50 runs off the bottom — fits: false', () => {
+    const entries: LayoutEntry[] = [];
+    const el: TextElement = { type: 'text', text: '1', font: 'numerals', x: 0, y: 50 };
+    renderElement(new Canvas(64), el, 0, 0, 1, emptyCache(), entries);
+    expect(entries[0]).toMatchObject({ box: { y: 50, h: 18 }, fits: false });
   });
 });
 
@@ -1139,6 +1486,383 @@ describe('renderElement — image', () => {
     renderElement(canvas, el, 0, 0, 1, imageCache(el, halfImage()), []);
     expect(Buffer.from(canvas.buffer).equals(before)).toBe(true);
   });
+
+  /** A 64×64 image of white at alpha 64 on every pixel. */
+  function faintWhite(): Canvas {
+    const img = new Canvas(64);
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) img.setPixel(x, y, [255, 255, 255], 64);
+    }
+    return img;
+  }
+
+  it.each([
+    [100, 64],
+    [50, 32],
+  ])('white at alpha 64 over black, at opacity %i, renders %i', (opacity, value) => {
+    const canvas = new Canvas(64);
+    canvas.clear([0, 0, 0]);
+    const el: ImageElement = { type: 'image', source: 'img', opacity };
+    renderElement(canvas, el, 0, 0, 1, imageCache(el, faintWhite()), []);
+    expect(canvas.getPixelRgba(10, 10)).toEqual([value, value, value, 255]);
+  });
+
+  it('a soft-edged image fading in never outshines itself at full opacity', async () => {
+    const image = faintWhite();
+    const el: ImageElement = { type: 'image', source: 'img', effect: { name: 'fade-in' } };
+    const cache = imageCache(el, image);
+    const whites = [0, 1, 2, 3, 4].map((frame) => {
+      const { canvas } = renderFrame(frame, 5, '#000000', [el], cache, 64);
+      return canvas.getPixelRgba(10, 10)[0];
+    });
+    // fade-in runs opacity 0, 25, 50, 75, 100: white at alpha 64 lands at 64 × each.
+    expect(whites).toEqual([0, 16, 32, 48, 64]);
+  });
+});
+
+// ─── renderElement — blend modes ──────────────────────────────────────────────
+
+describe('renderElement — blend modes', () => {
+  const DARK_RED: RGB = [100, 0, 0]; // #640000
+
+  /** Render `el` onto a 64px canvas over `background` (transparent when omitted). */
+  function over(background: RGB | undefined, el: SceneElement, assets = emptyCache()): Canvas {
+    const canvas = new Canvas(64);
+    if (background) canvas.clear(background);
+    renderElement(canvas, el, 0, 0, 1, assets, []);
+    return canvas;
+  }
+
+  /** A #c80000 rect over (4, 4)–(11, 11). */
+  const redRect = (props: Partial<RectElement>): RectElement => ({
+    type: 'rect',
+    x: 4,
+    y: 4,
+    w: 8,
+    h: 8,
+    color: '#c80000',
+    ...props,
+  });
+
+  it.each<[BlendMode | undefined, number | undefined, number]>([
+    [undefined, undefined, 200],
+    ['normal', undefined, 200],
+    ['add', undefined, 255],
+    ['screen', undefined, 222],
+    ['multiply', undefined, 78],
+    [undefined, 50, 150],
+    ['normal', 50, 150],
+    ['add', 50, 200],
+    ['screen', 50, 161],
+    ['multiply', 50, 89],
+  ])(
+    'a #c80000 rect over #640000, blend %s at opacity %s, renders [%i, 0, 0]',
+    (blend, opacity, red) => {
+      const props: Partial<RectElement> = {};
+      if (blend) props.blend = blend;
+      if (opacity !== undefined) props.opacity = opacity;
+      const canvas = over(DARK_RED, redRect(props));
+      expect(canvas.getPixelRgba(6, 6)).toEqual([red, 0, 0, 255]);
+      expect(canvas.getPixelRgba(20, 20)).toEqual([...DARK_RED, 255]);
+    },
+  );
+
+  it.each<[BlendMode, number, number]>([
+    ['normal', 100, 255],
+    ['add', 100, 255],
+    ['screen', 100, 255],
+    ['multiply', 100, 255],
+    ['normal', 50, 128],
+    ['add', 50, 128],
+    ['screen', 50, 128],
+    ['multiply', 50, 128],
+  ])(
+    'blend %s at opacity %i over a transparent canvas stores the element color at alpha %i',
+    (blend, opacity, alpha) => {
+      const canvas = over(undefined, redRect({ blend, opacity }));
+      expect(canvas.getPixelRgba(6, 6)).toEqual([200, 0, 0, alpha]);
+      expect(canvas.getPixelRgba(20, 20)).toEqual([0, 0, 0, 0]);
+    },
+  );
+
+  it('an anti-aliased stroke blends each pixel at its own coverage', () => {
+    const line = (blend?: BlendMode): SceneElement => ({
+      type: 'line',
+      x0: 0,
+      y0: 0,
+      x1: 20,
+      y1: 20,
+      color: '#ffffff',
+      antialias: true,
+      ...(blend ? { blend } : {}),
+    });
+    // (10, 9) is 53/255 covered: add over #640000 sums 100 + 53; normal mixes toward white.
+    expect(over(DARK_RED, line('add')).getPixelRgba(10, 9)).toEqual([153, 53, 53, 255]);
+    expect(over(DARK_RED, line()).getPixelRgba(10, 9)).toEqual([132, 53, 53, 255]);
+  });
+
+  /** One element of every type, drawn in a color that never saturates over mid-gray. */
+  const everyType = (): SceneElement[] => [
+    { type: 'text', text: 'HI', x: 2, y: 2, color: '#c00000' },
+    { type: 'icon', name: 'heart', x: 20, y: 2, w: 12, h: 12, color: '#00a000' },
+    { type: 'rect', x: 36, y: 2, w: 8, h: 6, color: '#0000c0', borderColor: '#606000' },
+    { type: 'circle', cx: 52, cy: 8, radius: 5, color: '#00a0a0' },
+    { type: 'line', x0: 2, y0: 20, x1: 30, y1: 26, color: '#a000a0' },
+    { type: 'progress', x: 34, y: 20, w: 24, h: 5, value: 1, max: 2, trackColor: '#200000' },
+    { type: 'sparkline', x: 2, y: 30, w: 20, h: 8, data: [1, 4, 2], color: '#4040c0' },
+    { type: 'bitmap', x: 26, y: 30, rows: ['101', '010'], palette: ['#000000', '#c06000'] },
+    { type: 'pixels', data: [{ x: 40, y: 32, color: '#00c040' }] },
+    { type: 'image', source: quadrantPngPath, x: 44, y: 30, w: 16, h: 16 },
+    { type: 'sprite', path: redPngPath, cols: 4, rows: 4, x: 4, y: 44, scale: 2 },
+  ];
+
+  it.each(everyType().map((el) => el.type))(
+    '%s: add and screen never darken the normal render, multiply never brightens it',
+    async (type) => {
+      // Built here, not at collection: the image and sprite fixtures exist only once the suite starts.
+      const el = everyType().find((candidate) => candidate.type === type)!;
+      const render = async (blend: BlendMode) =>
+        (await renderScene('#808080', [{ ...el, blend }], 1, createMockContext(), 64)).frames[0]!;
+      const [normal, add, screen, multiply] = await Promise.all([
+        render('normal'),
+        render('add'),
+        render('screen'),
+        render('multiply'),
+      ]);
+      let brighter = 0;
+      for (let i = 0; i < normal.buffer.length; i++) {
+        if (i % 4 === 3) continue;
+        expect(add.buffer[i]).toBeGreaterThanOrEqual(normal.buffer[i]!);
+        expect(screen.buffer[i]).toBeGreaterThanOrEqual(normal.buffer[i]!);
+        expect(multiply.buffer[i]).toBeLessThanOrEqual(normal.buffer[i]!);
+        if (add.buffer[i]! > normal.buffer[i]!) brighter++;
+      }
+      expect(brighter).toBeGreaterThan(0);
+    },
+  );
+
+  it.each<[string, Partial<ImageElement>]>([
+    ['blend add at opacity 50', { blend: 'add', opacity: 50 }],
+    ['blend screen', { blend: 'screen' }],
+    ['opacity 30', { opacity: 30 }],
+  ])('%s leaves the cached image canvas untouched', (_label, props) => {
+    const image = faintWhiteSquare();
+    const before = hashOf(image);
+    const el: ImageElement = { type: 'image', source: 'img', ...props };
+    const canvas = over(DARK_RED, el, imageCache(el, image));
+    expect(hashOf(image)).toBe(before);
+    expect(canvas.getPixelRgba(40, 40)).toEqual([...DARK_RED, 255]);
+    expect(canvas.getPixelRgba(4, 4)).not.toEqual([...DARK_RED, 255]);
+  });
+
+  /** White at alpha 64 over the top-left 16×16, transparent elsewhere. */
+  function faintWhiteSquare(): Canvas {
+    const img = new Canvas(64);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) img.setPixel(x, y, [255, 255, 255], 64);
+    }
+    return img;
+  }
+});
+
+// ─── renderElement — stroke width and anti-aliasing ───────────────────────────
+
+describe('renderElement — stroke width and anti-aliasing', () => {
+  const BLACK: RGB = [0, 0, 0];
+
+  /** Render `el` on black at `frame` of `frames`; return the canvas and its layout entry. */
+  function stroke(el: SceneElement, frame = 0, frames = 1) {
+    const canvas = new Canvas(64);
+    canvas.clear(BLACK);
+    const entries: LayoutEntry[] = [];
+    renderElement(canvas, el, 0, frame, frames, emptyCache(), entries);
+    return { canvas, entry: entries[0]! };
+  }
+
+  /** The bounding box of every ink pixel over black. */
+  function inkBox(canvas: Canvas): LayoutEntry['box'] {
+    const points = inkPixels(canvas, BLACK).map((p) => p.split(',').map(Number));
+    const xs = points.map(([x]) => x!);
+    const ys = points.map(([, y]) => y!);
+    const [x0, y0] = [Math.min(...xs), Math.min(...ys)];
+    return { x: x0, y: y0, w: Math.max(...xs) - x0 + 1, h: Math.max(...ys) - y0 + 1 };
+  }
+
+  it('a line 2,10 → 20,10 at strokeWidth 3 lights rows 9–11 and reports that box', () => {
+    const { canvas, entry } = stroke({
+      type: 'line',
+      x0: 2,
+      y0: 10,
+      x1: 20,
+      y1: 10,
+      strokeWidth: 3,
+    });
+    expect(inkRows(canvas, BLACK)).toEqual([9, 10, 11]);
+    expect(inkBox(canvas)).toEqual({ x: 2, y: 9, w: 19, h: 3 });
+    expect(entry.box).toEqual({ x: 2, y: 9, w: 19, h: 3 });
+    expect(entry.fits).toBe(true);
+  });
+
+  it('the same line along row 63 does not fit: its stroke crosses the bottom edge', () => {
+    const { entry } = stroke({ type: 'line', x0: 2, y0: 63, x1: 20, y1: 63, strokeWidth: 3 });
+    expect(entry.box).toEqual({ x: 2, y: 62, w: 19, h: 3 });
+    expect(entry.fits).toBe(false);
+  });
+
+  it('an outline circle at 32,32, radius 10, strokeWidth 3 lights x 21–23 and 41–43 on row 32', () => {
+    const { canvas, entry } = stroke({
+      type: 'circle',
+      cx: 32,
+      cy: 32,
+      radius: 10,
+      fill: false,
+      strokeWidth: 3,
+    });
+    const row = inkPixels(canvas, BLACK)
+      .filter((p) => p.endsWith(',32'))
+      .map((p) => Number(p.split(',')[0]));
+    expect(row).toEqual([21, 22, 23, 41, 42, 43]);
+    expect(entry.box).toEqual({ x: 21, y: 21, w: 23, h: 23 });
+    expect(inkBox(canvas)).toEqual(entry.box);
+  });
+
+  it('a rect at 10,10, 10×6, with a border at strokeWidth 2 lights 48 pixels around an unpainted 6×2', () => {
+    const { canvas, entry } = stroke({
+      type: 'rect',
+      x: 10,
+      y: 10,
+      w: 10,
+      h: 6,
+      borderColor: '#ffffff',
+      strokeWidth: 2,
+    });
+    expect(inkPixels(canvas, BLACK)).toHaveLength(48);
+    for (let y = 12; y < 14; y++) {
+      for (let x = 12; x < 18; x++) expect(isInk(canvas, x, y, BLACK)).toBe(false);
+    }
+    expect(inkBox(canvas)).toEqual({ x: 10, y: 10, w: 10, h: 6 });
+    expect(entry.box).toEqual({ x: 10, y: 10, w: 10, h: 6 });
+  });
+
+  it.each([
+    [undefined, 53],
+    [50, 27],
+  ])(
+    'an anti-aliased white line 0,0 → 20,20 over black, at opacity %s, stores %i at (10, 9)',
+    (opacity, value) => {
+      const el: SceneElement = {
+        type: 'line',
+        x0: 0,
+        y0: 0,
+        x1: 20,
+        y1: 20,
+        color: '#ffffff',
+        antialias: true,
+      };
+      if (opacity !== undefined) el.opacity = opacity;
+      expect(stroke(el).canvas.getPixelRgba(10, 9)).toEqual([value, value, value, 255]);
+    },
+  );
+
+  /** A line from `x0,y0` to `x1,y1` with `props`. */
+  const line = (
+    [x0, y0, x1, y1]: [number, number, number, number],
+    props: Partial<LineElement>,
+  ): SceneElement => ({ type: 'line', x0, y0, x1, y1, ...props });
+
+  /** An outline circle with `props`. */
+  const ring = (
+    [cx, cy, radius]: [number, number, number],
+    props: Partial<CircleElement>,
+  ): SceneElement => ({ type: 'circle', cx, cy, radius, fill: false, ...props });
+
+  /** Keyframes that nudge `dx` and `dy` by half a pixel on frame 1 of 3. */
+  const halfStep = {
+    animate: {
+      dx: [
+        [0, 0],
+        [2, 1],
+      ] as KeyframeEntry[],
+      dy: [
+        [0, 0],
+        [2, 1],
+      ] as KeyframeEntry[],
+    },
+  };
+
+  it.each<[string, SceneElement]>([
+    ['a shallow line at width 4', line([5, 5, 40, 20], { strokeWidth: 4 })],
+    [
+      'a steep anti-aliased line at width 5',
+      line([30, 4, 34, 58], { strokeWidth: 5, antialias: true }),
+    ],
+    ['a 1px anti-aliased diagonal', line([4, 4, 24, 24], { antialias: true })],
+    [
+      'a falling anti-aliased line at width 2',
+      line([10, 50, 50, 12], { strokeWidth: 2, antialias: true }),
+    ],
+    ['a leftward line at width 6', line([58, 8, 6, 14], { strokeWidth: 6 })],
+    ['a point at width 3', line([32, 32, 32, 32], { strokeWidth: 3 })],
+    ['a ring at width 4, anti-aliased', ring([20, 20, 5], { strokeWidth: 4, antialias: true })],
+    ['a ring wider than its radius', ring([40, 40, 1], { strokeWidth: 6 })],
+    ['a 1px anti-aliased ring', ring([30, 30, 8], { antialias: true })],
+    ['an even-width ring', ring([32, 32, 12], { strokeWidth: 2 })],
+  ])('%s reports exactly the box of the pixels it draws', (_label, el) => {
+    const { canvas, entry } = stroke(el);
+    expect(entry.box).toEqual(inkBox(canvas));
+    expect(entry.fits).toBe(true);
+  });
+
+  it.each<[string, SceneElement]>([
+    ['a line at width 3', line([8, 10, 40, 30], { strokeWidth: 3, ...halfStep })],
+    ['an anti-aliased line', line([8, 10, 40, 30], { antialias: true, ...halfStep })],
+    ['a ring at width 3', ring([30, 30, 9], { strokeWidth: 3, ...halfStep })],
+    ['an anti-aliased ring', ring([30, 30, 9], { antialias: true, ...halfStep })],
+  ])(
+    '%s moved half a pixel by keyframes still reports a box holding every pixel it draws',
+    (_label, el) => {
+      const { canvas, entry } = stroke(el, 1, 3);
+      const ink = inkBox(canvas);
+      expect(entry.box.x).toBeLessThanOrEqual(ink.x);
+      expect(entry.box.y).toBeLessThanOrEqual(ink.y);
+      expect(entry.box.x + entry.box.w).toBeGreaterThanOrEqual(ink.x + ink.w);
+      expect(entry.box.y + entry.box.h).toBeGreaterThanOrEqual(ink.y + ink.h);
+    },
+  );
+
+  it.each<[string, SceneElement]>([
+    ['a wide line along the top row', line([4, 0, 40, 0], { strokeWidth: 2 })],
+    ['an anti-aliased diagonal from the corner', line([0, 0, 20, 20], { antialias: true })],
+    ['a wide vertical line on the right column', line([63, 10, 63, 40], { strokeWidth: 3 })],
+    ['a wide ring whose 1px circle fits the left edge', ring([9, 32, 8], { strokeWidth: 5 })],
+    [
+      'an anti-aliased wide ring whose 1px circle fits the bottom edge',
+      ring([32, 54, 9], { strokeWidth: 3, antialias: true }),
+    ],
+  ])('%s does not fit, and its box holds every pixel it draws', (_label, el) => {
+    const { canvas, entry } = stroke(el);
+    const ink = inkBox(canvas);
+    expect(entry.fits).toBe(false);
+    expect(entry.box.x).toBeLessThanOrEqual(ink.x);
+    expect(entry.box.y).toBeLessThanOrEqual(ink.y);
+    expect(entry.box.x + entry.box.w).toBeGreaterThanOrEqual(ink.x + ink.w);
+    expect(entry.box.y + entry.box.h).toBeGreaterThanOrEqual(ink.y + ink.h);
+  });
+
+  it('a 1px aliased line and outline circle keep their endpoint and diameter boxes', () => {
+    expect(stroke(line([2, 14, 20, 18], { strokeWidth: 1, antialias: false })).entry.box).toEqual({
+      x: 2,
+      y: 14,
+      w: 19,
+      h: 5,
+    });
+    expect(stroke(ring([45, 6, 4], { strokeWidth: 1 })).entry.box).toEqual({
+      x: 41,
+      y: 2,
+      w: 9,
+      h: 9,
+    });
+  });
 });
 
 // ─── preloadAssets — local image and sprite paths ─────────────────────────────
@@ -1173,23 +1897,78 @@ describe('preloadAssets — local paths', () => {
     expect(sprite).toMatchObject({ cols: 4, rows: 4 });
   });
 
+  const ASSET_HINT = 'Point every asset at a readable local file and retry the scene.';
+  /** A context carrying a calling tool's contract, so the declared recovery resolves. */
+  const ctxWithContract = () =>
+    createMockContext({
+      errors: [
+        {
+          reason: 'asset_not_found',
+          code: JsonRpcErrorCode.NotFound,
+          when: 'The asset could not be read.',
+          recovery: ASSET_HINT,
+        },
+      ],
+    });
+
   it.each([
-    ['image', (missing: string): ImageElement => ({ type: 'image', source: missing })],
+    [
+      'image',
+      'Image file',
+      (missing: string): ImageElement => ({ type: 'image', source: missing }),
+    ],
     [
       'sprite',
+      'Sprite sheet',
       (missing: string): SpriteElement => ({ type: 'sprite', path: missing, cols: 4, rows: 4 }),
     ],
-  ])('a missing local %s path fails as asset_not_found', async (_kind, build) => {
-    const missing = path.join(fixtureDir, 'does-not-exist.png');
-    await expect(preloadAssets([build(missing)], createMockContext(), 64)).rejects.toMatchObject({
-      code: JsonRpcErrorCode.NotFound,
-      data: {
+  ])(
+    'a missing local %s path fails as asset_not_found with the declared recovery',
+    async (_kind, label, build) => {
+      const missing = path.join(fixtureDir, 'does-not-exist.png');
+      const err = await preloadAssets([build(missing)], ctxWithContract(), 64).then(
+        () => expect.fail('preloadAssets resolved'),
+        (e: unknown) => e as { code: number; message: string; data: object },
+      );
+      expect(err.code).toBe(JsonRpcErrorCode.NotFound);
+      expect(err.data).toEqual({
         reason: 'asset_not_found',
         path: missing,
-        recovery: { hint: expect.any(String) },
-      },
-    });
-  });
+        recovery: { hint: ASSET_HINT },
+      });
+      expect(err.message).toBe(`${label} not found or unreadable: "${missing}".`);
+    },
+  );
+
+  it.each(['https://images.test/sheets/hero.png', 'http://images.test/sheets/hero.png'])(
+    'a sprite path given as the URL %s fails as asset_not_found, naming local paths',
+    async (url) => {
+      const http = createFetchMock();
+      http.install();
+      try {
+        const err = await preloadAssets(
+          [{ type: 'sprite', path: url, cols: 2, rows: 1 }],
+          ctxWithContract(),
+          64,
+        ).then(
+          () => expect.fail('preloadAssets resolved'),
+          (e: unknown) => e as { code: number; message: string; data: object },
+        );
+        expect(err.code).toBe(JsonRpcErrorCode.NotFound);
+        expect(err.data).toEqual({
+          reason: 'asset_not_found',
+          path: url,
+          recovery: { hint: ASSET_HINT },
+        });
+        expect(err.message).toBe(
+          `Sprite sheet path "${url}" is a URL; sprite sheets take an absolute local path.`,
+        );
+        expect(http.calls).toHaveLength(0);
+      } finally {
+        http.restore();
+      }
+    },
+  );
 
   it('a missing asset among valid ones still fails the whole preload', async () => {
     const missing = path.join(fixtureDir, 'nested-missing.png');
@@ -1204,6 +1983,101 @@ describe('preloadAssets — local paths', () => {
         64,
       ),
     ).rejects.toMatchObject({ data: { reason: 'asset_not_found', path: missing } });
+  });
+});
+
+// ─── preloadAssets — sources that do not decode ───────────────────────────────
+
+describe('preloadAssets — sources that do not decode', () => {
+  const HINT = 'Point the source at a complete image and retry the scene.';
+  /** A context carrying a calling tool's contract, so the declared recovery resolves. */
+  const ctxWithContract = () =>
+    createMockContext({
+      errors: [
+        {
+          reason: 'invalid_image',
+          code: JsonRpcErrorCode.InvalidParams,
+          when: 'The source did not decode.',
+          recovery: HINT,
+        },
+      ],
+    });
+
+  let sources: ImageSources;
+
+  beforeAll(async () => {
+    sources = await writeImageSources();
+  });
+
+  it.each([
+    ['a local non-image image', 'image', 'notImage', 'file', NOT_IMAGE_REASON],
+    ['a local truncated JPEG image', 'image', 'truncatedJpeg', 'file', TRUNCATED_JPEG_REASON],
+    ['an https non-image image', 'image', 'notImage', 'url', NOT_IMAGE_REASON],
+    ['an https truncated JPEG image', 'image', 'truncatedJpeg', 'url', TRUNCATED_JPEG_REASON],
+    ['a local non-image sprite sheet', 'sprite', 'notImage', 'file', NOT_IMAGE_REASON],
+    [
+      'a local truncated JPEG sprite sheet',
+      'sprite',
+      'truncatedJpeg',
+      'file',
+      TRUNCATED_JPEG_REASON,
+    ],
+  ] as const)(
+    '%s fails as invalid_image with the declared recovery',
+    async (_label, type, name, via, decoderReason) => {
+      const value = sources[name][via];
+      const [element, field, label]: [SceneElement, string, string] =
+        type === 'image'
+          ? [{ type, source: value }, 'source', 'Image source']
+          : [{ type, path: value, cols: 4, rows: 4 }, 'path', 'Sprite sheet'];
+
+      const err = await withServedSources(sources, () =>
+        preloadAssets([element], ctxWithContract(), 64).then(
+          () => expect.fail('preloadAssets resolved'),
+          (e: unknown) => e as { code: number; message: string; data: object },
+        ),
+      );
+      expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+      expect(err.data).toEqual({
+        reason: 'invalid_image',
+        [field]: value,
+        recovery: { hint: HINT },
+      });
+      expect(err.message.startsWith(`${label} "${value}" could not be decoded: `)).toBe(true);
+      expectNamesOnly(err.message, value, decoderReason);
+    },
+  );
+
+  it('one undecodable sprite among valid assets still fails the whole preload', async () => {
+    const bad = sources.notImage.file;
+    await expect(
+      preloadAssets(
+        [
+          { type: 'image', source: redPngPath },
+          { type: 'sprite', path: redPngPath, cols: 2, rows: 2 },
+          { type: 'sprite', path: bad, cols: 2, rows: 2 },
+        ],
+        ctxWithContract(),
+        64,
+      ),
+    ).rejects.toMatchObject({ data: { reason: 'invalid_image', path: bad } });
+  });
+
+  it('decoded sprite sheets are cached once per path and grid', async () => {
+    const cache = await preloadAssets(
+      [
+        { type: 'sprite', path: sources.png.file, cols: 3, rows: 3 },
+        { type: 'sprite', path: sources.png.file, cols: 3, rows: 3 },
+        { type: 'sprite', path: sources.png.file, cols: 2, rows: 2 },
+      ],
+      ctxWithContract(),
+      64,
+    );
+    // Sheets decode in parallel, so the cache fills in completion order.
+    expect([...cache.sprites.keys()].sort()).toEqual([
+      `${sources.png.file}:2:2`,
+      `${sources.png.file}:3:3`,
+    ]);
   });
 });
 
@@ -1255,6 +2129,275 @@ describe('preloadAssets — remote image cancellation', () => {
       http.restore();
     }
   });
+});
+
+// ─── preloadAssets — assets shared across elements ────────────────────────────
+
+describe('preloadAssets — an asset shared across elements loads once', () => {
+  const INVALID_IMAGE_HINT = 'Point the source at a complete image and retry the scene.';
+  const ctxWithContract = () =>
+    createMockContext({
+      errors: [
+        {
+          reason: 'invalid_image',
+          code: JsonRpcErrorCode.InvalidParams,
+          when: 'The source did not decode.',
+          recovery: INVALID_IMAGE_HINT,
+        },
+      ],
+    });
+
+  let sources: ImageSources;
+
+  beforeAll(async () => {
+    sources = await writeImageSources();
+  });
+
+  beforeEach(() => {
+    vi.mocked(downsampleSprite).mockClear();
+    vi.mocked(loadImage).mockClear();
+  });
+
+  /** Unhandled rejections raised while `fn` runs, or within a short settle after it. */
+  async function unhandledDuring(fn: () => Promise<unknown>): Promise<unknown[]> {
+    const seen: unknown[] = [];
+    const record = (reason: unknown) => seen.push(reason);
+    process.on('unhandledRejection', record);
+    try {
+      await fn();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', record);
+    }
+    return seen;
+  }
+
+  it('a sprite sheet named by many elements decodes once per grid, and every element draws', async () => {
+    const sheet = sources.png.file;
+    const elements: SpriteElement[] = [
+      ...Array.from(
+        { length: 5 },
+        (_, i): SpriteElement => ({
+          type: 'sprite',
+          path: sheet,
+          cols: 3,
+          rows: 3,
+          x: i * 12,
+          y: 0,
+        }),
+      ),
+      ...Array.from(
+        { length: 2 },
+        (_, i): SpriteElement => ({
+          type: 'sprite',
+          path: sheet,
+          cols: 2,
+          rows: 2,
+          x: i * 12,
+          y: 40,
+        }),
+      ),
+    ];
+
+    const { layoutEntries } = await renderScene('#000000', elements, 1, createMockContext(), 64);
+
+    const calls = vi.mocked(downsampleSprite).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        [sheet, 3, 3],
+        [sheet, 2, 2],
+      ]),
+    );
+    expect(layoutEntries.map((entry) => entry.element)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it('image elements sharing a source and placement share one decode; each other placement decodes once', async () => {
+    const source = sources.png.file;
+    const whole: ImageElement = { type: 'image', source };
+    const wholeAgain: ImageElement = { type: 'image', source };
+    const inset: ImageElement = { type: 'image', source, x: 8, y: 8, w: 16, h: 16 };
+    const insetNudged: ImageElement = { type: 'image', source, x: 8, y: 8, w: 16, h: 16, dx: 20 };
+    const insetCover: ImageElement = { ...inset, fit: 'cover' };
+    const other: ImageElement = { type: 'image', source: sources.jpeg.file };
+
+    const cache = await preloadAssets(
+      [whole, wholeAgain, inset, insetNudged, insetCover, other],
+      createMockContext(),
+      64,
+    );
+
+    expect(vi.mocked(loadImage)).toHaveBeenCalledTimes(4);
+    expect(cache.images.size).toBe(6);
+    expect(cache.images.get(wholeAgain)).toBe(cache.images.get(whole));
+    // dx/dy apply when the canvas is blitted, so they do not split a placement.
+    expect(cache.images.get(insetNudged)).toBe(cache.images.get(inset));
+    expect(cache.images.get(inset)).not.toBe(cache.images.get(whole));
+    expect(cache.images.get(insetCover)).not.toBe(cache.images.get(inset));
+
+    // A shared canvas holds exactly what the element loads to on its own.
+    const alone = await preloadAssets([{ ...inset }], createMockContext(), 64);
+    expect(hashOf(cache.images.get(inset)!)).toBe(hashOf([...alone.images.values()][0]!));
+  });
+
+  it('elements sharing a source and placement but not a finish share one decode and never a result', async () => {
+    const source = sources.png.file;
+    const toBlack: Finish = { palette: ['#000000', '#ffffff'], dither: 'none' };
+    const toOrange: Finish = { palette: ['#ff8800', '#0000ff'], dither: 'bayer4' };
+    const plain: ImageElement = { type: 'image', source, w: 32, h: 32 };
+    const black: ImageElement = { ...plain, finish: toBlack };
+    const blackAgain: ImageElement = { ...plain, finish: { ...toBlack }, dx: 4 };
+    const orange: ImageElement = { ...plain, finish: toOrange };
+    const four: ImageElement = { ...plain, finish: { colors: 4, dither: 'none' } };
+
+    const cache = await preloadAssets(
+      [black, plain, orange, blackAgain, four],
+      createMockContext(),
+      64,
+    );
+
+    expect(vi.mocked(loadImage)).toHaveBeenCalledTimes(1);
+    const canvases = [plain, black, orange, four].map((el) => cache.images.get(el));
+    expect(new Set(canvases).size).toBe(4);
+    expect(cache.images.get(blackAgain)).toBe(cache.images.get(black));
+
+    // The unfinished canvas is exactly the load, untouched by the finishes drawn from it.
+    const alone = await preloadAssets([{ ...plain }], createMockContext(), 64);
+    const loaded = [...alone.images.values()][0]!;
+    expect(hashOf(cache.images.get(plain)!)).toBe(hashOf(loaded));
+    // Each finished canvas is its finish applied to that load.
+    expect(hashOf(cache.images.get(black)!)).toBe(hashOf(finishFrame(loaded, toBlack)));
+    expect(hashOf(cache.images.get(orange)!)).toBe(hashOf(finishFrame(loaded, toOrange)));
+    expect(inkColors(cache.images.get(black)!).map(String).sort()).toEqual([
+      '0,0,0',
+      '255,255,255',
+    ]);
+  });
+
+  it('an unresolvable finish palette entry fails the preload with the toolkit color error', async () => {
+    const el: ImageElement = {
+      type: 'image',
+      source: sources.png.file,
+      finish: { palette: ['#zzzzzz'], dither: 'none' },
+    };
+    await expect(preloadAssets([el], createMockContext(), 64)).rejects.toThrow(
+      /Unknown color: "#zzzzzz"/,
+    );
+  });
+
+  it('a remote source placed several ways is fetched once', async () => {
+    const { url } = sources.png;
+    const elements: ImageElement[] = [
+      { type: 'image', source: url },
+      { type: 'image', source: url },
+      { type: 'image', source: url, w: 16, h: 16 },
+    ];
+    const http = createFetchMock([
+      { match: url, respond: () => new Response(new Uint8Array(sources.png.bytes)) },
+    ]);
+    http.install();
+    try {
+      const cache = await preloadAssets(elements, createMockContext(), 64);
+      expect(http.calls).toHaveLength(1);
+      expect(vi.mocked(loadImage)).toHaveBeenCalledTimes(2);
+      expect(cache.images.size).toBe(3);
+    } finally {
+      http.restore();
+    }
+  });
+
+  it('a missing sprite sheet shared by several elements fails the call, with no unhandled rejection', async () => {
+    const missing = path.join(fixtureDir, 'shared-missing.png');
+    const sheet = (x: number): SpriteElement => ({
+      type: 'sprite',
+      path: missing,
+      cols: 2,
+      rows: 2,
+      x,
+    });
+    const unhandled = await unhandledDuring(() =>
+      expect(
+        preloadAssets(
+          [{ type: 'image', source: redPngPath }, sheet(0), sheet(20), sheet(40)],
+          ctxWithContract(),
+          64,
+        ),
+      ).rejects.toMatchObject({
+        code: JsonRpcErrorCode.NotFound,
+        data: { reason: 'asset_not_found', path: missing },
+      }),
+    );
+    expect(unhandled).toEqual([]);
+    expect(vi.mocked(downsampleSprite)).not.toHaveBeenCalled();
+  });
+
+  it('an undecodable sprite sheet shared by several elements decodes once and fails as invalid_image', async () => {
+    const bad = sources.notImage.file;
+    const sheet = (x: number): SpriteElement => ({
+      type: 'sprite',
+      path: bad,
+      cols: 4,
+      rows: 4,
+      x,
+    });
+    let err: { code: number; message: string; data: object } | undefined;
+    const unhandled = await unhandledDuring(async () => {
+      err = await preloadAssets([sheet(0), sheet(20), sheet(40)], ctxWithContract(), 64).then(
+        () => expect.fail('preloadAssets resolved'),
+        (e: unknown) => e as { code: number; message: string; data: object },
+      );
+    });
+    expect(unhandled).toEqual([]);
+    expect(vi.mocked(downsampleSprite)).toHaveBeenCalledTimes(1);
+    expect(err?.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(err?.data).toEqual({
+      reason: 'invalid_image',
+      path: bad,
+      recovery: { hint: INVALID_IMAGE_HINT },
+    });
+    expectNamesOnly(err?.message ?? '', bad, NOT_IMAGE_REASON);
+  });
+
+  it.each([
+    [
+      'an unreachable URL',
+      (): Response => {
+        throw new TypeError('fetch failed');
+      },
+      'asset_not_found',
+      0,
+    ],
+    [
+      'a URL serving a non-image body',
+      () => new Response('this is not an image\n'),
+      'invalid_image',
+      2,
+    ],
+  ] as const)(
+    '%s shared across placements is fetched once and fails the call, with no unhandled rejection',
+    async (_label, respond, reason, decodes) => {
+      const source = 'https://images.test/shared/art.png';
+      const elements: ImageElement[] = [
+        { type: 'image', source },
+        { type: 'image', source },
+        { type: 'image', source, w: 16, h: 16 },
+      ];
+      const http = createFetchMock([{ match: source, respond }]);
+      http.install();
+      try {
+        const unhandled = await unhandledDuring(() =>
+          expect(preloadAssets(elements, ctxWithContract(), 64)).rejects.toMatchObject({
+            data: { reason },
+          }),
+        );
+        expect(unhandled).toEqual([]);
+        expect(http.calls).toHaveLength(1);
+        expect(vi.mocked(loadImage)).toHaveBeenCalledTimes(decodes);
+      } finally {
+        http.restore();
+      }
+    },
+  );
 });
 
 // ─── layout report ────────────────────────────────────────────────────────────
@@ -1566,5 +2709,39 @@ describe('renderScene', () => {
     expect(middle?.[2]).toBeGreaterThan(0);
     expect(middle?.[2]).toBeLessThan(255);
     expect(last).toEqual([...RED, 255]);
+  });
+
+  describe('a soft-edged PNG — white at alpha 64 over its top half, opaque bottom-left', () => {
+    const render = async (el: Omit<ImageElement, 'type' | 'source'>, frames = 1) =>
+      (
+        await renderScene(
+          '#000000',
+          [{ type: 'image', source: softPngPath, ...el }],
+          frames,
+          createMockContext(),
+          64,
+        )
+      ).frames;
+
+    it('at full opacity composites exactly as a direct blit of its loaded canvas', async () => {
+      const expected = new Canvas(64).clear([0, 0, 0]);
+      expected.blit(await loadImage(softPngPath, { size: 64 }));
+      const [frame] = await render({});
+      expect(hashOf(frame!)).toBe(hashOf(expected));
+      expect(frame!.getPixelRgba(10, 10)).toEqual([64, 64, 64, 255]);
+    });
+
+    it('at opacity 50 dims every pixel by half, the soft ones from their own alpha', async () => {
+      const [frame] = await render({ opacity: 50 });
+      expect(frame!.getPixelRgba(10, 10)).toEqual([32, 32, 32, 255]);
+      expect(frame!.getPixelRgba(10, 40)).toEqual([128, 128, 128, 255]);
+      expect(frame!.getPixelRgba(40, 40)).toEqual([0, 0, 0, 255]);
+    });
+
+    it('fading in, its soft pixels climb to their full-opacity value and never past it', async () => {
+      const frames = await render({ effect: { name: 'fade-in' } }, 5);
+      expect(frames.map((frame) => frame.getPixelRgba(10, 10)[0])).toEqual([0, 16, 32, 48, 64]);
+      expect(frames.map((frame) => frame.getPixelRgba(10, 40)[0])).toEqual([0, 64, 128, 191, 255]);
+    });
   });
 });

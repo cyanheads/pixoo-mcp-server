@@ -15,7 +15,11 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Legibility floors:** At 64px viewing distance, 1px features vanish. Minimum eye size: 1–2px. Minimum limb gaps: 2 rows. Use standard font (5×7) as the default; compact font (3×5) only when standard doesn't fit.
 
-**Scale for impact:** scale: 2 produces chunky block-letter weight (10px tall). Use for headlines. Scale 3+ is decorative — verify it fits before pushing.
+**Symbols:** standard and compact draw printable ASCII plus \`° ← ↑ → ↓ ▲ ▼ ♥ · …\`, so \`72°F\`, \`▲3 ▼2\`, and \`← BACK\` print as written.
+
+**Numerals:** \`font: "numerals"\` is an 11×18 face for clocks and big readouts. It draws 0–9, space, and \`: . - + / % ° ?\` only, every digit on one 13px advance so a changing time keeps its width; text holding any other character is rejected. \`12:45\` is 58×18 at scale 1, and at scale 2 (116px) it overflows a 64px panel. Auto-fit never picks numerals — set it explicitly, and put units and labels in a standard or compact text element beside it with pixoo_compose_scene.
+
+**Scale for impact:** scale: 2 produces chunky block-letter weight (14px tall). Use for headlines. Scale 3+ is decorative — verify it fits before pushing.
 
 **Palette discipline:** Use the styled text engine's vertical color ramps instead of flat colors:
 - \`ember\` (gold → deep orange): warmth, alerts, energy
@@ -31,7 +35,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Motion:** \`effect: "float"\` (gentle bob) or \`effect: "pulse"\` (breathing brightness) loops over 20 frames. Motion reads best on short headlines; keep long text static or scrolling.
 
-**Multi-line stacking:** For 3 lines at scale 2: 10px + 1px gap × 3 = 33px. Leaves 15.5px margin above and below on a 64px canvas — plan your vertical budget. \`align: "left"\` or \`"right"\` lines up the edges of the lines; \`position.x\` places the block.`,
+**Multi-line stacking:** For 3 lines at scale 2: (14px + 1px gap) × 3 = 45px. Leaves 9.5px margin above and below on a 64px canvas — plan your vertical budget. \`align: "left"\` or \`"right"\` lines up the edges of the lines; \`position.x\` places the block.`,
 
   scene: `## Scene Composition Guidance
 
@@ -45,6 +49,8 @@ const CRAFT_CONTENT: Record<string, string> = {
 **Color budget (4–6 colors):** Value contrast over hue contrast. Background should be very dark (lightness < 20%). Warm whites (#f0ead6) read better than pure white (#ffffff) against LEDs.
 
 **Icon + text pairing:** Icon at right or left edge, text with matching palette filling the remaining width.
+
+**Glow:** Place a larger, dimmer copy of a bright shape just before it in \`elements\` with \`blend: "add"\` — a radius-6 \`#402000\` circle beneath a radius-3 \`#ffb000\` one. Added light never darkens what it overlaps, so the halo lifts the background around the shape instead of covering it. Lower its \`opacity\` for a fainter halo, or use \`blend: "screen"\` for a gentler lift. The same trick makes light beams: a wide, dim \`line\` (\`strokeWidth\` 3–5) blended add under a bright 1px one.
 
 **Status dashboard pattern:**
 1. Gradient background (v gradient, very dark)
@@ -64,7 +70,9 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Color coding:** Use semantic colors — green for good/up, red for bad/down, orange for warning, blue for neutral metrics. Match colors to palettes for visual consistency.
 
-**Metric text:** \`font: "compact"\` (3×5) for secondary numbers. \`font: "standard"\` scale 2 for the hero metric.
+**Metric text:** \`font: "numerals"\` (11×18) for the hero metric or clock — it draws 0–9, space, and \`: . - + / % ° ?\` only, so its unit or label goes in a separate standard or compact text element beside it. \`font: "standard"\` scale 2 when the hero value needs letters. \`font: "compact"\` (3×5) for secondary numbers.
+
+**Units and trends:** standard and compact draw \`° ← ↑ → ↓ ▲ ▼ ♥ · …\` — \`72°F\`, \`▲3 ▼2\`, \`↑ 12%\`.
 
 **Update frequency:** Don't push faster than 1/sec. For live dashboards, push on data change events.`,
 
@@ -88,7 +96,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 
   'pixel-art': `## Pixel Art Guidance
 
-**Color system:** Max 4–6 colors for clean pixel art. Use the palette array in bitmap elements. Dithering patterns not supported — use value steps instead.
+**Color system:** Max 4–6 colors for clean pixel art. Use the palette array in bitmap elements. To bring a photo or image down to a small or fixed palette, pass \`finish\` on pixoo_push_image or a scene \`image\` element: \`colors\` (2–256, built from the image) or \`palette\` (your own colors), with \`dither\` \`bayer4\` (ordered pattern) or \`floyd-steinberg\` (diffused, smoothest on photos).
 
 **Scale rules:** At 64px, 1px = 1 LED. Minimum recognizable feature: 2px. Eyes: at least 2×2. Limbs: 2px minimum. Scale ≥ 2 for any detail that needs to read clearly.
 
@@ -98,7 +106,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Dark backgrounds:** LEDs don't emit light for unlit pixels. Design with dark backgrounds; your art pops against unlit black.
 
-**Anti-aliasing:** Not available — plan for hard edges. 45-degree diagonals at scale 1 look stairstepped. Scale 2 softens this effect.`,
+**Anti-aliasing:** Pixel art keeps hard edges, and 45-degree diagonals at scale 1 look stairstepped. Where a smooth edge reads better, a scene \`line\` or outline \`circle\` takes \`antialias: true\`, shading each edge pixel by how much of it the stroke covers, and \`strokeWidth\` for a thicker stroke. Bitmaps, sprites, and filled shapes stay hard-edged.`,
 
   troubleshooting: `## Troubleshooting Guide
 
@@ -126,7 +134,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 **Color not as expected:**
 - Use #RRGGBB hex, or a named color (names are case-insensitive)
 - resolveColor throws on typos; check the error message for the accepted formats
-- LEDs don't reproduce very dark colors (< #202020) well`,
+- On a Pixoo-64 at brightness 100, channel levels 0–4 stay dark, and mid-levels render darker than on an sRGB monitor, shifting muted warm colors toward red (#D97757 reads red)`,
 };
 
 /**

@@ -9,6 +9,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { Canvas, NAMED_COLORS, type PixooSize, savePng } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
+import { FinishSchema } from '@/mcp-server/tools/finish-schema.js';
 import { ICONS } from '@/renderer/icons.js';
 import { numericValue } from '@/renderer/keyframes.js';
 import {
@@ -19,6 +20,11 @@ import {
   savePngPreview,
 } from '@/renderer/preview.js';
 import { type BackgroundSpec, renderScene } from '@/renderer/scene-renderer.js';
+import {
+  describeMissingNumerals,
+  FONT_VARIANTS,
+  missingNumeralGlyphs,
+} from '@/renderer/text-engine.js';
 import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 // --- Shared sub-schemas ---
@@ -105,6 +111,12 @@ const AnimateSchema = z
 const BaseElementProps = {
   visible: z.boolean().optional().describe('Whether the element is visible (default: true).'),
   opacity: z.number().int().min(0).max(100).optional().describe('Opacity 0–100 (default: 100).'),
+  blend: z
+    .enum(['normal', 'add', 'screen', 'multiply'])
+    .optional()
+    .describe(
+      'How the element combines with what lies beneath it (default: normal, drawn over it). add sums the light of both, clamped at full brightness — for glows and light beams; screen brightens more gently; multiply darkens.',
+    ),
   dx: z.number().int().optional().describe('X offset nudge in pixels.'),
   dy: z.number().int().optional().describe('Y offset nudge in pixels.'),
   effect: EffectSchema.optional().describe('Named animation preset for this element.'),
@@ -150,16 +162,32 @@ const StyleSchema = z
 
 // --- Element schemas ---
 
-const TextElementSchema = z.object({
-  type: z.literal('text').describe('Text element type.'),
-  text: z.string().describe('Text content to render.'),
-  x: XPosSchema.optional().describe('X position (default: 0).'),
-  y: YPosSchema.optional().describe('Y position (default: 0).'),
-  color: z.string().optional().describe('Flat text color.'),
-  font: z.enum(['standard', 'compact']).optional().describe('Font variant.'),
-  style: StyleSchema.optional().describe('Text style options.'),
-  ...BaseElementProps,
-});
+const TextElementSchema = z
+  .object({
+    type: z.literal('text').describe('Text element type.'),
+    text: z.string().describe('Text content to render.'),
+    x: XPosSchema.optional().describe('X position (default: 0).'),
+    y: YPosSchema.optional().describe('Y position (default: 0).'),
+    color: z.string().optional().describe('Flat text color.'),
+    font: z
+      .enum(FONT_VARIANTS)
+      .optional()
+      .describe(
+        'Font variant (default: standard): standard (5×7) or compact (3×5), each printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · …; or numerals (11×18 digits for clocks and readouts), which draws only 0–9, space, and : . - + / % ° ?, so text holding any other character is rejected — put units and labels in a separate standard or compact text element.',
+      ),
+    style: StyleSchema.optional().describe('Text style options.'),
+    ...BaseElementProps,
+  })
+  .superRefine((el, ctx) => {
+    if (el.font !== 'numerals') return;
+    const missing = missingNumeralGlyphs(el.text);
+    if (missing.length === 0) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['text'],
+      message: `${describeMissingNumerals(missing)} Put units and labels in a separate text element in the standard or compact font.`,
+    });
+  });
 
 const IconElementSchema = z.object({
   type: z.literal('icon').describe('Icon element type.'),
@@ -180,34 +208,78 @@ const IconElementSchema = z.object({
   ...BaseElementProps,
 });
 
-const RectElementSchema = z.object({
-  type: z.literal('rect').describe('Rectangle element type.'),
-  x: z.number().int().describe('X coordinate.'),
-  y: z.number().int().describe('Y coordinate.'),
-  w: z.number().int().min(1).describe('Width in pixels.'),
-  h: z.number().int().min(1).describe('Height in pixels.'),
-  color: z.string().optional().describe('Fill color.'),
-  gradient: z
-    .object({
-      type: z.enum(['v', 'h']).describe('v = vertical, h = horizontal.'),
-      from: z.string().describe('Start color.'),
-      to: z.string().describe('End color.'),
-    })
-    .optional()
-    .describe('Gradient fill.'),
-  borderColor: z.string().optional().describe('1px border color.'),
-  ...BaseElementProps,
-});
+const RectElementSchema = z
+  .object({
+    type: z.literal('rect').describe('Rectangle element type.'),
+    x: z.number().int().describe('X coordinate.'),
+    y: z.number().int().describe('Y coordinate.'),
+    w: z.number().int().min(1).describe('Width in pixels.'),
+    h: z.number().int().min(1).describe('Height in pixels.'),
+    color: z.string().optional().describe('Fill color.'),
+    gradient: z
+      .object({
+        type: z.enum(['v', 'h']).describe('v = vertical, h = horizontal.'),
+        from: z.string().describe('Start color.'),
+        to: z.string().describe('End color.'),
+      })
+      .optional()
+      .describe('Gradient fill.'),
+    borderColor: z
+      .string()
+      .optional()
+      .describe('Border color. The border is drawn inside the rect, strokeWidth pixels thick.'),
+    strokeWidth: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        'Border thickness in whole pixels, growing inward from the rect edge (default: 1). Requires borderColor.',
+      ),
+    ...BaseElementProps,
+  })
+  .refine((el) => el.strokeWidth === undefined || Boolean(el.borderColor), {
+    error:
+      'strokeWidth sets the thickness of the borderColor border; set borderColor, or drop strokeWidth.',
+    path: ['strokeWidth'],
+  });
 
-const CircleElementSchema = z.object({
-  type: z.literal('circle').describe('Circle element type.'),
-  cx: z.number().int().describe('Center X coordinate.'),
-  cy: z.number().int().describe('Center Y coordinate.'),
-  radius: z.number().int().min(1).describe('Radius in pixels.'),
-  color: z.string().optional().describe('Circle color.'),
-  fill: z.boolean().optional().describe('Filled or outline only (default: true).'),
-  ...BaseElementProps,
-});
+/** The error for a stroke field on a circle that fills, which draws no outline. */
+const filledCircleError = (field: string) =>
+  `${field} applies to an outline circle only; set fill: false, or drop ${field}.`;
+
+const CircleElementSchema = z
+  .object({
+    type: z.literal('circle').describe('Circle element type.'),
+    cx: z.number().int().describe('Center X coordinate.'),
+    cy: z.number().int().describe('Center Y coordinate.'),
+    radius: z.number().int().min(1).describe('Radius in pixels.'),
+    color: z.string().optional().describe('Circle color.'),
+    fill: z.boolean().optional().describe('Filled or outline only (default: true).'),
+    strokeWidth: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        'Outline thickness in whole pixels, centered on the circle (default: 1). Outline circles only (fill: false).',
+      ),
+    antialias: z
+      .boolean()
+      .optional()
+      .describe(
+        'Shade each outline pixel by how much of it the ring covers, for a smooth curve (default: false, hard pixel edges). Outline circles only (fill: false).',
+      ),
+    ...BaseElementProps,
+  })
+  .refine((el) => el.fill === false || el.strokeWidth === undefined, {
+    error: filledCircleError('strokeWidth'),
+    path: ['strokeWidth'],
+  })
+  .refine((el) => el.fill === false || el.antialias === undefined, {
+    error: filledCircleError('antialias'),
+    path: ['antialias'],
+  });
 
 const LineElementSchema = z.object({
   type: z.literal('line').describe('Line element type.'),
@@ -216,6 +288,18 @@ const LineElementSchema = z.object({
   x1: z.number().int().describe('End X coordinate.'),
   y1: z.number().int().describe('End Y coordinate.'),
   color: z.string().optional().describe('Line color.'),
+  strokeWidth: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe('Line thickness in whole pixels, centered on the line (default: 1).'),
+  antialias: z
+    .boolean()
+    .optional()
+    .describe(
+      'Shade each pixel by how much of it the line covers, for smooth diagonals (default: false, hard pixel edges).',
+    ),
   ...BaseElementProps,
 });
 
@@ -296,6 +380,7 @@ const ImageElementSchema = z.object({
     .enum(['nearest', 'lanczos3', 'mitchell'])
     .optional()
     .describe('Resize kernel: nearest for pixel art, lanczos3 for photos (default: nearest).'),
+  finish: FinishSchema.optional(),
   ...BaseElementProps,
 });
 
@@ -322,9 +407,9 @@ const ElementSchema = z
   .discriminatedUnion('type', [
     TextElementSchema.describe('Styled text element rendered at a position.'),
     IconElementSchema.describe('Built-in or custom SVG icon element.'),
-    RectElementSchema.describe('Filled or gradient rectangle element.'),
+    RectElementSchema.describe('Filled, gradient, or bordered rectangle element.'),
     CircleElementSchema.describe('Filled or outline circle element.'),
-    LineElementSchema.describe('Single-pixel line element.'),
+    LineElementSchema.describe('Straight line element, 1px wide unless strokeWidth is set.'),
     ProgressElementSchema.describe('Horizontal progress bar widget.'),
     SparklineElementSchema.describe('Sparkline chart widget (line or bar).'),
     BitmapElementSchema.describe('Bitmap element using explicit palette indices.'),
@@ -355,7 +440,7 @@ const LayoutEntrySchema = z
     action: z
       .enum(['none', 'shrunk-to-compact', 'scrolling', 'wrapped', 'truncated', 'clipped'])
       .describe('Overflow action taken by the renderer.'),
-    font: z.enum(['standard', 'compact']).optional().describe('Font variant used (text only).'),
+    font: z.enum(FONT_VARIANTS).optional().describe('Font variant used (text only).'),
     scale: z.number().optional().describe('Scale factor applied (text only).'),
   })
   .describe('Layout report entry.');
@@ -497,8 +582,17 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     {
       reason: 'asset_not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'An image or sprite path could not be read.',
-      recovery: 'Verify the file path exists and is readable, or check the URL is reachable.',
+      when: 'An image source or sprite path could not be read, a sprite path was a URL, or an image URL could not be fetched.',
+      recovery:
+        'Pass an absolute path to an existing, readable image file, or for an image source a reachable https URL serving 10 MiB or less; sprite sheets take an absolute local path.',
+      thrownBy: 'service',
+    },
+    {
+      reason: 'invalid_image',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'An image source or sprite path was read but did not decode as an image.',
+      recovery:
+        'Each image source and sprite path must be a complete PNG, JPEG, GIF, WebP, AVIF, TIFF, or SVG image; a text file, an HTML page, or a truncated download will not decode.',
       thrownBy: 'service',
     },
     {

@@ -28,6 +28,7 @@ import {
   resultText,
   stubDeviceState,
 } from '../helpers/device-failure.js';
+import { animatedImage } from '../helpers/image-sources.js';
 
 type Extra = Record<string, unknown>;
 type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
@@ -39,6 +40,8 @@ type Success = {
 
 let fixtureDir: string;
 let fixturePath: string;
+/** A 3-frame animated GIF, which pixoo_push_image pushes as an animation. */
+let animatedFixturePath: string;
 
 /** One push tool, a representative input for it, and the extra that makes it animate. */
 interface PushTool {
@@ -72,6 +75,10 @@ const TOOLS: PushTool[] = [
   {
     name: 'pixoo_push_image',
     errors: pixooPushImage.errors,
+    // A getter: the fixture is written in beforeAll, after the suite is collected.
+    get animated() {
+      return { source: animatedFixturePath };
+    },
     run: (extra = {}) =>
       runToolContract(pixooPushImage, { source: fixturePath, ...extra } as z.input<
         typeof pixooPushImage.input
@@ -86,6 +93,8 @@ beforeAll(async () => {
   fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-post-push-fixture-'));
   fixturePath = path.join(fixtureDir, 'fixture.png');
   await savePng(new Canvas(64).clear([0, 128, 255]), fixturePath);
+  animatedFixturePath = path.join(fixtureDir, 'animated.gif');
+  await fs.writeFile(animatedFixturePath, await animatedImage('gif', [100, 100, 100]));
 });
 
 afterAll(async () => {

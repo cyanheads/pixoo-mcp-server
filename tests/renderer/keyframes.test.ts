@@ -375,18 +375,40 @@ describe('compileEffect', () => {
   });
 
   it('twinkle without an amplitude keeps its 40–100 flicker, frame for frame', () => {
-    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    expect(opacities(compileEffect('twinkle', {}, 20))).toEqual([
+      71, 87, 89, 97, 100, 99, 97, 92, 85, 72, 69, 55, 49, 46, 41, 40, 44, 46, 55, 65,
+    ]);
+    expect(opacities(compileEffect('twinkle', { period: 4 }, 9, 5))).toEqual([
+      73, 100, 63, 40, 78, 100, 65, 40, 74,
+    ]);
+  });
+
+  it('twinkle derives its flicker from the frame and the element, never Math.random', () => {
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => {
+      throw new Error('twinkle read Math.random');
+    });
     try {
-      expect(opacities(compileEffect('twinkle', {}, 20))).toEqual([
-        74, 83, 91, 97, 100, 100, 97, 91, 84, 75, 66, 57, 49, 43, 40, 40, 43, 49, 56, 65,
-      ]);
-      random.mockReturnValue(0.999);
-      expect(opacities(compileEffect('twinkle', { period: 4 }, 9))).toEqual([
-        79, 99, 61, 41, 79, 99, 61, 41, 79,
-      ]);
+      const first = compileEffect('twinkle', {}, 20, 3);
+      expect(compileEffect('twinkle', {}, 20, 3)).toEqual(first);
+      expect(random).not.toHaveBeenCalled();
     } finally {
       random.mockRestore();
     }
+  });
+
+  it('twinkle stays irregular: a 4-frame period never settles into a repeating cycle', () => {
+    for (const element of [0, 1, 2, 3]) {
+      const values = opacities(compileEffect('twinkle', { period: 4 }, 20, element));
+      const repeats = values.slice(4).every((value, i) => value === values[i]);
+      expect(repeats).toBe(false);
+    }
+  });
+
+  it('twinkle flickers differently for each element in a scene', () => {
+    const sequences = Array.from({ length: 8 }, (_, element) =>
+      JSON.stringify(opacities(compileEffect('twinkle', {}, 20, element))),
+    );
+    expect(new Set(sequences).size).toBe(8);
   });
 
   it.each([0.1, 0.25, 1])(
@@ -401,52 +423,46 @@ describe('compileEffect', () => {
   it.each([0.2, 1])(
     'twinkle at amplitude %s flickers between 100 × (1 − amplitude) and 100',
     (amplitude) => {
-      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-      try {
-        const values = opacities(compileEffect('twinkle', { amplitude }, 20)) as number[];
-        const floor = Math.round(100 * (1 - amplitude));
-        expect(Math.min(...values)).toBeGreaterThanOrEqual(floor);
-        expect(Math.min(...values)).toBeLessThanOrEqual(floor + 1);
-        expect(Math.max(...values)).toBeGreaterThanOrEqual(99);
-        expect(Math.max(...values)).toBeLessThanOrEqual(100);
-      } finally {
-        random.mockRestore();
-      }
+      const values = opacities(compileEffect('twinkle', { amplitude }, 20)) as number[];
+      const floor = Math.round(100 * (1 - amplitude));
+      expect(Math.min(...values)).toBeGreaterThanOrEqual(floor);
+      expect(Math.min(...values)).toBeLessThanOrEqual(floor + 1);
+      expect(Math.max(...values)).toBeGreaterThanOrEqual(99);
+      expect(Math.max(...values)).toBeLessThanOrEqual(100);
     },
   );
 
   it('amplitude 0.5 on pulse and 0.6 on twinkle reproduce their defaults exactly', () => {
-    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    try {
-      expect(compileEffect('pulse', { amplitude: 0.5 }, 20)).toEqual(
-        compileEffect('pulse', {}, 20),
-      );
-      expect(compileEffect('twinkle', { amplitude: 0.6 }, 20)).toEqual(
-        compileEffect('twinkle', {}, 20),
-      );
-    } finally {
-      random.mockRestore();
-    }
+    expect(compileEffect('pulse', { amplitude: 0.5 }, 20)).toEqual(compileEffect('pulse', {}, 20));
+    expect(compileEffect('twinkle', { amplitude: 0.6 }, 20)).toEqual(
+      compileEffect('twinkle', {}, 20),
+    );
   });
 
   it('amplitude changes float, scroll-left, scroll-right, pulse, twinkle, and drift — no other effect', () => {
-    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    try {
-      const readsAmplitude = EFFECT_NAMES.filter(
-        (name) =>
-          JSON.stringify(compileEffect(name, { amplitude: 0.1 }, 12)) !==
-          JSON.stringify(compileEffect(name, { amplitude: 1 }, 12)),
-      );
-      expect(readsAmplitude).toEqual([
-        'float',
-        'scroll-left',
-        'scroll-right',
-        'pulse',
-        'twinkle',
-        'drift',
-      ]);
-    } finally {
-      random.mockRestore();
+    const readsAmplitude = EFFECT_NAMES.filter(
+      (name) =>
+        JSON.stringify(compileEffect(name, { amplitude: 0.1 }, 12)) !==
+        JSON.stringify(compileEffect(name, { amplitude: 1 }, 12)),
+    );
+    expect(readsAmplitude).toEqual([
+      'float',
+      'scroll-left',
+      'scroll-right',
+      'pulse',
+      'twinkle',
+      'drift',
+    ]);
+  });
+
+  it('every effect compiles the same keyframes on every call, for every element', () => {
+    for (const name of EFFECT_NAMES) {
+      for (const element of [0, 7]) {
+        const opts = { amplitude: 0.7, period: 5, phase: 0.3 };
+        expect(compileEffect(name, opts, 16, element)).toEqual(
+          compileEffect(name, opts, 16, element),
+        );
+      }
     }
   });
 

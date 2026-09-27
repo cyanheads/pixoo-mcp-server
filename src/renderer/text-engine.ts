@@ -4,17 +4,54 @@
  */
 
 import {
+  type BitmapFont,
   Canvas,
   type ColorLike,
   drawText,
   FONT_3x5,
   FONT_5x7,
+  FONT_DIGITS_11x18,
   lerpColor,
   measureText,
   type RGB,
   resolveColor,
 } from '@cyanheads/pixoo-toolkit';
 import { type GradientStop, PALETTES, type PaletteName } from './themes.js';
+
+/** Font variants a text surface accepts. */
+export const FONT_VARIANTS = ['standard', 'compact', 'numerals'] as const;
+
+/** Font variant. */
+export type FontVariant = (typeof FONT_VARIANTS)[number];
+
+/**
+ * The toolkit face each variant draws with. `standard` (5×7) and `compact` (3×5) hold
+ * printable ASCII plus `° ← ↑ → ↓ ▲ ▼ ♥ · …`; `numerals` holds 11×18 digits on one
+ * 13-pixel advance plus space and `: . - + / % ° ?`.
+ */
+export const FONT_FACES: Record<FontVariant, BitmapFont> = {
+  standard: FONT_5x7,
+  compact: FONT_3x5,
+  numerals: FONT_DIGITS_11x18,
+};
+
+/**
+ * The characters of `text` the numerals face has no glyph for, each once, in order of
+ * first appearance. The face would draw every one of them as its `?`.
+ */
+export function missingNumeralGlyphs(text: string): string[] {
+  const missing = new Set<string>();
+  for (const ch of text) {
+    if (!Object.hasOwn(FONT_DIGITS_11x18.glyphs, ch)) missing.add(ch);
+  }
+  return [...missing];
+}
+
+/** Names the `missing` characters and the characters the numerals face does draw. */
+export function describeMissingNumerals(missing: string[]): string {
+  const named = missing.map((ch) => JSON.stringify(ch)).join(', ');
+  return `Characters not in the numerals font: ${named}. It draws 0–9, space, and : . - + / % ° ? only.`;
+}
 
 /** Text style options for the styled text engine. */
 export interface TextStyle {
@@ -30,9 +67,6 @@ export interface TextStyle {
   shadow?: boolean;
 }
 
-/** Font size variant. */
-export type FontVariant = 'standard' | 'compact';
-
 /** Overflow/fit mode for text rendering. */
 export type OverflowMode = 'auto' | 'shrink' | 'scroll' | 'wrap' | 'truncate';
 
@@ -45,6 +79,11 @@ export interface LayoutEntry {
   font?: FontVariant;
   scale?: number;
   type: string;
+}
+
+/** Whether `box` lies wholly on a `width` × `height` canvas, clear of all four edges. */
+export function boxFits(box: LayoutEntry['box'], width: number, height: number): boolean {
+  return box.x >= 0 && box.y >= 0 && box.x + box.w <= width && box.y + box.h <= height;
 }
 
 /** Semantic alignment for x/y positioning. */
@@ -134,7 +173,7 @@ export function drawStyledText(
   style: TextStyle,
   fontVariant: FontVariant = 'standard',
 ): { x: number; y: number; w: number; h: number } {
-  const font = fontVariant === 'compact' ? FONT_3x5 : FONT_5x7;
+  const font = FONT_FACES[fontVariant];
   const scale = style.scale ?? 1;
   const textOpts = { font, scale };
 
@@ -170,7 +209,7 @@ export function drawStyledText(
 
   // For gradient ramp, draw the text per-row by using a scratch canvas and blitting
   if (style.palette && h > 1) {
-    const scratch = new Canvas(canvas.width as 16 | 32 | 64);
+    const scratch = new Canvas(canvas.width);
     drawText(scratch, text, x, y, [255, 255, 255], textOpts);
 
     // Apply gradient by coloring each row's pixels
@@ -199,10 +238,12 @@ export function drawStyledText(
 }
 
 /**
- * Render text with auto-fit logic: tries standard → compact → scroll.
+ * Render text with auto-fit logic: tries standard → compact → scroll. Auto-fit never
+ * picks `numerals`; only a `fixedFont` does.
  * A `fixedFont` pins the variant: the compact fallback is skipped, so text that
  * overflows in it takes the overflow action in that font.
- * Returns the layout entry describing what was done.
+ * Returns the layout entry describing what was done: `fits` holds when the placed box
+ * lies wholly on the canvas, whatever the overflow action.
  */
 export function renderAutoFitText(
   canvas: Canvas,
@@ -223,37 +264,21 @@ export function renderAutoFitText(
   let fontVariant: FontVariant = fixedFont ?? 'standard';
   let action: LayoutEntry['action'] = 'none';
 
-  const font = FONT_5x7;
-  const compactFont = FONT_3x5;
-  const textOpts = { font: fontVariant === 'compact' ? compactFont : font, scale };
-  const textWidth = measureText(text, textOpts);
+  let fitsWidth = measureText(text, { font: FONT_FACES[fontVariant], scale }) <= size;
 
-  let fits = textWidth <= size;
-
-  if (!fits && !fixedFont && (overflow === 'auto' || overflow === 'shrink')) {
-    // Try compact font
-    const compactOpts = { font: compactFont, scale };
-    const compactWidth = measureText(text, compactOpts);
-    if (compactWidth <= size) {
+  if (!fitsWidth && !fixedFont && (overflow === 'auto' || overflow === 'shrink')) {
+    if (measureText(text, { font: FONT_FACES.compact, scale }) <= size) {
       fontVariant = 'compact';
       action = 'shrunk-to-compact';
-      fits = true;
+      fitsWidth = true;
     }
   }
 
-  if (!fits && (overflow === 'auto' || overflow === 'scroll')) {
-    action = 'scrolling';
-    fits = false; // will scroll
-  }
+  if (!fitsWidth && (overflow === 'auto' || overflow === 'scroll')) action = 'scrolling';
+  if (!fitsWidth && overflow === 'truncate') action = 'truncated';
 
-  if (!fits && overflow === 'truncate') {
-    action = 'truncated';
-    fits = false;
-  }
-
-  const usedFont = fontVariant === 'compact' ? compactFont : font;
-  const usedOpts = { font: usedFont, scale };
-  const finalWidth = measureText(text, usedOpts);
+  const usedFont = FONT_FACES[fontVariant];
+  const finalWidth = measureText(text, { font: usedFont, scale });
   const finalHeight = usedFont.height * scale;
 
   const resolvedX = resolveX(px, finalWidth, size, dx);
@@ -262,17 +287,17 @@ export function renderAutoFitText(
   // For scrolling, apply frame-based dx
   let renderX = resolvedX;
   if (action === 'scrolling') {
-    const scrollSpeed = 2;
-    renderX = size - ((frameIdx * scrollSpeed) % (finalWidth + size));
+    renderX = size - ((frameIdx * SCROLL_STEP_PX) % (finalWidth + size));
   }
 
   drawStyledText(canvas, text, renderX, resolvedY, style, fontVariant);
 
+  const box = { x: resolvedX, y: resolvedY, w: finalWidth, h: finalHeight };
   return {
     element: elementIdx,
     type: 'text',
-    box: { x: resolvedX, y: resolvedY, w: finalWidth, h: finalHeight },
-    fits: fits,
+    box,
+    fits: boxFits(box, size, size),
     action,
     font: fontVariant,
     scale,

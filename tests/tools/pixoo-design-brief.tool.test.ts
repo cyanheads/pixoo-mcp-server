@@ -58,6 +58,67 @@ describe('pixooDesignBrief', () => {
     expect(result.craftGuidance).toContain('`effect: "auto"`');
   });
 
+  it('topic "pixel-art" points at finish for palette reduction and dithering', async () => {
+    stubStatus();
+    const { craftGuidance } = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'pixel-art' }),
+      createMockContext(),
+    );
+    expect(craftGuidance).not.toContain('Dithering patterns not supported');
+    for (const term of ['`finish`', 'pixoo_push_image', '`colors`', '`palette`', '`dither`']) {
+      expect(craftGuidance).toContain(term);
+    }
+    expect(craftGuidance).toContain('`bayer4`');
+    expect(craftGuidance).toContain('`floyd-steinberg`');
+  });
+
+  it('topic "scene" carries a glow recipe: a larger, dimmer shape blended add beneath the bright one', async () => {
+    stubStatus();
+    const { craftGuidance } = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'scene' }),
+      createMockContext(),
+    );
+    expect(craftGuidance).toContain('**Glow:**');
+    expect(craftGuidance).toContain('`blend: "add"`');
+  });
+
+  it('topic "pixel-art" offers anti-aliased and wide strokes instead of calling them unavailable', async () => {
+    stubStatus();
+    const { craftGuidance } = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'pixel-art' }),
+      createMockContext(),
+    );
+    expect(craftGuidance).not.toContain('Not available');
+    expect(craftGuidance).toContain('`antialias: true`');
+    expect(craftGuidance).toContain('`strokeWidth`');
+  });
+
+  it('topic "troubleshooting" gives the measured panel response, not an unmeasured threshold', async () => {
+    stubStatus();
+    const { craftGuidance } = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'troubleshooting' }),
+      createMockContext(),
+    );
+    expect(craftGuidance).not.toContain('#202020');
+    expect(craftGuidance).toContain('brightness 100, channel levels 0–4 stay dark');
+    expect(craftGuidance).toContain('#D97757 reads red');
+  });
+
+  it.each(['text', 'dashboard'] as const)(
+    'topic "%s" lists the symbols beyond ASCII and the numerals face',
+    async (topic) => {
+      stubStatus();
+      const { craftGuidance } = await pixooDesignBrief.handler(
+        pixooDesignBrief.input.parse({ topic }),
+        createMockContext(),
+      );
+      expect(craftGuidance).toContain('`° ← ↑ → ↓ ▲ ▼ ♥ · …`');
+      expect(craftGuidance).toContain('`font: "numerals"`');
+      expect(craftGuidance).toContain('11×18');
+      expect(craftGuidance).toContain('0–9, space, and `: . - + / % ° ?`');
+    },
+  );
+
   it('topic "text" — returns expected output shape', async () => {
     stubStatus();
     const ctx = createMockContext();

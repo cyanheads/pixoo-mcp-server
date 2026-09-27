@@ -3,18 +3,32 @@
  * @module tests/tools/pixoo-compose-scene.tool.test
  */
 
+import { createHash } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
+  createFetchMock,
   createMockContext,
   getContentBlocks,
   runToolContract,
 } from '@cyanheads/mcp-ts-core/testing';
-import { Canvas, type RGB, resolveColor, savePng } from '@cyanheads/pixoo-toolkit';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  type BitmapFont,
+  Canvas,
+  drawText,
+  FONT_3x5,
+  FONT_5x7,
+  FONT_DIGITS_11x18,
+  loadImage,
+  measureText,
+  type RGB,
+  resolveColor,
+  savePng,
+} from '@cyanheads/pixoo-toolkit';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
 import { ICON_NAMES } from '@/renderer/icons.js';
@@ -28,11 +42,26 @@ import {
   expectDeviceFailure,
   failDevicePush,
   imageKind,
+  isolateTmpdir,
   listFiles,
   resultText,
   stubDeviceState,
 } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
+import {
+  expectInvalidImage,
+  type ImageSources,
+  NOT_IMAGE_REASON,
+  TRUNCATED_JPEG_REASON,
+  UNREACHABLE_URL,
+  withServedSources,
+  writeImageSources,
+} from '../helpers/image-sources.js';
+import {
+  expectInvalidColor,
+  PROTOTYPE_COLOR_INPUTS,
+  PROTOTYPE_NAME_CASES,
+} from '../helpers/prototype-color-names.js';
 
 type SceneInput = z.input<typeof pixooComposeScene.input>;
 
@@ -153,6 +182,23 @@ describe('pixooComposeScene', () => {
     expect(result.deviceState).toEqual(fakeDeviceState);
   });
 
+  it('a twinkling scene renders the same preview on every call', async () => {
+    const compose = () =>
+      runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [
+          { type: 'rect', x: 8, y: 8, w: 16, h: 16, color: '#ffffff', effect: { name: 'twinkle' } },
+        ],
+        frames: 8,
+        push: false,
+      });
+    const first = await compose();
+    const second = await compose();
+    expect(first.isError).toBeFalsy();
+    expect(second.content).toEqual(first.content);
+    expect(second.structuredContent).toEqual(first.structuredContent);
+  });
+
   it('animation preview tiles every frame instead of showing the middle one', async () => {
     const client = stubDeviceState();
     const ctx = createMockContext({ errors: pixooComposeScene.errors });
@@ -236,7 +282,6 @@ describe('pixooComposeScene', () => {
   });
 
   it('the effect amplitude description names every effect amplitude changes', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const readsAmplitude = EFFECT_NAMES.filter(
       (name) =>
         JSON.stringify(compileEffect(name, { amplitude: 0.1 }, 12)) !==
@@ -350,11 +395,9 @@ describe('pixooComposeScene', () => {
       });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
-        error: {
-          code: JsonRpcErrorCode.NotFound,
-          data: { reason: 'asset_not_found', recovery: { hint: expect.any(String) } },
-        },
+        error: { code: JsonRpcErrorCode.NotFound, data: { reason: 'asset_not_found' } },
       });
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'asset_not_found');
       const text = result.content
         .flatMap((block) => (block.type === 'text' ? [block.text] : []))
         .join('\n');
@@ -375,6 +418,198 @@ describe('pixooComposeScene', () => {
       });
       expect(result.isError).toBe(true);
       expect(pushFrame).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('https image elements load from memory, never the temp dir', () => {
+    let sources: ImageSources;
+    let tmp: Awaited<ReturnType<typeof isolateTmpdir>> | undefined;
+
+    beforeAll(async () => {
+      sources = await writeImageSources();
+    });
+
+    afterEach(() => {
+      tmp?.restore();
+      tmp = undefined;
+    });
+
+    const scene = (source: string): SceneInput => ({
+      background: '#000000',
+      elements: [{ type: 'image', source }],
+      push: false,
+    });
+
+    /** SHA-256 of the preview PNG a push: false scene of one image element returns. */
+    async function preview(source: string): Promise<string> {
+      const ctx = createMockContext({ errors: pixooComposeScene.errors });
+      await pixooComposeScene.handler(pixooComposeScene.input.parse(scene(source)), ctx);
+      const [block] = getContentBlocks(ctx);
+      const png = Buffer.from((block as { data: string }).data, 'base64');
+      return createHash('sha256').update(png).digest('hex');
+    }
+
+    it('renders an https source while TMPDIR points at a missing directory', async () => {
+      tmp = await isolateTmpdir();
+      process.env['TMPDIR'] = path.join(tmp.dir, 'missing');
+      const result = await withServedSources(sources, () =>
+        runToolContract(pixooComposeScene, scene(sources.png.url)),
+      );
+      expect(result.isError).toBeFalsy();
+      expect(result.content.filter((block) => block.type === 'image')).toHaveLength(1);
+    });
+
+    it.each(['png', 'jpeg', 'svg'] as const)(
+      'an https %s renders byte-identical to the same local file',
+      async (kind) => {
+        const local = await preview(sources[kind].file);
+        const remote = await withServedSources(sources, () => preview(sources[kind].url));
+        expect(remote).toBe(local);
+      },
+    );
+
+    it('writes nothing to the temp dir, whether the download decodes or not', async () => {
+      tmp = await isolateTmpdir();
+      const { url } = sources.truncatedJpeg;
+      const [decoded, undecodable] = await withServedSources(
+        sources,
+        async () =>
+          [
+            await runToolContract(pixooComposeScene, scene(sources.png.url)),
+            await runToolContract(pixooComposeScene, scene(url)),
+          ] as const,
+      );
+      expect(decoded.isError).toBeFalsy();
+      expect(undecodable.isError).toBe(true);
+      // Past the URL itself, the failure names no path.
+      const { message } = (undecodable.structuredContent as { error: { message: string } }).error;
+      expect(message.split(url).join('')).not.toContain('/');
+      expect(await listFiles(tmp.dir)).toEqual([]);
+    });
+  });
+
+  describe('an image or sprite source that exists but does not decode fails as invalid_image', () => {
+    let sources: ImageSources;
+
+    beforeAll(async () => {
+      sources = await writeImageSources();
+    });
+
+    const render = (elements: SceneInput['elements'], push = false) =>
+      withServedSources(sources, () =>
+        runToolContract(pixooComposeScene, { background: '#000000', elements, push }),
+      );
+
+    it.each([
+      ['a local non-image', 'notImage', 'file', NOT_IMAGE_REASON],
+      ['a local truncated JPEG', 'truncatedJpeg', 'file', TRUNCATED_JPEG_REASON],
+      ['an https non-image body', 'notImage', 'url', NOT_IMAGE_REASON],
+      ['an https truncated JPEG', 'truncatedJpeg', 'url', TRUNCATED_JPEG_REASON],
+    ] as const)(
+      '%s as an image source, naming only the source',
+      async (_label, name, via, decoderReason) => {
+        const source = sources[name][via];
+        const result = await render([{ type: 'image', source }]);
+        expectInvalidImage(result, pixooComposeScene.errors, source, decoderReason);
+        expect(result.structuredContent).toMatchObject({ error: { data: { source } } });
+      },
+    );
+
+    it.each([
+      ['a local non-image', 'notImage', NOT_IMAGE_REASON],
+      ['a local truncated JPEG', 'truncatedJpeg', TRUNCATED_JPEG_REASON],
+    ] as const)(
+      '%s as a sprite path, naming only the path',
+      async (_label, name, decoderReason) => {
+        const spritePath = sources[name].file;
+        const result = await render([{ type: 'sprite', path: spritePath, cols: 4, rows: 4 }]);
+        expectInvalidImage(result, pixooComposeScene.errors, spritePath, decoderReason);
+        expect(result.structuredContent).toMatchObject({ error: { data: { path: spritePath } } });
+      },
+    );
+
+    it('one undecodable sprite among valid images and sprites fails the scene before any push', async () => {
+      const client = stubDeviceState();
+      const result = await render(
+        [
+          { type: 'image', source: sources.png.file },
+          { type: 'image', source: sources.svg.url },
+          { type: 'sprite', path: sources.jpeg.file, cols: 4, rows: 4 },
+          { type: 'sprite', path: sources.truncatedJpeg.file, cols: 2, rows: 2 },
+        ],
+        true,
+      );
+      expectInvalidImage(
+        result,
+        pixooComposeScene.errors,
+        sources.truncatedJpeg.file,
+        TRUNCATED_JPEG_REASON,
+      );
+      expect(client.push).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, SceneInput['elements'][number]]>([
+      ['an unreachable https image URL', { type: 'image', source: UNREACHABLE_URL }],
+      ['a non-https image URL', { type: 'image', source: 'http://images.test/sources/art.png' }],
+      [
+        'a sprite path given as a URL',
+        { type: 'sprite', path: 'https://images.test/sources/art.png', cols: 4, rows: 4 },
+      ],
+    ])('%s still fails as asset_not_found, with the declared recovery', async (_label, element) => {
+      const result = await render([element]);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.NotFound, data: { reason: 'asset_not_found' } },
+      });
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'asset_not_found');
+    });
+
+    it('an image URL over the 10 MiB download cap fails as asset_not_found, with the declared recovery', async () => {
+      const url = 'https://images.test/sources/huge.png';
+      const http = createFetchMock([
+        {
+          match: url,
+          respond: () =>
+            new Response(new Uint8Array(sources.png.bytes), {
+              headers: { 'content-length': String(11 * 1024 * 1024) },
+            }),
+        },
+      ]);
+      http.install();
+      try {
+        const result = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          elements: [{ type: 'image', source: url }],
+          push: false,
+        });
+        expectForwardedRecovery(result, pixooComposeScene.errors, 'asset_not_found');
+        expect(result.structuredContent).toMatchObject({
+          error: {
+            code: JsonRpcErrorCode.NotFound,
+            message: 'Image response too large (11534336 bytes; limit: 10485760).',
+            data: { url, contentLength: 11534336 },
+          },
+        });
+      } finally {
+        http.restore();
+      }
+    });
+
+    it('a sprite path given as a URL says sprite sheets take an absolute local path', async () => {
+      const url = 'https://example.com/art.png';
+      const result = await render([{ type: 'sprite', path: url, cols: 2, rows: 1 }]);
+      const message = `Sprite sheet path "${url}" is a URL; sprite sheets take an absolute local path.`;
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: JsonRpcErrorCode.NotFound,
+          message,
+          data: { reason: 'asset_not_found', path: url },
+        },
+      });
+      expect(resultText(result)).toContain(message);
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'asset_not_found');
+      expect(
+        pixooComposeScene.errors?.find((entry) => entry.reason === 'asset_not_found')?.recovery,
+      ).toContain('sprite sheets take an absolute local path');
     });
   });
 
@@ -612,6 +847,129 @@ describe('pixooComposeScene', () => {
       expect(result.isError).toBeFalsy();
       const { layout } = result.structuredContent as { layout: Array<{ type: string }> };
       expect(layout.map((entry) => entry.type)).toEqual(ICON_NAMES.map(() => 'icon'));
+    });
+  });
+
+  describe('image element finish', () => {
+    const BACKGROUND: RGB = [16, 16, 16];
+    const PALETTE = ['#000000', '#ffffff', '#ff8800'];
+    const PALETTE_RGB = ['0,0,0', '255,255,255', '255,136,0'];
+    /** A 32×32 image in the top-left corner, then a rect over the bottom-right. */
+    const scene = (finish?: Record<string, unknown>): SceneInput => ({
+      background: '#101010',
+      elements: [
+        {
+          type: 'image',
+          source: photo,
+          x: 0,
+          y: 0,
+          w: 32,
+          h: 32,
+          fit: 'fill',
+          ...(finish && { finish }),
+        } as SceneInput['elements'][number],
+        { type: 'rect', x: 40, y: 40, w: 16, h: 16, color: '#00aaff' },
+      ],
+    });
+
+    let photo: string;
+
+    beforeAll(async () => {
+      photo = (await writeImageSources()).png.file;
+    });
+
+    beforeEach(() => {
+      // TEST-NET-1 address: never routable. The device client is a fake regardless.
+      process.env['PIXOO_IP'] = '192.0.2.1';
+      resetServerConfig();
+      initPixooService(fakeConfig, fakeStorage);
+    });
+
+    /** Render `input` and push it to a fake device; return the result and the pushed frame. */
+    async function pushScene(input: SceneInput) {
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooComposeScene, { ...input, push: true });
+      return { result, client, frame: client.push.mock.calls[0]?.[0] as Canvas | undefined };
+    }
+
+    /** Distinct `r,g,b` of the pixels in the image's 32×32 box. */
+    function imageColors(frame: Canvas): Set<string> {
+      const colors = new Set<string>();
+      for (let y = 0; y < 32; y++) {
+        for (let x = 0; x < 32; x++) colors.add(frame.getPixelRgba(x, y).slice(0, 3).join(','));
+      }
+      return colors;
+    }
+
+    it('without finish, the image renders as the loaded image blitted over the background', async () => {
+      const { result, frame } = await pushScene(scene());
+      expect(result.isError).toBeFalsy();
+      const expected = new Canvas(64).clear(BACKGROUND);
+      expected.blit(
+        await loadImage(photo, { size: 64, x: 0, y: 0, width: 32, height: 32, fit: 'fill' }),
+        0,
+        0,
+      );
+      expected.fillRect(40, 40, 16, 16, [0, 170, 255]);
+      expect(hashOf(frame!)).toBe(hashOf(expected));
+      const preview = result.content.find((block) => block.type === 'image') as { data: string };
+      expect(preview.data).toBe(encodePreviewBlock(expected).data);
+    });
+
+    it.each(['none', 'bayer4', 'floyd-steinberg'] as const)(
+      'finish: { palette } under dither %s draws only palette colors where the image is opaque; other elements are unaffected',
+      async (dither) => {
+        const plain = await pushScene(scene());
+        const { result, frame } = await pushScene(scene({ palette: PALETTE, dither }));
+        expect(result.isError).toBeFalsy();
+
+        const colors = imageColors(frame!);
+        expect([...colors].every((rgb) => PALETTE_RGB.includes(rgb))).toBe(true);
+        expect(colors.size).toBeGreaterThan(1);
+        for (let y = 0; y < 64; y++) {
+          for (let x = 0; x < 64; x++) {
+            if (x < 32 && y < 32) continue;
+            expect(frame!.getPixelRgba(x, y)).toEqual(plain.frame!.getPixelRgba(x, y));
+          }
+        }
+      },
+    );
+
+    it('finish: { colors: 4 } leaves at most 4 colors in the image', async () => {
+      const plain = await pushScene(scene());
+      expect(imageColors(plain.frame!).size).toBeGreaterThan(4);
+      const { result, frame } = await pushScene(scene({ colors: 4 }));
+      expect(result.isError).toBeFalsy();
+      expect(imageColors(frame!).size).toBeLessThanOrEqual(4);
+    });
+
+    it.each(['#zzzzzz', 'not-a-color'])(
+      'a palette entry %j fails as invalid_color',
+      async (entry) => {
+        const { result, client } = await pushScene(scene({ palette: ['#000000', entry] }));
+        expectInvalidColor(result, pixooComposeScene.errors, entry);
+        expect(client.push).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each<[string, Record<string, unknown>, string]>([
+      ['both colors and palette', { colors: 8, palette: PALETTE }, 'elements.0.finish: '],
+      ['neither colors nor palette', {}, 'elements.0.finish: '],
+      ['colors 1', { colors: 1 }, 'elements.0.finish.colors: Too small'],
+      ['colors 257', { colors: 257 }, 'elements.0.finish.colors: Too big'],
+      ['an empty palette', { palette: [] }, 'elements.0.finish.palette: Too small'],
+      [
+        'a 257-entry palette',
+        { palette: Array(257).fill('#000000') },
+        'elements.0.finish.palette: Too big',
+      ],
+    ])('%s fails input validation (-32602) naming finish', async (_label, finish, named) => {
+      const { result, client } = await pushScene(scene(finish));
+      expect(result.structuredContent).toMatchObject({
+        error: { code: -32602, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain(named);
+      expect(client.push).not.toHaveBeenCalled();
     });
   });
 
@@ -949,6 +1307,200 @@ describe('pixooComposeScene', () => {
       const beam = Array.from({ length: 11 }, (_, i) => 2 + i);
       expect(beam.filter((x) => !isInk(frames[0]!, x, 3, BLACK))).toEqual([]);
     });
+
+    describe('blend, stroke width, and anti-aliasing', () => {
+      const under = { type: 'rect', x: 0, y: 0, w: 16, h: 16, color: '#640000' } as const;
+
+      it.each<['normal' | 'add' | 'screen' | 'multiply', number]>([
+        ['normal', 200],
+        ['add', 255],
+        ['screen', 222],
+        ['multiply', 78],
+      ])('a #c80000 rect blended %s over #640000 pushes [%i, 0, 0]', async (blend, red) => {
+        const { result, frames } = await renderFrames({
+          background: '#000000',
+          elements: [under, { type: 'rect', x: 4, y: 4, w: 8, h: 8, color: '#c80000', blend }],
+        });
+        expect(result.isError).toBeFalsy();
+        expect(frames[0]!.getPixelRgba(6, 6)).toEqual([red, 0, 0, 255]);
+        expect(frames[0]!.getPixelRgba(1, 1)).toEqual([100, 0, 0, 255]);
+      });
+
+      it('a line at strokeWidth 3 lights three rows and reports its box on both surfaces', async () => {
+        const { result, frames } = await renderFrames({
+          background: '#000000',
+          elements: [{ type: 'line', x0: 2, y0: 10, x1: 20, y1: 10, strokeWidth: 3 }],
+        });
+        expect(inkRows(frames[0]!, BLACK)).toEqual([9, 10, 11]);
+        expect(result.structuredContent).toMatchObject({
+          layout: [{ type: 'line', box: { x: 2, y: 9, w: 19, h: 3 }, fits: true }],
+        });
+        expect(resultText(result)).toContain('line @ (2,9) 19×3 fits:true');
+      });
+
+      it('a wide line on the bottom row does not fit, on both surfaces', async () => {
+        const { result } = await renderFrames({
+          background: '#000000',
+          elements: [{ type: 'line', x0: 2, y0: 63, x1: 20, y1: 63, strokeWidth: 3 }],
+        });
+        expect(result.structuredContent).toMatchObject({
+          layout: [{ type: 'line', box: { x: 2, y: 62, w: 19, h: 3 }, fits: false }],
+        });
+        expect(resultText(result)).toContain('line @ (2,62) 19×3 fits:false');
+      });
+
+      it('an outline circle at strokeWidth 3 reports the box of its ring', async () => {
+        const { result, frames } = await renderFrames({
+          background: '#000000',
+          elements: [{ type: 'circle', cx: 32, cy: 32, radius: 10, fill: false, strokeWidth: 3 }],
+        });
+        expect(isInk(frames[0]!, 21, 32, BLACK)).toBe(true);
+        expect(isInk(frames[0]!, 43, 32, BLACK)).toBe(true);
+        expect(isInk(frames[0]!, 24, 32, BLACK)).toBe(false);
+        expect(result.structuredContent).toMatchObject({
+          layout: [{ type: 'circle', box: { x: 21, y: 21, w: 23, h: 23 }, fits: true }],
+        });
+        expect(resultText(result)).toContain('circle @ (21,21) 23×23 fits:true');
+      });
+
+      it('a rect border at strokeWidth 2 grows inward and keeps the rect box', async () => {
+        const { result, frames } = await renderFrames({
+          background: '#000000',
+          elements: [
+            { type: 'rect', x: 10, y: 10, w: 10, h: 6, borderColor: '#ffffff', strokeWidth: 2 },
+          ],
+        });
+        expect(inkPixels(frames[0]!, BLACK)).toHaveLength(48);
+        expect(isInk(frames[0]!, 12, 12, BLACK)).toBe(false);
+        expect(resultText(result)).toContain('rect @ (10,10) 10×6 fits:true');
+      });
+
+      it('an anti-aliased line shades its edge pixels, at their coverage × opacity', async () => {
+        const line = {
+          type: 'line',
+          x0: 0,
+          y0: 0,
+          x1: 20,
+          y1: 20,
+          color: '#ffffff',
+          antialias: true,
+        } as const;
+        const full = await renderFrames({ background: '#000000', elements: [line] });
+        const half = await renderFrames({
+          background: '#000000',
+          elements: [{ ...line, opacity: 50 }],
+        });
+        expect(full.frames[0]!.getPixelRgba(10, 9)).toEqual([53, 53, 53, 255]);
+        expect(half.frames[0]!.getPixelRgba(10, 9)).toEqual([27, 27, 27, 255]);
+      });
+
+      it('strokeWidth, antialias, and blend at their defaults render as though omitted', async () => {
+        const plain: SceneInput['elements'] = [
+          { type: 'line', x0: 2, y0: 3, x1: 40, y1: 20 },
+          { type: 'circle', cx: 30, cy: 40, radius: 8, fill: false },
+          { type: 'rect', x: 44, y: 4, w: 12, h: 10, color: '#224488', borderColor: '#ffffff' },
+          { type: 'text', text: 'OK', x: 2, y: 50 },
+        ];
+        const defaults: SceneInput['elements'] = [
+          { ...plain[0]!, strokeWidth: 1, antialias: false, blend: 'normal' },
+          { ...plain[1]!, strokeWidth: 1, antialias: false, blend: 'normal' },
+          { ...plain[2]!, strokeWidth: 1, blend: 'normal' },
+          { ...plain[3]!, blend: 'normal' },
+        ] as SceneInput['elements'];
+        const a = await renderFrames({ background: '#000000', elements: plain });
+        const b = await renderFrames({ background: '#000000', elements: defaults });
+        expect(b.result.isError).toBeFalsy();
+        expect(hashOf(b.frames[0]!)).toBe(hashOf(a.frames[0]!));
+        expect(b.result.structuredContent).toEqual(a.result.structuredContent);
+      });
+    });
+  });
+
+  describe('blend and stroke fields are validated where they draw', () => {
+    /** Run one element through the tool; its input is deliberately untyped. */
+    function composeOne(element: unknown) {
+      const client = stubDeviceState();
+      const result = runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [element as SceneInput['elements'][number]],
+        push: true,
+      });
+      return { client, result };
+    }
+
+    it.each<[string, Record<string, unknown>, string]>([
+      [
+        'strokeWidth on a circle that fills by default',
+        { type: 'circle', cx: 10, cy: 10, radius: 4, strokeWidth: 2 },
+        'strokeWidth',
+      ],
+      [
+        'strokeWidth on a filled circle',
+        { type: 'circle', cx: 10, cy: 10, radius: 4, fill: true, strokeWidth: 1 },
+        'strokeWidth',
+      ],
+      [
+        'antialias on a filled circle',
+        { type: 'circle', cx: 10, cy: 10, radius: 4, antialias: true },
+        'antialias',
+      ],
+      [
+        'antialias: false on a filled circle',
+        { type: 'circle', cx: 10, cy: 10, radius: 4, fill: true, antialias: false },
+        'antialias',
+      ],
+      [
+        'strokeWidth on a rect without borderColor',
+        { type: 'rect', x: 0, y: 0, w: 8, h: 8, color: '#ffffff', strokeWidth: 2 },
+        'strokeWidth',
+      ],
+      [
+        'strokeWidth 0 on a line',
+        { type: 'line', x0: 0, y0: 0, x1: 8, y1: 8, strokeWidth: 0 },
+        'strokeWidth',
+      ],
+      [
+        'a fractional strokeWidth on a line',
+        { type: 'line', x0: 0, y0: 0, x1: 8, y1: 8, strokeWidth: 1.5 },
+        'strokeWidth',
+      ],
+      [
+        'an unknown blend mode',
+        { type: 'rect', x: 0, y: 0, w: 8, h: 8, color: '#ffffff', blend: 'overlay' },
+        'blend',
+      ],
+    ])('%s fails -32602 naming the field, before any push', async (_label, element, field) => {
+      const { client, result } = composeOne(element);
+      const failed = await result;
+      expect(failed.isError).toBe(true);
+      expect(failed.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(failed)).toContain(`elements.0.${field}`);
+      expect(JSON.stringify(failed.structuredContent)).toContain(field);
+      expect(client.push).not.toHaveBeenCalled();
+    });
+
+    it.each(['normal', 'add', 'screen', 'multiply'] as const)(
+      'blend %s is accepted on every element type',
+      (blend) => {
+        const elements = [
+          { type: 'text', text: 'A' },
+          { type: 'icon', name: 'heart' },
+          { type: 'rect', x: 0, y: 0, w: 2, h: 2 },
+          { type: 'circle', cx: 4, cy: 4, radius: 2 },
+          { type: 'line', x0: 0, y0: 0, x1: 4, y1: 4 },
+          { type: 'progress', x: 0, y: 0, w: 8, h: 2, value: 1, max: 2 },
+          { type: 'sparkline', x: 0, y: 0, w: 8, h: 4, data: [1, 2] },
+          { type: 'bitmap', x: 0, y: 0, rows: ['1'], palette: ['#000', '#fff'] },
+          { type: 'pixels', data: [] },
+          { type: 'image', source: '/tmp/a.png' },
+          { type: 'sprite', path: '/tmp/a.png', cols: 1, rows: 1 },
+        ].map((el) => ({ ...el, blend }));
+        const parsed = pixooComposeScene.input.parse({ background: '#000000', elements });
+        expect(parsed.elements.map((el) => el.blend)).toEqual(elements.map(() => blend));
+      },
+    );
   });
 
   describe('an empty animate track', () => {
@@ -1291,6 +1843,329 @@ describe('pixooComposeScene', () => {
         push: false,
       });
       expectForwardedRecovery(result, pixooComposeScene.errors, 'unknown_icon');
+    });
+  });
+
+  describe('an Object.prototype name is not a color', () => {
+    const square = { type: 'rect', x: 0, y: 0, w: 8, h: 8 } as const;
+    const render = (scene: Partial<SceneInput>) =>
+      runToolContract(pixooComposeScene, {
+        background: '#ffffff',
+        elements: [{ ...square, color: 'red' }],
+        push: false,
+        ...scene,
+      });
+
+    it.each(PROTOTYPE_COLOR_INPUTS)('element color %j fails as invalid_color', async (name) => {
+      const result = await render({ elements: [{ ...square, color: name }] });
+      expectInvalidColor(result, pixooComposeScene.errors, name);
+    });
+
+    it.each(PROTOTYPE_NAME_CASES)('background %j fails as invalid_color', async (name) => {
+      expectInvalidColor(await render({ background: name }), pixooComposeScene.errors, name);
+    });
+
+    it.each(PROTOTYPE_NAME_CASES)('color keyframe %j fails as invalid_color', async (name) => {
+      const result = await render({
+        frames: 3,
+        elements: [
+          {
+            ...square,
+            animate: {
+              color: [
+                [0, 'red'],
+                [2, name],
+              ],
+            },
+          },
+        ],
+      });
+      expectInvalidColor(result, pixooComposeScene.errors, name);
+    });
+
+    it('named and hex colors still resolve on those surfaces', async () => {
+      const client = stubDeviceState();
+      const result = await render({
+        background: 'Navy',
+        frames: 3,
+        push: true,
+        elements: [
+          { ...square, color: 'ORANGE' },
+          { ...square, x: 8, color: '#0f0' },
+          {
+            ...square,
+            x: 16,
+            animate: {
+              color: [
+                [0, 'Red'],
+                [2, '#0000ff'],
+              ],
+            },
+          },
+        ],
+      });
+      expect(result.isError).toBeFalsy();
+      const frames = client.pushAnimation.mock.calls[0]?.[0] as Canvas[];
+      const rgbAt = (frame: number, x: number, y: number) =>
+        frames[frame]?.getPixelRgba(x, y).slice(0, 3);
+      expect(rgbAt(2, 40, 40)).toEqual([0, 0, 128]);
+      expect(rgbAt(2, 0, 0)).toEqual([255, 165, 0]);
+      expect(rgbAt(2, 8, 0)).toEqual([0, 255, 0]);
+      expect(rgbAt(0, 16, 0)).toEqual([255, 0, 0]);
+      expect(rgbAt(2, 16, 0)).toEqual([0, 0, 255]);
+    });
+  });
+
+  type TextElementInput = Extract<SceneInput['elements'][number], { type: 'text' }>;
+  type Entry = {
+    action: string;
+    box: { x: number; y: number; w: number; h: number };
+    fits: boolean;
+    font?: string;
+    scale?: number;
+  };
+  const layoutOf = (result: Awaited<ReturnType<typeof runToolContract>>) =>
+    (result.structuredContent as { layout: Entry[] }).layout;
+
+  /** Compose `elements` over black and push to a fake device; return the result and the frame. */
+  async function pushScene(elements: TextElementInput[]) {
+    const client = stubDeviceState();
+    const result = await runToolContract(pixooComposeScene, {
+      background: '#000000',
+      elements,
+      push: true,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(client.push).toHaveBeenCalledOnce();
+    return { result, frame: client.push.mock.calls[0]?.[0] as Canvas };
+  }
+
+  /** The ink the toolkit draws for `text` in `face` at (`x`, `y`), white on an empty canvas. */
+  function toolkitInk(text: string, face: BitmapFont, x = 0, y = 0): string[] {
+    const canvas = new Canvas(64);
+    drawText(canvas, text, x, y, [255, 255, 255], { font: face });
+    return inkPixels(canvas);
+  }
+
+  describe('printable ASCII in text elements renders exactly as it did under toolkit 0.8.2', () => {
+    // Printable ASCII (32–126), split into lines that fit 64 px in each font. The
+    // expected hashes and boxes were recorded from this server on @cyanheads/pixoo-toolkit
+    // 0.8.2, before the non-ASCII glyphs were added to both fonts.
+    const STANDARD = [
+      ' !"#$%&\'()*+,',
+      '-./01234567',
+      '89:;<=>?@ABC',
+      'DEFGHIJKLMN',
+      'OPQRSTUVWX',
+      'YZ[\\]^_`abc',
+      'defghijklmn',
+      'opqrstuvwx',
+      'yz{|}~',
+    ];
+    const COMPACT = [
+      ' !"#$%&\'()*+,-./01',
+      '23456789:;<=>?@AB',
+      'CDEFGHIJKLMNOPQR',
+      'STUVWXYZ[\\]^_`abc',
+      'defghijklmnopqrst',
+      'uvwxyz{|}~',
+    ];
+
+    /** Push a scene of `elements`; return each layout entry as a line and the pushed frame's hash. */
+    async function pushedFrame(elements: TextElementInput[]) {
+      const pushed: Canvas[] = [];
+      const { getPixooService } = await import('@/services/pixoo/pixoo-service.js');
+      vi.spyOn(getPixooService(), 'pushFrame').mockImplementation(async (canvas) => {
+        pushed.push(canvas);
+        return fakeDeviceState;
+      });
+      const result = await pixooComposeScene.handler(
+        pixooComposeScene.input.parse({ background: '#102030', elements, push: true }),
+        createMockContext({ errors: pixooComposeScene.errors }),
+      );
+      expect(pushed).toHaveLength(1);
+      return {
+        layout: result.layout.map(
+          (e) =>
+            `${e.action} ${e.font} @${e.box.x},${e.box.y} ${e.box.w}x${e.box.h} fits:${e.fits}`,
+        ),
+        pushed: createHash('sha256').update(Buffer.from(pushed[0]!.buffer)).digest('hex'),
+      };
+    }
+
+    it('standard, flat color, one line every 7 rows', async () => {
+      const elements = STANDARD.map((text, i) => ({
+        type: 'text' as const,
+        text,
+        x: 0,
+        y: i * 7,
+        font: 'standard' as const,
+        color: '#ffa500',
+      }));
+      expect(await pushedFrame(elements)).toEqual({
+        layout: [
+          'none standard @0,0 60x7 fits:true',
+          'none standard @0,7 59x7 fits:true',
+          'none standard @0,14 62x7 fits:true',
+          'none standard @0,21 63x7 fits:true',
+          'none standard @0,28 59x7 fits:true',
+          'none standard @0,35 59x7 fits:true',
+          'none standard @0,42 59x7 fits:true',
+          'none standard @0,49 59x7 fits:true',
+          'none standard @0,56 27x7 fits:true',
+        ],
+        pushed: '51e18ba245467cc0fa8db518c946d54cf7ea99b5bf1a6f474f28508e833cb7fa',
+      });
+    });
+
+    it('compact, palette ramp, right-aligned', async () => {
+      const elements = COMPACT.map((text, i) => ({
+        type: 'text' as const,
+        text,
+        x: 'right' as const,
+        y: i * 6 + 1,
+        font: 'compact' as const,
+        style: { palette: 'claude' as const },
+      }));
+      expect(await pushedFrame(elements)).toEqual({
+        layout: [
+          'none compact @2,1 62x5 fits:true',
+          'none compact @0,7 64x5 fits:true',
+          'none compact @1,13 63x5 fits:true',
+          'none compact @0,19 64x5 fits:true',
+          'none compact @0,25 64x5 fits:true',
+          'none compact @27,31 37x5 fits:true',
+        ],
+        pushed: 'c897e82922c5ce5bf6077ceca31e1534e4c3db8ea116d805111bf8f3f59d7309',
+      });
+    });
+  });
+
+  describe('the non-ASCII glyphs in standard and compact text elements', () => {
+    const FACES = { standard: FONT_5x7, compact: FONT_3x5 } as const;
+
+    it.each([
+      ['72°F', 'standard', '72?F'],
+      ['72°F', 'compact', '72?F'],
+      ['▲3 ▼2', 'standard', '?3 ?2'],
+      ['▲3 ▼2', 'compact', '?3 ?2'],
+    ] as const)('%s draws its own glyphs in %s, not %s', async (text, font, asQuestionMarks) => {
+      const { result, frame } = await pushScene([
+        { type: 'text', text, font, x: 0, y: 0, color: '#ffffff' },
+      ]);
+      const ink = inkPixels(frame, [0, 0, 0]);
+      expect(ink).toEqual(toolkitInk(text, FACES[font]));
+      expect(ink).not.toEqual(toolkitInk(asQuestionMarks, FACES[font]));
+      expect(layoutOf(result)[0]).toMatchObject({ font, fits: true });
+    });
+  });
+
+  describe('text elements in the numerals font', () => {
+    it('render 12:45 as a 58×18 box in the 11×18 face, reported as numerals on both surfaces', async () => {
+      const { result, frame } = await pushScene([
+        { type: 'text', text: '12:45', font: 'numerals', x: 'center', y: 'center' },
+      ]);
+      expect(layoutOf(result)).toEqual([
+        {
+          element: 0,
+          type: 'text',
+          box: { x: 3, y: 23, w: 58, h: 18 },
+          fits: true,
+          action: 'none',
+          font: 'numerals',
+          scale: 1,
+        },
+      ]);
+      expect(resultText(result)).toContain(
+        '[0] text @ (3,23) 58×18 fits:true action:none font:numerals scale:1',
+      );
+      expect(inkPixels(frame, [0, 0, 0])).toEqual(toolkitInk('12:45', FONT_DIGITS_11x18, 3, 23));
+    });
+
+    it('with font omitted, 12:45 lays out in standard', async () => {
+      const { result } = await pushScene([{ type: 'text', text: '12:45' }]);
+      expect(layoutOf(result)[0]).toMatchObject({
+        font: 'standard',
+        box: { x: 0, y: 0, w: measureText('12:45', { font: FONT_5x7 }), h: 7 },
+      });
+      expect(resultText(result)).toContain('font:standard');
+    });
+
+    it('at scale 2, 12:45 (116 px) stays in numerals and reports that it does not fit', async () => {
+      const { result } = await pushScene([
+        { type: 'text', text: '12:45', font: 'numerals', style: { scale: 2 } },
+      ]);
+      expect(layoutOf(result)[0]).toMatchObject({
+        font: 'numerals',
+        fits: false,
+        scale: 2,
+        box: { x: 0, y: 0, w: 116, h: 36 },
+      });
+    });
+
+    it('pairs with a standard label: the unit renders beside the numerals, each in its own face', async () => {
+      const { result } = await pushScene([
+        { type: 'text', text: '72°', font: 'numerals', x: 2, y: 2 },
+        { type: 'text', text: 'F', x: 38, y: 2 },
+      ]);
+      expect(layoutOf(result).map((e) => [e.font, e.box.w, e.box.h])).toEqual([
+        ['numerals', 34, 18],
+        ['standard', 5, 7],
+      ]);
+    });
+
+    it.each([
+      [0, '72°F', '"F"'],
+      [1, 'am', '"a", "m"'],
+    ] as const)(
+      'element %i text %j in numerals fails -32602 naming %s; nothing is rendered or pushed',
+      async (index, text, named) => {
+        const client = stubDeviceState();
+        const numerals: TextElementInput = { type: 'text', text, font: 'numerals' };
+        const label: TextElementInput = { type: 'text', text: 'ok', y: 40 };
+        const result = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          elements: index === 0 ? [numerals, label] : [label, numerals],
+          push: true,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+        });
+        expect(JsonRpcErrorCode.InvalidParams).toBe(-32602);
+        expect(resultText(result)).toContain(`elements.${index}.text`);
+        expect(resultText(result)).toContain(`Characters not in the numerals font: ${named}.`);
+        expect(result.content.some((block) => block.type === 'image')).toBe(false);
+        expect(client.push).not.toHaveBeenCalled();
+        expect(client.pushAnimation).not.toHaveBeenCalled();
+      },
+    );
+
+    it('the same text is accepted in standard and compact', async () => {
+      const { result } = await pushScene([
+        { type: 'text', text: '72°F am', font: 'standard' },
+        { type: 'text', text: '72°F am', font: 'compact', y: 10 },
+      ]);
+      expect(layoutOf(result).map((e) => e.font)).toEqual(['standard', 'compact']);
+    });
+
+    it('animates in the numerals face under an effect', async () => {
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        frames: 4,
+        elements: [
+          { type: 'text', text: '12', font: 'numerals', x: 2, y: 2, effect: { name: 'float' } },
+        ],
+        push: true,
+      });
+      expect(result.isError).toBeFalsy();
+      const frames = client.pushAnimation.mock.calls[0]?.[0] as Canvas[];
+      expect(frames).toHaveLength(4);
+      for (const frame of frames) {
+        const rows = inkRows(frame, [0, 0, 0]);
+        expect(rows.at(-1)! - rows[0]! + 1).toBe(18);
+      }
     });
   });
 });

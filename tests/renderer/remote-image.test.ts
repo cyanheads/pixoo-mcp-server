@@ -3,24 +3,18 @@
  * @module tests/renderer/remote-image.test
  */
 
-import * as fs from 'node:fs/promises';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createFetchMock, createMockContext } from '@cyanheads/mcp-ts-core/testing';
-import { afterEach, describe, expect, it } from 'vitest';
-import { fetchRemoteImageToTempPng, isRemoteSource } from '@/renderer/remote-image.js';
+import { describe, expect, it } from 'vitest';
+import { fetchRemoteImageBytes, isRemoteSource } from '@/renderer/remote-image.js';
+import { isolateTmpdir, listFiles } from '../helpers/device-failure.js';
 import { trickleRoute } from '../helpers/trickle-body.js';
 
-/** 1×1 transparent PNG, the smallest payload sharp will re-encode. */
+/** A 1×1 transparent PNG. */
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64',
 );
-
-const written: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(written.splice(0).map((p) => fs.unlink(p).catch(() => undefined)));
-});
 
 describe('isRemoteSource', () => {
   it('distinguishes URLs from local paths', () => {
@@ -31,8 +25,8 @@ describe('isRemoteSource', () => {
   });
 });
 
-describe('fetchRemoteImageToTempPng', () => {
-  it('writes the fetched image to a temp PNG', async () => {
+describe('fetchRemoteImageBytes', () => {
+  it('returns the fetched image bytes', async () => {
     const http = createFetchMock([
       {
         match: 'https://images.test/pixel.png',
@@ -42,16 +36,46 @@ describe('fetchRemoteImageToTempPng', () => {
     ]);
     http.install();
     try {
-      const tmpPath = await fetchRemoteImageToTempPng(
+      const bytes = await fetchRemoteImageBytes(
         'https://images.test/pixel.png',
         createMockContext(),
       );
-      written.push(tmpPath);
-      expect(tmpPath.endsWith('.png')).toBe(true);
-      await expect(fs.access(tmpPath)).resolves.toBeUndefined();
+      expect(Buffer.from(bytes).equals(PNG_1X1)).toBe(true);
       expect(http.calls).toHaveLength(1);
     } finally {
       http.restore();
+    }
+  });
+
+  it('returns a body that is not an image unchanged, leaving decoding to the loader', async () => {
+    const page = '<!doctype html><title>Not Found</title>';
+    const http = createFetchMock([
+      { match: 'https://images.test/page.png', respond: () => new Response(page) },
+    ]);
+    http.install();
+    try {
+      const bytes = await fetchRemoteImageBytes(
+        'https://images.test/page.png',
+        createMockContext(),
+      );
+      expect(Buffer.from(bytes).toString('utf8')).toBe(page);
+    } finally {
+      http.restore();
+    }
+  });
+
+  it('writes nothing to the temp dir', async () => {
+    const tmp = await isolateTmpdir();
+    const http = createFetchMock([
+      { match: 'https://images.test/pixel.png', respond: () => new Response(PNG_1X1) },
+    ]);
+    http.install();
+    try {
+      await fetchRemoteImageBytes('https://images.test/pixel.png', createMockContext());
+      expect(await listFiles(tmp.dir)).toEqual([]);
+    } finally {
+      http.restore();
+      tmp.restore();
     }
   });
 
@@ -60,7 +84,7 @@ describe('fetchRemoteImageToTempPng', () => {
     http.install();
     try {
       await expect(
-        fetchRemoteImageToTempPng('http://images.test/pixel.png', createMockContext()),
+        fetchRemoteImageBytes('http://images.test/pixel.png', createMockContext()),
       ).rejects.toMatchObject({ data: { reason: 'asset_not_found' } });
       expect(http.calls).toHaveLength(0);
     } finally {
@@ -78,7 +102,7 @@ describe('fetchRemoteImageToTempPng', () => {
     http.install();
     try {
       await expect(
-        fetchRemoteImageToTempPng('https://images.test/missing.png', createMockContext()),
+        fetchRemoteImageBytes('https://images.test/missing.png', createMockContext()),
       ).rejects.toMatchObject({ data: { reason: 'asset_not_found' } });
     } finally {
       http.restore();
@@ -107,12 +131,11 @@ describe('fetchRemoteImageToTempPng', () => {
     ]);
     http.install();
     try {
-      const tmpPath = await fetchRemoteImageToTempPng(
+      const bytes = await fetchRemoteImageBytes(
         'https://images.test/chunked.png',
         createMockContext(),
       );
-      written.push(tmpPath);
-      await expect(fs.access(tmpPath)).resolves.toBeUndefined();
+      expect(Buffer.from(bytes).equals(PNG_1X1)).toBe(true);
     } finally {
       http.restore();
     }
@@ -151,14 +174,13 @@ describe('fetchRemoteImageToTempPng', () => {
     http.install();
     try {
       await expect(
-        fetchRemoteImageToTempPng('https://images.test/endless.png', createMockContext()),
+        fetchRemoteImageBytes('https://images.test/endless.png', createMockContext()),
       ).rejects.toMatchObject({
         code: JsonRpcErrorCode.NotFound,
         data: {
           reason: 'asset_not_found',
           url: 'https://images.test/endless.png',
           byteLength: expect.any(Number),
-          recovery: { hint: expect.any(String) },
         },
       });
       expect(cancelled).toBe(true);
@@ -183,7 +205,7 @@ describe('fetchRemoteImageToTempPng', () => {
       http.install();
       try {
         await expect(
-          fetchRemoteImageToTempPng(URL_, createMockContext({ signal: controller.signal })),
+          fetchRemoteImageBytes(URL_, createMockContext({ signal: controller.signal })),
         ).rejects.toMatchObject({ code: JsonRpcErrorCode.RequestCancelled });
         expect(state.cancelled).toBe(true);
         // Torn down at the abort, not carried through the other ~197 chunks.
@@ -203,7 +225,7 @@ describe('fetchRemoteImageToTempPng', () => {
       http.install();
       try {
         await expect(
-          fetchRemoteImageToTempPng(URL_, createMockContext({ signal: controller.signal })),
+          fetchRemoteImageBytes(URL_, createMockContext({ signal: controller.signal })),
         ).rejects.toMatchObject({
           code: JsonRpcErrorCode.Timeout,
           data: { errorSource: 'FetchSignalTimeout' },
@@ -223,7 +245,7 @@ describe('fetchRemoteImageToTempPng', () => {
       http.install();
       try {
         await expect(
-          fetchRemoteImageToTempPng(URL_, createMockContext({ signal: controller.signal })),
+          fetchRemoteImageBytes(URL_, createMockContext({ signal: controller.signal })),
         ).rejects.toThrow();
         expect(state.pulled).toBe(0);
       } finally {
@@ -236,14 +258,95 @@ describe('fetchRemoteImageToTempPng', () => {
       const http = createFetchMock([route]);
       http.install();
       try {
-        const tmpPath = await fetchRemoteImageToTempPng(
+        const bytes = await fetchRemoteImageBytes(
           URL_,
           createMockContext({ signal: new AbortController().signal }),
         );
-        written.push(tmpPath);
-        await expect(fs.access(tmpPath)).resolves.toBeUndefined();
+        expect(Buffer.from(bytes).equals(PNG_1X1)).toBe(true);
         expect(state.pulled).toBe(Math.ceil(PNG_1X1.byteLength / 16));
         expect(state.cancelled).toBe(false);
+      } finally {
+        http.restore();
+      }
+    });
+  });
+
+  describe("every asset_not_found carries the calling tool's declared recovery", () => {
+    const HINT = 'Point the source at a reachable https image and retry.';
+    const ctxWithContract = () =>
+      createMockContext({
+        errors: [
+          {
+            reason: 'asset_not_found',
+            code: JsonRpcErrorCode.NotFound,
+            when: 'The image could not be fetched.',
+            recovery: HINT,
+          },
+        ],
+      });
+    const oversized = () => {
+      let pulled = 0;
+      return new Response(
+        new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (pulled++ === 12) controller.close();
+              else controller.enqueue(new Uint8Array(1024 * 1024));
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+      );
+    };
+
+    it.each([
+      [
+        'a non-https URL',
+        'http://images.test/pixel.png',
+        () => new Response(PNG_1X1),
+        /^Only https URLs are supported\. Received: "http:\/\/images\.test\/pixel\.png"\.$/,
+      ],
+      [
+        'an unreachable host',
+        'https://images.test/down.png',
+        (): Response => {
+          throw new TypeError('fetch failed');
+        },
+        /^Failed to fetch image from "https:\/\/images\.test\/down\.png": /,
+      ],
+      [
+        'a non-2xx answer',
+        'https://images.test/missing.png',
+        () => new Response('nope', { status: 404 }),
+        /^Failed to fetch image from "https:\/\/images\.test\/missing\.png": /,
+      ],
+      [
+        'a declared content-length over the ceiling',
+        'https://images.test/huge.png',
+        () =>
+          new Response(new Uint8Array(PNG_1X1), {
+            headers: { 'content-length': String(11 * 1024 * 1024) },
+          }),
+        /^Image response too large \(11534336 bytes; limit: 10485760\)\.$/,
+      ],
+      [
+        'a streamed body over the ceiling',
+        'https://images.test/endless.png',
+        oversized,
+        /^Image response too large \(\d+ bytes; limit: 10485760\)\.$/,
+      ],
+    ] as const)('%s', async (_label, url, respond, message) => {
+      const http = createFetchMock([{ match: url, respond }]);
+      http.install();
+      try {
+        const err = await fetchRemoteImageBytes(url, ctxWithContract()).then(
+          () => expect.fail('fetchRemoteImageBytes resolved'),
+          (e: unknown) => e as { code: number; message: string; data: { recovery?: unknown } },
+        );
+        expect(err.code).toBe(JsonRpcErrorCode.NotFound);
+        expect(err.data).toMatchObject({ reason: 'asset_not_found', url });
+        expect(err.data.recovery).toEqual({ hint: HINT });
+        expect(err.message).toMatch(message);
       } finally {
         http.restore();
       }
@@ -263,7 +366,7 @@ describe('fetchRemoteImageToTempPng', () => {
     http.install();
     try {
       await expect(
-        fetchRemoteImageToTempPng('https://images.test/huge.png', createMockContext()),
+        fetchRemoteImageBytes('https://images.test/huge.png', createMockContext()),
       ).rejects.toMatchObject({ data: { reason: 'asset_not_found' } });
     } finally {
       http.restore();

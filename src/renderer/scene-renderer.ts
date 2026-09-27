@@ -5,13 +5,13 @@
 
 import * as fs from 'node:fs/promises';
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, type McpError, notFound } from '@cyanheads/mcp-ts-core/errors';
 import {
+  type BlendMode,
   Canvas,
   downsampleSprite,
   drawText,
   FONT_3x5,
-  FONT_5x7,
   lerpColor,
   loadImage,
   measureText,
@@ -21,6 +21,7 @@ import {
   renderSvgPath,
   resolveColor,
 } from '@cyanheads/pixoo-toolkit';
+import { type Finish, finishFrame } from './finish.js';
 import { ICONS, type IconPaths } from './icons.js';
 import {
   compileEffect,
@@ -29,9 +30,11 @@ import {
   interpolateColorKeyframe,
   type KeyframeMap,
 } from './keyframes.js';
-import { fetchRemoteImageToTempPng, isRemoteSource } from './remote-image.js';
+import { fetchRemoteImageBytes, isRemoteSource } from './remote-image.js';
 import {
+  boxFits,
   drawStyledText,
+  FONT_FACES,
   type FontVariant,
   type LayoutEntry,
   resolveX,
@@ -59,6 +62,8 @@ export interface EffectSpec {
 /** Base element properties. */
 interface BaseElement {
   animate?: KeyframeMap;
+  /** How the element's pixels combine with what lies beneath (default `normal`, source-over). */
+  blend?: BlendMode;
   dx?: number;
   dy?: number;
   effect?: EffectSpec;
@@ -69,7 +74,7 @@ interface BaseElement {
 /** Text element. */
 export interface TextElement extends BaseElement {
   color?: string;
-  font?: 'standard' | 'compact';
+  font?: FontVariant;
   style?: TextStyle;
   text: string;
   type: 'text';
@@ -97,6 +102,8 @@ export interface RectElement extends BaseElement {
   color?: string;
   gradient?: { type: 'v' | 'h'; from: string; to: string };
   h: number;
+  /** `borderColor` border thickness in whole pixels, growing inward (default 1). */
+  strokeWidth?: number;
   type: 'rect';
   w: number;
   x: number;
@@ -105,17 +112,25 @@ export interface RectElement extends BaseElement {
 
 /** Circle element. */
 export interface CircleElement extends BaseElement {
+  /** Shade the outline's pixels by coverage (default false). Outline only. */
+  antialias?: boolean;
   color?: string;
   cx: number;
   cy: number;
   fill?: boolean;
   radius: number;
+  /** Outline thickness in whole pixels, centered on the circle (default 1). Outline only. */
+  strokeWidth?: number;
   type: 'circle';
 }
 
 /** Line element. */
 export interface LineElement extends BaseElement {
+  /** Shade the line's pixels by coverage (default false). */
+  antialias?: boolean;
   color?: string;
+  /** Thickness in whole pixels, centered on the line (default 1). */
+  strokeWidth?: number;
   type: 'line';
   x0: number;
   x1: number;
@@ -166,6 +181,8 @@ export interface PixelsElement extends BaseElement {
 
 /** Image element. */
 export interface ImageElement extends BaseElement {
+  /** Palette finish applied to the loaded image before it is drawn. */
+  finish?: Finish;
   fit?: 'contain' | 'cover' | 'fill';
   h?: number;
   kernel?: 'nearest' | 'lanczos3' | 'mitchell';
@@ -202,45 +219,134 @@ export type SceneElement =
   | ImageElement
   | SpriteElement;
 
+/** A sprite sheet downsampled to its cell grid. */
+type SpriteSheet = Awaited<ReturnType<typeof downsampleSprite>>;
+
 /**
  * Pre-loaded asset cache for images and sprites. Images are keyed by element: the
- * loader bakes each element's fit, size, and position into its canvas, so two
- * elements sharing a source still need a canvas each.
+ * loader bakes an image's fit, kernel, size, and position into its canvas, and a
+ * `finish` is applied to a copy of it, so elements share a canvas only when they share
+ * a source, all of those, and a finish. Sprites are keyed by {@link spriteKey}.
  */
 export interface AssetCache {
   images: Map<ImageElement, Canvas>;
-  sprites: Map<string, Awaited<ReturnType<typeof downsampleSprite>>>;
+  sprites: Map<string, SpriteSheet>;
+}
+
+/** The cache key of a sprite sheet: its path and grid, which fix the downsample. */
+function spriteKey(el: SpriteElement): string {
+  return `${el.path}:${el.cols}:${el.rows}`;
 }
 
 /**
  * Confirm a local image or sprite-sheet path is readable before the toolkit's
  * loader reaches it — the loader fails a missing file with an unclassified error.
  *
- * @throws {McpError} NotFound with `reason: 'asset_not_found'` when the path is
- *   missing or unreadable.
+ * @throws {McpError} NotFound with `reason: 'asset_not_found'` and the calling tool's
+ *   declared recovery when the path is missing or unreadable.
  */
-async function assertReadableAsset(assetPath: string, label: string): Promise<void> {
+async function assertReadableAsset(assetPath: string, label: string, ctx: Context): Promise<void> {
   try {
     await fs.access(assetPath, fs.constants.R_OK);
   } catch (err) {
     throw notFound(
       `${label} not found or unreadable: "${assetPath}".`,
-      {
-        reason: 'asset_not_found',
-        path: assetPath,
-        recovery: { hint: 'Pass an absolute path to an existing, readable image file.' },
-      },
+      { reason: 'asset_not_found', path: assetPath, ...ctx.recoveryFor('asset_not_found') },
       { cause: err },
     );
   }
 }
 
 /**
+ * The message for an image source that was read but did not decode: the source as the
+ * caller passed it, then the decoder's reason. Only the reason's first line is kept —
+ * libvips repeats itself across several lines on a corrupt header.
+ */
+export function decodeFailureMessage(label: string, source: string, err: unknown): string {
+  const reason = (err instanceof Error ? err.message : String(err)).split('\n')[0];
+  return `${label} "${source}" could not be decoded: ${reason}.`;
+}
+
+/**
+ * The error for an image source or sprite sheet that was read but did not decode — a
+ * text file, an HTML page, a truncated download. Carries the calling tool's declared
+ * `invalid_image` recovery.
+ */
+function undecodableAsset(el: ImageElement | SpriteElement, err: unknown, ctx: Context): McpError {
+  const [label, field, value] =
+    el.type === 'image' ? ['Image source', 'source', el.source] : ['Sprite sheet', 'path', el.path];
+  return invalidParams(
+    decodeFailureMessage(label, value, err),
+    { reason: 'invalid_image', [field]: value, ...ctx.recoveryFor('invalid_image') },
+    { cause: err },
+  );
+}
+
+/**
+ * An image source as `loadImage` takes it: a URL's fetched bytes, or a local path
+ * confirmed readable.
+ */
+async function readImageSource(source: string, ctx: Context): Promise<string | Uint8Array> {
+  if (isRemoteSource(source)) return fetchRemoteImageBytes(source, ctx);
+  await assertReadableAsset(source, 'Image file', ctx);
+  return source;
+}
+
+/**
+ * Downsample a sprite element's sheet to its grid. The sheet must be a local file;
+ * a URL is refused without being fetched.
+ */
+async function loadSpriteSheet(el: SpriteElement, ctx: Context): Promise<SpriteSheet> {
+  if (isRemoteSource(el.path)) {
+    throw notFound(
+      `Sprite sheet path "${el.path}" is a URL; sprite sheets take an absolute local path.`,
+      { reason: 'asset_not_found', path: el.path, ...ctx.recoveryFor('asset_not_found') },
+    );
+  }
+  await assertReadableAsset(el.path, 'Sprite sheet', ctx);
+  return downsampleSprite(el.path, el.cols, el.rows).catch((err: unknown) => {
+    throw undecodableAsset(el, err, ctx);
+  });
+}
+
+/**
+ * The in-flight load for `key`, started by `load` on first request. Every caller
+ * awaits the same promise, so a failed load rejects each of them with one error.
+ */
+function loadOnce<T>(
+  loads: Map<string, Promise<T>>,
+  key: string,
+  load: () => Promise<T>,
+): Promise<T> {
+  let pending = loads.get(key);
+  if (!pending) {
+    pending = load();
+    loads.set(key, pending);
+  }
+  return pending;
+}
+
+/**
  * Preload all async assets referenced in elements. Images load onto a `size` canvas,
  * the scene's own, so an image with no `w`/`h` fits the display.
  *
+ * Each distinct load runs once per call, however many elements share it: a URL is
+ * fetched once, a sprite sheet decodes once per grid, and an image decodes once per
+ * placement — source, fit, kernel, position, and size, all of which `loadImage` bakes
+ * into its canvas. `loadImage` decodes and places in one call, so a source placed two
+ * ways decodes twice. An image's `finish` runs once per placement and finish, on the
+ * placement's canvas, which it never mutates: elements differing only in `finish` share
+ * the decode and nothing after it.
+ *
  * `ctx` is threaded through so a remote image fetch correlates to the originating
  * request in logs and traces, and stops when that request is cancelled.
+ *
+ * @throws {McpError} NotFound with `reason: 'asset_not_found'` for a missing or
+ *   unreadable path, a sprite path given as a URL, or a URL that cannot be fetched.
+ * @throws {McpError} InvalidParams with `reason: 'invalid_image'` for an image source
+ *   or sprite sheet that was read but did not decode.
+ * @throws {Error} The toolkit's `Unknown color` error for an unresolvable `finish`
+ *   palette entry.
  */
 export async function preloadAssets(
   elements: SceneElement[],
@@ -248,38 +354,42 @@ export async function preloadAssets(
   size: PixooSize,
 ): Promise<AssetCache> {
   const cache: AssetCache = { images: new Map(), sprites: new Map() };
+  const sourceLoads = new Map<string, Promise<string | Uint8Array>>();
+  const imageLoads = new Map<string, Promise<Canvas>>();
+  const sheetLoads = new Map<string, Promise<SpriteSheet>>();
 
   await Promise.all(
     elements.map(async (el) => {
       if (el.type === 'image') {
-        const source = el.source;
-        // The toolkit's loadImage reads from disk, so a remote source is
-        // staged to a temp PNG first and unlinked once it has been read.
-        const remote = isRemoteSource(source);
-        if (!remote) await assertReadableAsset(source, 'Image file');
-        const tmpPathToCleanup = remote ? await fetchRemoteImageToTempPng(source, ctx) : undefined;
-        const localPath = tmpPathToCleanup ?? source;
-        const loadOpts: Parameters<typeof loadImage>[1] = {
+        const placement: Parameters<typeof loadImage>[1] = {
           size,
           fit: el.fit ?? 'contain',
           kernel: el.kernel ?? 'nearest',
           x: typeof el.x === 'number' ? el.x : 0,
           y: typeof el.y === 'number' ? el.y : 0,
         };
-        if (el.w !== undefined) loadOpts.width = el.w;
-        if (el.h !== undefined) loadOpts.height = el.h;
-        const canvas = await loadImage(localPath, loadOpts);
-        if (tmpPathToCleanup) {
-          fs.unlink(tmpPathToCleanup).catch(() => undefined);
-        }
+        if (el.w !== undefined) placement.width = el.w;
+        if (el.h !== undefined) placement.height = el.h;
+        const placed = JSON.stringify([el.source, placement]);
+        const load = () =>
+          loadOnce(imageLoads, placed, async () => {
+            const image = await loadOnce(sourceLoads, el.source, () =>
+              readImageSource(el.source, ctx),
+            );
+            return loadImage(image, placement).catch((err: unknown) => {
+              throw undecodableAsset(el, err, ctx);
+            });
+          });
+        const { finish } = el;
+        const canvas = await (finish
+          ? loadOnce(imageLoads, JSON.stringify([el.source, placement, finish]), async () =>
+              finishFrame(await load(), finish),
+            )
+          : load());
         cache.images.set(el, canvas);
       } else if (el.type === 'sprite') {
-        const key = `${el.path}:${el.cols}:${el.rows}`;
-        if (!cache.sprites.has(key)) {
-          await assertReadableAsset(el.path, 'Sprite sheet');
-          const sprite = await downsampleSprite(el.path, el.cols, el.rows);
-          cache.sprites.set(key, sprite);
-        }
+        const key = spriteKey(el);
+        cache.sprites.set(key, await loadOnce(sheetLoads, key, () => loadSpriteSheet(el, ctx)));
       }
     }),
   );
@@ -358,7 +468,7 @@ function renderIconRamp(
   targetRect: [number, number, number, number],
   stop: GradientStop,
 ): void {
-  const mask = new Canvas(canvas.width as PixooSize);
+  const mask = new Canvas(canvas.width);
   drawIconPaths(mask, paths, [255, 255, 255], svgViewBox, targetRect);
   const inkAt = (x: number, y: number) => mask.getPixelRgba(x, y)[3] > 0;
 
@@ -395,9 +505,96 @@ function placedEntry(
   box: LayoutEntry['box'],
   canvas: Canvas,
 ): LayoutEntry {
-  const fits =
-    box.x >= 0 && box.y >= 0 && box.x + box.w <= canvas.width && box.y + box.h <= canvas.height;
-  return { element, type, box, fits, action: 'none' };
+  return { element, type, box, fits: boxFits(box, canvas.width, canvas.height), action: 'none' };
+}
+
+/** A `line` or outline `circle` stroke, as the toolkit's `drawLine`/`drawCircle` take it. */
+interface Stroke {
+  antialias: boolean;
+  width: number;
+}
+
+/** The element's stroke, each option at its default when omitted. */
+function strokeOf(el: LineElement | CircleElement): Stroke {
+  return { width: el.strokeWidth ?? 1, antialias: el.antialias ?? false };
+}
+
+/**
+ * Whether the toolkit draws `stroke` as a band rather than a 1px Bresenham line or
+ * midpoint circle, whose pixels stay within the endpoints or the diameter.
+ */
+function isBand({ width, antialias }: Stroke): boolean {
+  return width > 1 || antialias;
+}
+
+/**
+ * The box of every pixel a band line lights, on the canvas or off it — the toolkit's stroke
+ * geometry: the major axis steps from one endpoint's pixel to the other's, and each step
+ * covers `width/2 · √(1 + slope²)` either side of the centerline. Aliased, the endpoints
+ * are floored and a pixel lights when its center lies in that half-open span; anti-aliased,
+ * the endpoints are exact and a pixel lights when it overlaps the span at all.
+ */
+function bandLineBox(
+  ex0: number,
+  ey0: number,
+  ex1: number,
+  ey1: number,
+  { width, antialias }: Stroke,
+): LayoutEntry['box'] {
+  const snap = antialias ? (v: number) => v : Math.floor;
+  const [x0, y0, x1, y1] = [snap(ex0), snap(ey0), snap(ex1), snap(ey1)];
+  const xMajor = Math.abs(x1 - x0) >= Math.abs(y1 - y0);
+  const [a0, b0, a1, b1] = xMajor ? [x0, y0, x1, y1] : [y0, x0, y1, x1];
+  const slope = a1 === a0 ? 0 : (b1 - b0) / (a1 - a0);
+  const half = (width / 2) * Math.sqrt(1 + slope * slope);
+  const first = Math.floor(Math.min(a0, a1));
+  const last = Math.floor(Math.max(a0, a1));
+  // The centerline is straight, so its first and last steps bound it
+  const [m0, m1] = [b0 + (first - a0) * slope, b0 + (last - a0) * slope];
+  const lo = Math.min(m0, m1) - half;
+  const hi = Math.max(m0, m1) + half;
+  const minorFirst = antialias ? Math.floor(lo - 0.5) + 1 : Math.ceil(lo);
+  const minorSpan = (antialias ? Math.ceil(hi + 0.5) : Math.ceil(hi)) - minorFirst;
+  const majorSpan = last - first + 1;
+  return xMajor
+    ? { x: first, y: minorFirst, w: majorSpan, h: minorSpan }
+    : { x: minorFirst, y: first, w: minorSpan, h: majorSpan };
+}
+
+/**
+ * The box of every pixel a band ring lights: each pixel center nearer the circle's center
+ * than `radius + width/2`, or `radius + width/2 + ½` anti-aliased, where the band's
+ * coverage runs out.
+ */
+function bandRingBox(cx: number, cy: number, radius: number, stroke: Stroke): LayoutEntry['box'] {
+  const reach = radius + stroke.width / 2 + (stroke.antialias ? 0.5 : 0);
+  const x = Math.floor(cx - reach) + 1;
+  const y = Math.floor(cy - reach) + 1;
+  return { x, y, w: Math.ceil(cx + reach) - x, h: Math.ceil(cy + reach) - y };
+}
+
+/**
+ * Composite an element's own scratch layer onto the canvas. `normal` lands each pixel
+ * source-over at its alpha × `opacity`, so a soft edge keeps its falloff as the element
+ * fades. Any other mode scales the layer's alpha by `opacity`, then blits the layer in
+ * that mode.
+ */
+function compositeLayer(canvas: Canvas, layer: Canvas, opacity: number, blend: BlendMode): void {
+  const fade = opacity / 100;
+  if (blend === 'normal') {
+    for (let y = 0; y < layer.height; y++) {
+      for (let x = 0; x < layer.width; x++) {
+        const [r, g, b, a] = layer.getPixelRgba(x, y);
+        if (a > 0) canvas.blendPixel(x, y, [r, g, b], (a / 255) * fade);
+      }
+    }
+    return;
+  }
+  if (fade < 1) {
+    const { buffer } = layer;
+    for (let i = 3; i < buffer.length; i += 4) buffer[i] = Math.round((buffer[i] ?? 0) * fade);
+  }
+  canvas.blit(layer, 0, 0, { mode: blend });
 }
 
 /** Render a single element onto a canvas at a specific frame. */
@@ -414,7 +611,7 @@ export function renderElement(
   const kf: KeyframeMap | undefined = el.animate
     ? el.animate
     : el.effect
-      ? compileEffect(el.effect.name, el.effect, totalFrames)
+      ? compileEffect(el.effect.name, el.effect, totalFrames, elIdx)
       : undefined;
 
   const visible = kf
@@ -441,8 +638,9 @@ export function renderElement(
   const colorFrames = kf?.['color'];
   const keyframedColor = colorFrames ? interpolateColorKeyframe(colorFrames, frameIdx) : undefined;
 
-  // If opacity < 100, render to scratch canvas and blit with alpha
-  const target = opacity < 100 ? new Canvas(canvas.width as 16 | 32 | 64) : canvas;
+  // Under opacity or a blend mode, the element draws on its own layer, composited at the end
+  const blend = el.blend ?? 'normal';
+  const target = opacity < 100 || blend !== 'normal' ? new Canvas(canvas.width) : canvas;
 
   switch (el.type) {
     case 'text': {
@@ -450,10 +648,10 @@ export function renderElement(
       const style: TextStyle = { ...el.style };
       const color = keyframedColor ?? el.color;
       if (!style.color && color) style.color = color;
-      const fontVariant: FontVariant = el.font === 'compact' ? 'compact' : 'standard';
+      const fontVariant = el.font ?? 'standard';
       const px = el.x ?? 0;
       const py = el.y ?? 0;
-      const font = fontVariant === 'compact' ? FONT_3x5 : FONT_5x7;
+      const font = FONT_FACES[fontVariant];
       const scale = style.scale ?? 1;
       const textW = measureText(el.text, { font, scale });
       const textH = font.height * scale;
@@ -539,7 +737,9 @@ export function renderElement(
         target.fillRect(x, y, el.w, el.h, resolveColor(fill));
       }
       if (el.borderColor) {
-        target.drawRect(x, y, el.w, el.h, resolveColor(el.borderColor));
+        target.drawRect(x, y, el.w, el.h, resolveColor(el.borderColor), {
+          width: el.strokeWidth ?? 1,
+        });
       }
       layoutEntries.push(placedEntry(elIdx, 'rect', { x, y, w: el.w, h: el.h }, canvas));
       break;
@@ -550,14 +750,18 @@ export function renderElement(
       const cy = el.cy + dy;
       const colorSpec = keyframedColor ?? el.color;
       const color = colorSpec ? resolveColor(colorSpec) : ([255, 255, 255] as RGB);
+      const stroke = strokeOf(el);
       if (el.fill !== false) {
         target.fillCircle(cx, cy, el.radius, color);
       } else {
-        target.drawCircle(cx, cy, el.radius, color);
+        target.drawCircle(cx, cy, el.radius, color, stroke);
       }
-      // The circle covers its center pixel plus `radius` on each side.
+      // The circle covers its center pixel plus `radius` on each side; a band ring reaches past it.
       const diameter = el.radius * 2 + 1;
-      const box = { x: cx - el.radius, y: cy - el.radius, w: diameter, h: diameter };
+      const box =
+        el.fill === false && isBand(stroke)
+          ? bandRingBox(cx, cy, el.radius, stroke)
+          : { x: cx - el.radius, y: cy - el.radius, w: diameter, h: diameter };
       layoutEntries.push(placedEntry(elIdx, 'circle', box, canvas));
       break;
     }
@@ -569,14 +773,17 @@ export function renderElement(
       const y0 = el.y0 + dy;
       const x1 = el.x1 + dx;
       const y1 = el.y1 + dy;
-      target.drawLine(x0, y0, x1, y1, color);
-      // Both endpoints are drawn, so the line spans one pixel more than their distance.
-      const box = {
-        x: Math.min(x0, x1),
-        y: Math.min(y0, y1),
-        w: Math.abs(x1 - x0) + 1,
-        h: Math.abs(y1 - y0) + 1,
-      };
+      const stroke = strokeOf(el);
+      target.drawLine(x0, y0, x1, y1, color, stroke);
+      // A 1px line draws both endpoints, so it spans one pixel more than their distance.
+      const box = isBand(stroke)
+        ? bandLineBox(x0, y0, x1, y1, stroke)
+        : {
+            x: Math.min(x0, x1),
+            y: Math.min(y0, y1),
+            w: Math.abs(x1 - x0) + 1,
+            h: Math.abs(y1 - y0) + 1,
+          };
       layoutEntries.push(placedEntry(elIdx, 'line', box, canvas));
       break;
     }
@@ -710,8 +917,7 @@ export function renderElement(
     }
 
     case 'sprite': {
-      const key = `${el.path}:${el.cols}:${el.rows}`;
-      const sprite = assets.sprites.get(key);
+      const sprite = assets.sprites.get(spriteKey(el));
       if (sprite) {
         const scale = el.scale ?? 1;
         const spriteW = sprite.cols * scale;
@@ -721,8 +927,8 @@ export function renderElement(
         const resolvedX = resolveX(px, spriteW, canvas.width, dx);
         const resolvedY = resolveY(py, spriteH, canvas.height, dy);
 
-        const bodyColor = el.bodyColor ? (resolveColor(el.bodyColor) as RGB) : sprite.bodyColor;
-        const darkColor = el.darkColor ? (resolveColor(el.darkColor) as RGB) : sprite.darkColor;
+        const bodyColor = el.bodyColor ? resolveColor(el.bodyColor) : sprite.bodyColor;
+        const darkColor = el.darkColor ? resolveColor(el.darkColor) : sprite.darkColor;
 
         renderSprite(target, sprite.grid, {
           scale,
@@ -741,18 +947,7 @@ export function renderElement(
     }
   }
 
-  // Blit scratch canvas onto main if we used opacity
-  if (opacity < 100 && target !== canvas) {
-    const alpha = opacity / 100;
-    for (let py_ = 0; py_ < canvas.height; py_++) {
-      for (let px_ = 0; px_ < canvas.width; px_++) {
-        const [r, g, b, a] = target.getPixelRgba(px_, py_);
-        if (a > 0) {
-          canvas.blendPixel(px_, py_, [r, g, b], alpha);
-        }
-      }
-    }
-  }
+  if (target !== canvas) compositeLayer(canvas, target, opacity, blend);
 }
 
 /** Render a complete frame. */

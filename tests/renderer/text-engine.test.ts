@@ -3,10 +3,21 @@
  * @module tests/renderer/text-engine.test
  */
 
-import { Canvas, FONT_3x5, FONT_5x7, measureText } from '@cyanheads/pixoo-toolkit';
+import {
+  Canvas,
+  FONT_3x5,
+  FONT_5x7,
+  FONT_DIGITS_11x18,
+  measureText,
+} from '@cyanheads/pixoo-toolkit';
 import { describe, expect, it } from 'vitest';
 import {
+  boxFits,
+  describeMissingNumerals,
   drawStyledText,
+  FONT_FACES,
+  FONT_VARIANTS,
+  missingNumeralGlyphs,
   renderAutoFitText,
   resolveX,
   resolveY,
@@ -300,6 +311,189 @@ describe('renderAutoFitText', () => {
       expect(e0.action).toBe('scrolling');
       expect(e5.action).toBe('scrolling');
     }
+  });
+});
+
+// ─── font faces ──────────────────────────────────────────────────────────────
+
+describe('FONT_FACES', () => {
+  it('maps each variant to its toolkit face', () => {
+    expect(FONT_VARIANTS).toEqual(['standard', 'compact', 'numerals']);
+    expect(FONT_FACES).toEqual({
+      standard: FONT_5x7,
+      compact: FONT_3x5,
+      numerals: FONT_DIGITS_11x18,
+    });
+  });
+
+  it('drawStyledText draws numerals in the 11×18 face, 13 px per digit', () => {
+    const canvas = new Canvas(64);
+    expect(drawStyledText(canvas, '12:45', 0, 0, {}, 'numerals')).toEqual({
+      x: 0,
+      y: 0,
+      w: 58,
+      h: 18,
+    });
+    expect(drawStyledText(canvas, '00', 0, 0, { scale: 2 }, 'numerals')).toMatchObject({
+      w: 52,
+      h: 36,
+    });
+  });
+});
+
+describe('renderAutoFitText with numerals', () => {
+  const layOut = (text: string, scale: number, fixedFont?: 'numerals') =>
+    renderAutoFitText(
+      new Canvas(64),
+      text,
+      'center',
+      'center',
+      0,
+      0,
+      { scale },
+      'auto',
+      0,
+      0,
+      1,
+      fixedFont,
+    );
+
+  it('given explicitly, lays 12:45 out in numerals', () => {
+    expect(layOut('12:45', 1, 'numerals')).toMatchObject({
+      font: 'numerals',
+      action: 'none',
+      fits: true,
+      box: { x: 3, y: 23, w: 58, h: 18 },
+    });
+  });
+
+  it('too wide, it scrolls in numerals instead of falling back to compact', () => {
+    expect(layOut('12:45', 2, 'numerals')).toMatchObject({
+      font: 'numerals',
+      action: 'scrolling',
+      fits: false,
+      box: { w: 116, h: 36 },
+    });
+  });
+
+  it('auto-fit never selects numerals', () => {
+    expect(layOut('12:45', 1)).toMatchObject({ font: 'standard', action: 'none' });
+    expect(layOut('0123456789012', 1)).toMatchObject({
+      font: 'compact',
+      action: 'shrunk-to-compact',
+    });
+    expect(layOut('01234567890123456789', 1)).toMatchObject({
+      font: 'standard',
+      action: 'scrolling',
+    });
+  });
+});
+
+describe('missingNumeralGlyphs', () => {
+  it('names each character the face lacks once, in order of first appearance', () => {
+    expect(missingNumeralGlyphs('72°F')).toEqual(['F']);
+    expect(missingNumeralGlyphs('am')).toEqual(['a', 'm']);
+    expect(missingNumeralGlyphs('m1a2m3a')).toEqual(['m', 'a']);
+  });
+
+  it('accepts every character the face holds, and empty text', () => {
+    const held = Object.keys(FONT_DIGITS_11x18.glyphs).join('');
+    expect([...held].sort()).toEqual([...'0123456789 :.-+/%°?'].sort());
+    expect(missingNumeralGlyphs(held)).toEqual([]);
+    expect(missingNumeralGlyphs('')).toEqual([]);
+  });
+
+  it('treats a character outside the Basic Multilingual Plane as one character', () => {
+    expect(missingNumeralGlyphs('1😀2')).toEqual(['😀']);
+  });
+
+  it('describes the gap with the characters quoted and the face listed', () => {
+    expect(describeMissingNumerals(['a', 'm'])).toBe(
+      'Characters not in the numerals font: "a", "m". It draws 0–9, space, and : . - + / % ° ? only.',
+    );
+  });
+});
+
+// ─── layout fits ─────────────────────────────────────────────────────────────
+
+describe('boxFits', () => {
+  it.each([
+    [{ x: 0, y: 0, w: 16, h: 16 }, true],
+    [{ x: -1, y: 0, w: 4, h: 4 }, false],
+    [{ x: 0, y: -1, w: 4, h: 4 }, false],
+    [{ x: 13, y: 0, w: 4, h: 4 }, false],
+    [{ x: 0, y: 13, w: 4, h: 4 }, false],
+    [{ x: 12, y: 12, w: 4, h: 4 }, true],
+  ])('%j on a 16×16 canvas: %s', (box, fits) => {
+    expect(boxFits(box, 16, 16)).toBe(fits);
+  });
+});
+
+describe('renderAutoFitText fits: the placed box, every edge', () => {
+  it('"1" at scale 3 on a 16-px canvas is 21 px tall — it does not fit', () => {
+    const entry = renderAutoFitText(
+      new Canvas(16),
+      '1',
+      'center',
+      'center',
+      0,
+      0,
+      { scale: 3 },
+      'auto',
+      0,
+      0,
+      1,
+    );
+    expect(entry).toMatchObject({ box: { x: 3, y: -3, w: 9, h: 21 }, fits: false, action: 'none' });
+  });
+
+  it.each([
+    ['the left edge', false, -1, 0],
+    ['the right edge', false, 56, 0],
+    ['the top edge', false, 0, -1],
+    ['the bottom edge', false, 0, 58],
+    ['no edge (flush right and bottom)', true, 55, 57],
+  ] as const)('"Hi" (9×7) placed off %s: fits %s', (_edge, fits, x, y) => {
+    const entry = renderAutoFitText(new Canvas(64), 'Hi', x, y, 0, 0, {}, 'auto', 0, 0, 1);
+    expect(entry).toMatchObject({ box: { x, y, w: 9, h: 7 }, fits, action: 'none' });
+  });
+
+  it('a dx/dy nudge that carries the text off an edge counts', () => {
+    const entry = renderAutoFitText(
+      new Canvas(64),
+      'Hi',
+      'left',
+      'top',
+      -2,
+      0,
+      {},
+      'auto',
+      0,
+      0,
+      1,
+    );
+    expect(entry).toMatchObject({ box: { x: -2, y: 0 }, fits: false });
+  });
+
+  it('text shrunk to compact still fits only where its box is on the canvas', () => {
+    const shrunk = renderAutoFitText(
+      new Canvas(64),
+      'HELLO WORLD!',
+      'center',
+      62,
+      0,
+      0,
+      {},
+      'auto',
+      0,
+      0,
+      1,
+    );
+    expect(shrunk).toMatchObject({
+      action: 'shrunk-to-compact',
+      box: { y: 62, h: 5 },
+      fits: false,
+    });
   });
 });
 

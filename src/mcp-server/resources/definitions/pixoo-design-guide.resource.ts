@@ -15,8 +15,10 @@ At typical viewing distance for a 64×64 LED display:
 - **Minimum eye size:** 1–2px across; 2×2 fills are more reliable than single pixels
 - **Minimum limb gap:** 2 rows between horizontal elements prevents blur
 - **Font choices:**
-  - Standard (5×7): default for all text. Readable at 1× scale. Excellent at 2× (10px tall = chunky block letters)
+  - Standard (5×7): default for all text. Readable at 1× scale. Excellent at 2× (14px tall = chunky block letters)
   - Compact (3×5): secondary text, captions, labels when space is tight
+  - Standard and compact both draw printable ASCII plus \`° ← ↑ → ↓ ▲ ▼ ♥ · …\` for units, trends, and separators
+  - Numerals (11×18): clocks and hero readouts. Draws 0–9, space, and \`: . - + / % ° ?\` only, each digit on one 13px advance so a changing value keeps its width. Auto-fit never picks it; text holding any other character is rejected, so units and labels go in their own standard or compact text element
   - Scale ≥2: decorative or hero use only — verify fit before pushing
 
 ## Palette Discipline
@@ -105,6 +107,7 @@ At typical viewing distance for a 64×64 LED display:
 - **getConfig() omits SelectIndex** on current Pixoo-64 firmware — use getChannel() for reliable channel reads
 - **Text overlays (pixoo_overlay_text)** persist across channel switches until explicitly cleared
 - **Discovery requires internet** — Divoom cloud endpoint even for local device control
+- **Dark and mid levels render darker than on a monitor** — on a Pixoo-64 at brightness 100, channel levels 0–4 stay dark, and mid-levels render darker than on an sRGB monitor, shifting muted warm colors toward red (\`#D97757\` reads red). Previews show the sRGB values pushed, not the panel's response.
 `;
 
 export const pixooDesignGuideResource = resource('pixoo://reference/design-guide', {

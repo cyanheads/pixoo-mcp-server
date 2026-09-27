@@ -93,8 +93,13 @@ describe('pixooDiscoverDevices', () => {
     });
   });
 
-  it('discovery_failed from the real service carries retryable: true on both surfaces', async () => {
+  it('discovery_failed from the real service carries retryable: true and the declared hint on both surfaces', async () => {
     vi.spyOn(PixooClient, 'discover').mockRejectedValue(new TypeError('fetch failed'));
+    const hint =
+      'Ensure this server has internet access for the Divoom discovery endpoint, or set PIXOO_IP manually.';
+    // The hint on the wire is the contract's own recovery text, not a throw-site override.
+    const declared = pixooDiscoverDevices.errors?.find((e) => e.reason === 'discovery_failed');
+    expect(declared?.recovery).toBe(hint);
 
     const result = await runToolContract(pixooDiscoverDevices, { timeoutMs: 1000 });
 
@@ -105,13 +110,14 @@ describe('pixooDiscoverDevices', () => {
         data: {
           reason: 'discovery_failed',
           retryable: true,
-          recovery: { hint: expect.any(String) },
+          recovery: { hint },
         },
       },
     });
     const text = result.content
       .flatMap((block) => (block.type === 'text' ? [block.text] : []))
       .join('\n');
+    expect(text).toContain(hint);
     const tail = '(reason discovery_failed · retryable)';
     expect(text.trimEnd().slice(-tail.length)).toBe(tail);
   });

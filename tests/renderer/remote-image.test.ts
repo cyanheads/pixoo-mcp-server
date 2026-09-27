@@ -23,6 +23,34 @@ describe('isRemoteSource', () => {
     expect(isRemoteSource('/tmp/a.png')).toBe(false);
     expect(isRemoteSource('./a.png')).toBe(false);
   });
+
+  it('reads the scheme case-insensitively', () => {
+    expect(isRemoteSource('HTTPS://example.test/a.png')).toBe(true);
+    expect(isRemoteSource('Http://example.test/a.png')).toBe(true);
+  });
+});
+
+describe('fetchRemoteImageBytes with an uppercase scheme', () => {
+  it('fetches an HTTPS:// URL as an https one', async () => {
+    const http = createFetchMock([
+      {
+        match: (request) => request.url === 'https://images.test/pixel.png',
+        respond: () =>
+          new Response(new Uint8Array(PNG_1X1), { headers: { 'content-type': 'image/png' } }),
+      },
+    ]);
+    http.install();
+    try {
+      const bytes = await fetchRemoteImageBytes(
+        'HTTPS://images.test/pixel.png',
+        createMockContext(),
+      );
+      expect(Buffer.from(bytes).equals(PNG_1X1)).toBe(true);
+      expect(http.calls).toHaveLength(1);
+    } finally {
+      http.restore();
+    }
+  });
 });
 
 describe('fetchRemoteImageBytes', () => {
@@ -271,19 +299,7 @@ describe('fetchRemoteImageBytes', () => {
     });
   });
 
-  describe("every asset_not_found carries the calling tool's declared recovery", () => {
-    const HINT = 'Point the source at a reachable https image and retry.';
-    const ctxWithContract = () =>
-      createMockContext({
-        errors: [
-          {
-            reason: 'asset_not_found',
-            code: JsonRpcErrorCode.NotFound,
-            when: 'The image could not be fetched.',
-            recovery: HINT,
-          },
-        ],
-      });
+  describe('every failure is an asset_not_found that leaves the recovery to the calling tool', () => {
     const oversized = () => {
       let pulled = 0;
       return new Response(
@@ -339,13 +355,13 @@ describe('fetchRemoteImageBytes', () => {
       const http = createFetchMock([{ match: url, respond }]);
       http.install();
       try {
-        const err = await fetchRemoteImageBytes(url, ctxWithContract()).then(
+        const err = await fetchRemoteImageBytes(url, createMockContext()).then(
           () => expect.fail('fetchRemoteImageBytes resolved'),
-          (e: unknown) => e as { code: number; message: string; data: { recovery?: unknown } },
+          (e: unknown) => e as { code: number; message: string; data: object },
         );
         expect(err.code).toBe(JsonRpcErrorCode.NotFound);
         expect(err.data).toMatchObject({ reason: 'asset_not_found', url });
-        expect(err.data.recovery).toEqual({ hint: HINT });
+        expect(err.data).not.toHaveProperty('recovery');
         expect(err.message).toMatch(message);
       } finally {
         http.restore();

@@ -8,6 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { Canvas, NAMED_COLORS, type PixooSize, savePng } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
+import { ImageSourceSchema, SpritePathSchema } from '@/mcp-server/tools/asset-source-schema.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
 import { FinishSchema } from '@/mcp-server/tools/finish-schema.js';
 import { ICONS } from '@/renderer/icons.js';
@@ -19,18 +20,25 @@ import {
   saveGifPreview,
   savePngPreview,
 } from '@/renderer/preview.js';
-import { type BackgroundSpec, renderScene } from '@/renderer/scene-renderer.js';
+import { renderScene } from '@/renderer/scene-renderer.js';
 import {
   describeMissingNumerals,
+  FONT_FACES,
   FONT_VARIANTS,
-  missingNumeralGlyphs,
+  fallbackGlyphNotice,
+  missingGlyphs,
 } from '@/renderer/text-engine.js';
 import { type DeviceStateSnapshot, getPixooService } from '@/services/pixoo/pixoo-service.js';
 
 // --- Shared sub-schemas ---
 
+/*
+ * Every input object is a z.strictObject: an unknown key fails validation by its full
+ * path, naming the keys that object accepts, instead of being dropped.
+ */
+
 const EffectSchema = z
-  .object({
+  .strictObject({
     name: z
       .enum([
         'float',
@@ -82,7 +90,7 @@ const NumericKeyframeValue = z
   .describe('Value at this frame: a number, or a numeric string such as "40" read as that number.');
 
 const AnimateSchema = z
-  .object({
+  .strictObject({
     dx: keyframeTrack(
       NumericKeyframeValue,
       'X offset keyframes in pixels, added to dx and interpolated between keyframes.',
@@ -101,12 +109,17 @@ const AnimateSchema = z
     ).optional(),
     color: keyframeTrack(
       z.union([z.number(), z.string(), z.boolean()]).describe('Color at this frame.'),
-      'Color keyframes (hex or named), interpolated through RGB. Drives any element with a color field.',
+      "Color keyframes (hex or named), interpolated through RGB; each frame's value stands in for the element's color (on pixels, every point's color).",
     ).optional(),
   })
   .describe(
     'Raw keyframe tracks by property: { dx | dy | opacity | visible | color: [[frame, value], ...] }.',
   );
+
+/** Keyframe tracks for an element with no color field: bitmap, progress, image, sprite. */
+const ColorlessAnimateSchema = AnimateSchema.omit({ color: true }).describe(
+  'Raw keyframe tracks by property: { dx | dy | opacity | visible: [[frame, value], ...] }. This element has no color field, so there is no color track.',
+);
 
 const BaseElementProps = {
   visible: z.boolean().optional().describe('Whether the element is visible (default: true).'),
@@ -119,8 +132,25 @@ const BaseElementProps = {
     ),
   dx: z.number().int().optional().describe('X offset nudge in pixels.'),
   dy: z.number().int().optional().describe('Y offset nudge in pixels.'),
-  effect: EffectSchema.optional().describe('Named animation preset for this element.'),
-  animate: AnimateSchema.optional().describe('Raw keyframe animation map for this element.'),
+  effect: EffectSchema.optional().describe(
+    'Named animation preset for this element. Set either effect or animate, not both.',
+  ),
+};
+
+/** Shared props, spread last, for an element whose color an animate track can drive. */
+const ColoredElementProps = {
+  ...BaseElementProps,
+  animate: AnimateSchema.optional().describe(
+    'Raw keyframe animation map for this element. Set either effect or animate, not both.',
+  ),
+};
+
+/** Shared props, spread last, for an element with no color field. */
+const ColorlessElementProps = {
+  ...BaseElementProps,
+  animate: ColorlessAnimateSchema.optional().describe(
+    'Raw keyframe animation map for this element (no color track). Set either effect or animate, not both.',
+  ),
 };
 
 const XPosSchema = z
@@ -138,14 +168,14 @@ const YPosSchema = z
   .describe('Y position: integer pixel or semantic alignment.');
 
 const StyleSchema = z
-  .object({
+  .strictObject({
     palette: z
       .union([
         z
           .enum(['ember', 'ice', 'neon', 'fire', 'lavender', 'claude', 'mono'])
           .describe('Named built-in color palette for the vertical ramp.'),
         z
-          .object({
+          .strictObject({
             from: z.string().describe('Top color.'),
             to: z.string().describe('Bottom color.'),
           })
@@ -163,7 +193,7 @@ const StyleSchema = z
 // --- Element schemas ---
 
 const TextElementSchema = z
-  .object({
+  .strictObject({
     type: z.literal('text').describe('Text element type.'),
     text: z.string().describe('Text content to render.'),
     x: XPosSchema.optional().describe('X position (default: 0).'),
@@ -176,11 +206,11 @@ const TextElementSchema = z
         'Font variant (default: standard): standard (5×7) or compact (3×5), each printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · …; or numerals (11×18 digits for clocks and readouts), which draws only 0–9, space, and : . - + / % ° ?, so text holding any other character is rejected — put units and labels in a separate standard or compact text element.',
       ),
     style: StyleSchema.optional().describe('Text style options.'),
-    ...BaseElementProps,
+    ...ColoredElementProps,
   })
   .superRefine((el, ctx) => {
     if (el.font !== 'numerals') return;
-    const missing = missingNumeralGlyphs(el.text);
+    const missing = missingGlyphs(el.text, FONT_FACES.numerals);
     if (missing.length === 0) return;
     ctx.addIssue({
       code: 'custom',
@@ -189,7 +219,7 @@ const TextElementSchema = z
     });
   });
 
-const IconElementSchema = z.object({
+const IconElementSchema = z.strictObject({
   type: z.literal('icon').describe('Icon element type.'),
   name: z.string().optional().describe('Built-in icon name (see pixoo://reference/icons).'),
   d: z.string().optional().describe('Custom SVG path d attribute.'),
@@ -205,11 +235,11 @@ const IconElementSchema = z.object({
     .describe(
       "Named palette painted as a top-to-bottom color ramp from the icon's top row to its bottom row. Takes precedence over color.",
     ),
-  ...BaseElementProps,
+  ...ColoredElementProps,
 });
 
 const RectElementSchema = z
-  .object({
+  .strictObject({
     type: z.literal('rect').describe('Rectangle element type.'),
     x: z.number().int().describe('X coordinate.'),
     y: z.number().int().describe('Y coordinate.'),
@@ -217,7 +247,7 @@ const RectElementSchema = z
     h: z.number().int().min(1).describe('Height in pixels.'),
     color: z.string().optional().describe('Fill color.'),
     gradient: z
-      .object({
+      .strictObject({
         type: z.enum(['v', 'h']).describe('v = vertical, h = horizontal.'),
         from: z.string().describe('Start color.'),
         to: z.string().describe('End color.'),
@@ -236,7 +266,7 @@ const RectElementSchema = z
       .describe(
         'Border thickness in whole pixels, growing inward from the rect edge (default: 1). Requires borderColor.',
       ),
-    ...BaseElementProps,
+    ...ColoredElementProps,
   })
   .refine((el) => el.strokeWidth === undefined || Boolean(el.borderColor), {
     error:
@@ -249,7 +279,7 @@ const filledCircleError = (field: string) =>
   `${field} applies to an outline circle only; set fill: false, or drop ${field}.`;
 
 const CircleElementSchema = z
-  .object({
+  .strictObject({
     type: z.literal('circle').describe('Circle element type.'),
     cx: z.number().int().describe('Center X coordinate.'),
     cy: z.number().int().describe('Center Y coordinate.'),
@@ -270,7 +300,7 @@ const CircleElementSchema = z
       .describe(
         'Shade each outline pixel by how much of it the ring covers, for a smooth curve (default: false, hard pixel edges). Outline circles only (fill: false).',
       ),
-    ...BaseElementProps,
+    ...ColoredElementProps,
   })
   .refine((el) => el.fill === false || el.strokeWidth === undefined, {
     error: filledCircleError('strokeWidth'),
@@ -281,7 +311,7 @@ const CircleElementSchema = z
     path: ['antialias'],
   });
 
-const LineElementSchema = z.object({
+const LineElementSchema = z.strictObject({
   type: z.literal('line').describe('Line element type.'),
   x0: z.number().int().describe('Start X coordinate.'),
   y0: z.number().int().describe('Start Y coordinate.'),
@@ -300,10 +330,10 @@ const LineElementSchema = z.object({
     .describe(
       'Shade each pixel by how much of it the line covers, for smooth diagonals (default: false, hard pixel edges).',
     ),
-  ...BaseElementProps,
+  ...ColoredElementProps,
 });
 
-const ProgressElementSchema = z.object({
+const ProgressElementSchema = z.strictObject({
   type: z.literal('progress').describe('Progress bar widget type.'),
   x: z.number().int().describe('X coordinate.'),
   y: z.number().int().describe('Y coordinate.'),
@@ -317,10 +347,10 @@ const ProgressElementSchema = z.object({
     .describe('Named palette for gradient fill.'),
   trackColor: z.string().optional().describe('Background track color.'),
   label: z.string().optional().describe('Optional label rendered on the bar.'),
-  ...BaseElementProps,
+  ...ColorlessElementProps,
 });
 
-const SparklineElementSchema = z.object({
+const SparklineElementSchema = z.strictObject({
   type: z.literal('sparkline').describe('Sparkline chart widget type.'),
   x: z.number().int().describe('X coordinate.'),
   y: z.number().int().describe('Y coordinate.'),
@@ -329,10 +359,10 @@ const SparklineElementSchema = z.object({
   data: z.array(z.number()).min(2).describe('Data points for the chart.'),
   color: z.string().optional().describe('Line or bar color.'),
   kind: z.enum(['line', 'bar']).optional().describe('Chart style (default: line).'),
-  ...BaseElementProps,
+  ...ColoredElementProps,
 });
 
-const BitmapElementSchema = z.object({
+const BitmapElementSchema = z.strictObject({
   type: z.literal('bitmap').describe('Bitmap element using palette indices.'),
   x: z.number().int().describe('X coordinate.'),
   y: z.number().int().describe('Y coordinate.'),
@@ -340,15 +370,15 @@ const BitmapElementSchema = z.object({
     .array(z.string())
     .describe('Row strings of hex palette indices (0-F, space = transparent).'),
   palette: z.array(z.string()).describe('Color palette: array of hex colors indexed 0-F.'),
-  ...BaseElementProps,
+  ...ColorlessElementProps,
 });
 
-const PixelsElementSchema = z.object({
+const PixelsElementSchema = z.strictObject({
   type: z.literal('pixels').describe('Sparse pixel dots element.'),
   data: z
     .array(
       z
-        .object({
+        .strictObject({
           x: z.number().int().describe('Pixel X coordinate.'),
           y: z.number().int().describe('Pixel Y coordinate.'),
           color: z.string().describe('Pixel color.'),
@@ -356,12 +386,14 @@ const PixelsElementSchema = z.object({
         .describe('A single pixel: position and color.'),
     )
     .describe('Array of pixel positions and colors.'),
-  ...BaseElementProps,
+  ...ColoredElementProps,
 });
 
-const ImageElementSchema = z.object({
-  type: z.literal('image').describe('Image element (local path or https URL).'),
-  source: z.string().describe('Absolute local file path or https (not http) URL.'),
+const ImageElementSchema = z.strictObject({
+  type: z.literal('image').describe('Image element (absolute local path or https URL).'),
+  source: ImageSourceSchema.describe(
+    'Absolute local file path or https (not http) URL; a relative path is rejected.',
+  ),
   x: z.number().int().optional().describe('X offset on canvas (default: 0).'),
   y: z.number().int().optional().describe('Y offset on canvas (default: 0).'),
   w: z.number().int().min(1).max(256).optional().describe('Target width (default: canvas width).'),
@@ -381,12 +413,14 @@ const ImageElementSchema = z.object({
     .optional()
     .describe('Resize kernel: nearest for pixel art, lanczos3 for photos (default: nearest).'),
   finish: FinishSchema.optional(),
-  ...BaseElementProps,
+  ...ColorlessElementProps,
 });
 
-const SpriteElementSchema = z.object({
+const SpriteElementSchema = z.strictObject({
   type: z.literal('sprite').describe('Sprite sheet element.'),
-  path: z.string().describe('Absolute local path to the sprite sheet image.'),
+  path: SpritePathSchema.describe(
+    'Absolute local path to the sprite sheet image; a relative path is rejected.',
+  ),
   cols: z.number().int().min(1).max(64).describe('Number of columns in the sprite grid.'),
   rows: z.number().int().min(1).max(64).describe('Number of rows in the sprite grid.'),
   x: XPosSchema.optional().describe('X position (default: center).'),
@@ -400,7 +434,7 @@ const SpriteElementSchema = z.object({
     .describe('Pixel scale factor: each sprite cell renders as a scale × scale block.'),
   bodyColor: z.string().optional().describe('Override body color.'),
   darkColor: z.string().optional().describe('Override dark/eye color.'),
-  ...BaseElementProps,
+  ...ColorlessElementProps,
 });
 
 const ElementSchema = z
@@ -414,19 +448,24 @@ const ElementSchema = z
     SparklineElementSchema.describe('Sparkline chart widget (line or bar).'),
     BitmapElementSchema.describe('Bitmap element using explicit palette indices.'),
     PixelsElementSchema.describe('Sparse scatter of individually colored pixels.'),
-    ImageElementSchema.describe('External image element (local path or https URL).'),
+    ImageElementSchema.describe('External image element (absolute local path or https URL).'),
     SpriteElementSchema.describe('Sprite sheet element for character or tile art.'),
   ])
+  .superRefine((el, ctx) => {
+    // The renderer compiles effect only when animate is absent, so both would drop the effect.
+    if (el.effect === undefined || el.animate === undefined) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['effect'],
+      message:
+        'Set either effect or animate on an element, not both: effect is a named preset, animate holds raw keyframe tracks. Drop one.',
+    });
+  })
   .describe('A scene element.');
 
 const LayoutEntrySchema = z
   .object({
-    element: z
-      .union([
-        z.number().describe('Zero-based index of the element in the input array.'),
-        z.literal('background'),
-      ])
-      .describe('Element index or "background" for the background layer.'),
+    element: z.number().describe('Zero-based index of the element in the input array.'),
     type: z.string().describe('Element type.'),
     box: z
       .object({
@@ -438,8 +477,10 @@ const LayoutEntrySchema = z
       .describe('Resolved bounding box after layout.'),
     fits: z.boolean().describe('Whether the element fits in the canvas.'),
     action: z
-      .enum(['none', 'shrunk-to-compact', 'scrolling', 'wrapped', 'truncated', 'clipped'])
-      .describe('Overflow action taken by the renderer.'),
+      .enum(['none'])
+      .describe(
+        'Always none: scene elements are placed as given and never refit, shrunk, or scrolled. Read fits to learn whether an element runs off the panel.',
+      ),
     font: z.enum(FONT_VARIANTS).optional().describe('Font variant used (text only).'),
     scale: z.number().optional().describe('Scale factor applied (text only).'),
   })
@@ -455,31 +496,38 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     background: z
       .union([
         z.string().describe('Solid CSS hex color.'),
+        /*
+         * One object rather than a union of two, so an unknown key fails by its path
+         * (background.gradeint) and a call naming both keys fails instead of dropping one.
+         */
         z
-          .object({
+          .strictObject({
             gradient: z
-              .object({
+              .strictObject({
                 type: z.enum(['v', 'h', 'r']).describe('v = vertical, h = horizontal, r = radial.'),
                 from: z.string().describe('Gradient start color.'),
                 to: z.string().describe('Gradient end color.'),
               })
-              .describe('Gradient background.'),
-          })
-          .describe('Gradient background: specify type and two colors.'),
-        z
-          .object({
+              .optional()
+              .describe('Gradient background: type and two colors.'),
             theme: z
               .enum(['midnight', 'ember', 'claude', 'ice', 'neon', 'forest', 'mono'])
-              .describe('Named theme.'),
+              .optional()
+              .describe("Named theme: uses the theme's preset background."),
           })
-          .describe("Named theme background: uses the theme's preset gradient."),
+          .refine((bg) => (bg.gradient === undefined) !== (bg.theme === undefined), {
+            error: 'Set exactly one of gradient or theme.',
+          })
+          .describe('Gradient or named-theme background: set exactly one of gradient or theme.'),
       ])
-      .describe('Scene background: solid color, gradient, or named theme.'),
+      .describe(
+        'Scene background: a solid color string, or an object holding exactly one of gradient or theme.',
+      ),
     elements: z
       .array(ElementSchema)
       .max(50)
       .describe(
-        "Scene elements rendered back-to-front. Up to 50 elements. An element's animate keyframes can drive dx, dy, and opacity (numbers or numeric strings, interpolated), visible (true or false, switching at the midpoint between keyframes), and color on any element with a color field (interpolated through RGB).",
+        "Scene elements rendered back-to-front. Up to 50 elements. Each element takes either effect or animate, not both. An element's animate keyframes can drive dx, dy, and opacity (numbers or numeric strings, interpolated), visible (true or false, switching at the midpoint between keyframes), and color on any element with a color field (interpolated through RGB).",
       ),
     frames: z
       .number()
@@ -621,16 +669,6 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     const cfg = getServerConfig();
     const size = cfg.pixooSize as PixooSize;
 
-    // Resolve background
-    let bg: BackgroundSpec;
-    if (typeof input.background === 'string') {
-      bg = input.background;
-    } else if ('gradient' in input.background) {
-      bg = { gradient: input.background.gradient };
-    } else {
-      bg = { theme: input.background.theme };
-    }
-
     // Validate the requested output path before rendering: a bad path must not
     // cost a full render, an emitted content block, and a PIXOO_OUTPUT_DIR write
     // before it is reported. The string is checked as given — path.resolve()
@@ -643,7 +681,6 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       throw ctx.fail(
         'invalid_output_path',
         `Invalid output path: "${input.output}". Must be an absolute path with no traversal segments.`,
-        ctx.recoveryFor('invalid_output_path'),
       );
     }
 
@@ -660,7 +697,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     let layoutEntries: Awaited<ReturnType<typeof renderScene>>['layoutEntries'];
     try {
       ({ frames: renderedFrames, layoutEntries } = await renderScene(
-        bg,
+        input.background,
         // biome-ignore lint: elements are validated by zod discriminated union
         input.elements as any,
         input.frames,
@@ -669,18 +706,10 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       ));
     } catch (err) {
       if (err instanceof Error && err.message.includes('Unknown color')) {
-        throw ctx.fail(
-          'invalid_color',
-          `${err.message}. Valid named colors: ${validColorNames}.`,
-          ctx.recoveryFor('invalid_color'),
-        );
+        throw ctx.fail('invalid_color', `${err.message}. Valid named colors: ${validColorNames}.`);
       }
       if (err instanceof McpError && err.data?.['reason'] === 'unknown_icon') {
-        throw ctx.fail(
-          'unknown_icon',
-          `${err.message} Valid icons: ${validIconNames}.`,
-          ctx.recoveryFor('unknown_icon'),
-        );
+        throw ctx.fail('unknown_icon', `${err.message} Valid icons: ${validIconNames}.`);
       }
       throw err;
     }
@@ -707,6 +736,15 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       outputFiles = await autoSavePreview(writePreview);
     }
 
+    const notices: string[] = [];
+    const fallback = fallbackGlyphNotice(
+      input.elements.flatMap((el, element) => {
+        if (el.type === 'text') return [{ element, text: el.text }];
+        if (el.type === 'progress' && el.label !== undefined) return [{ element, text: el.label }];
+        return [];
+      }),
+    );
+    if (fallback) notices.push(fallback);
     let pushed = false;
     let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
@@ -720,9 +758,11 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
         writePreview,
       );
       pushed = true;
-      const notice = visibilityNotice(deviceState);
-      if (notice) ctx.enrich.notice(notice);
+      const visibility = visibilityNotice(deviceState);
+      if (visibility) notices.push(visibility);
     }
+    // ctx.enrich.notice is last-wins, so every notice for this call lands as one string.
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     return {
       pushed,

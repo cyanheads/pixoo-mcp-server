@@ -28,6 +28,7 @@ import {
   resultText,
   stubDeviceState,
 } from '../helpers/device-failure.js';
+import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 import { animatedImage } from '../helpers/image-sources.js';
 
 type Extra = Record<string, unknown>;
@@ -179,6 +180,24 @@ describe.each(TOOLS)('$name — visibility notice after a push', (tool) => {
   }
 });
 
+describe.each([
+  { name: 'pixoo_display_text', run: () => TOOLS[0]!.run({ text: '20 €', push: true }) },
+  {
+    name: 'pixoo_compose_scene',
+    run: () => TOOLS[1]!.run({ elements: [{ type: 'text', text: '20 €' }], push: true }),
+  },
+])('$name — fallback characters and visibility in one notice', ({ run }) => {
+  it('a pushed render with the screen off carries both texts in one notice', async () => {
+    stubDeviceState({ screenOn: false });
+    const result = await run();
+    expect(result.isError).toBeFalsy();
+    const notice =
+      'Not in the standard and compact fonts, so drawn as "?": element 0 "€" (U+20AC). Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only. Pushed, but the render may not be visible: the screen is off (pixoo_control_device with screen: "on").';
+    expect(result.structuredContent).toMatchObject({ pushed: true, notice });
+    expect(resultText(result)).toContain(notice);
+  });
+});
+
 describe.each(TOOLS)('$name — preview kept on a failed push', (tool) => {
   let tmp: Awaited<ReturnType<typeof isolateTmpdir>>;
 
@@ -291,9 +310,7 @@ describe.each(TOOLS)('$name — preview kept on a failed push', (tool) => {
 
     const result = await tool.run({ push: true });
 
-    expect(result.structuredContent).toMatchObject({
-      error: { data: { reason: 'no_device_configured' } },
-    });
+    expectForwardedRecovery(result, tool.errors, 'no_device_configured');
     const files = errorOutputFiles(result) as string[];
     expect(files).toHaveLength(1);
     expect(await imageKind(files[0]!)).toBe('png');

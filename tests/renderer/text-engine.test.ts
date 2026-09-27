@@ -10,14 +10,16 @@ import {
   FONT_DIGITS_11x18,
   measureText,
 } from '@cyanheads/pixoo-toolkit';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   boxFits,
   describeMissingNumerals,
   drawStyledText,
   FONT_FACES,
   FONT_VARIANTS,
-  missingNumeralGlyphs,
+  fallbackGlyphNotice,
+  type LayoutEntry,
+  missingGlyphs,
   renderAutoFitText,
   resolveX,
   resolveY,
@@ -139,92 +141,28 @@ describe('drawStyledText', () => {
 describe('renderAutoFitText', () => {
   it('returns a layout entry with type "text"', () => {
     const canvas = new Canvas(64);
-    const entry = renderAutoFitText(canvas, 'Hi', 'center', 'center', 0, 0, {}, 'auto', 0, 0, 1);
+    const entry = renderAutoFitText(canvas, 'Hi', 'center', 'center', 0, 0, {}, 0);
     expect(entry.type).toBe('text');
     expect(entry.element).toBe(0);
   });
 
   it('fits:true for short text in auto mode', () => {
     const canvas = new Canvas(64);
-    const entry = renderAutoFitText(canvas, 'Hi', 0, 0, 0, 0, {}, 'auto', 0, 0, 1);
+    const entry = renderAutoFitText(canvas, 'Hi', 0, 0, 0, 0, {}, 0);
     expect(entry.fits).toBe(true);
     expect(entry.action).toBe('none');
   });
 
-  it('auto mode shrinks long text to compact font', () => {
-    // A long string that fits in standard but we can test the decision path with overflow
-    // Use a text wide enough to overflow at scale 3 but fit at compact
-    const canvas = new Canvas(64);
-    const longText = 'ABCDEFGHIJKLMN'; // wide enough to test shrink path
-    // With scale=2 standard, this will overflow; compact should fit
-    const stdW = measureText(longText, { font: FONT_5x7, scale: 2 });
-    // Only run the shrink assertion if standard would overflow
-    if (stdW > 64) {
-      const entry = renderAutoFitText(canvas, longText, 0, 0, 0, 0, { scale: 2 }, 'auto', 0, 0, 1);
-      // Action is either shrunk-to-compact or scrolling
-      expect(['shrunk-to-compact', 'scrolling']).toContain(entry.action);
-    } else {
-      // Standard fits — action should be none
-      const entry = renderAutoFitText(canvas, longText, 0, 0, 0, 0, { scale: 2 }, 'auto', 0, 0, 1);
-      expect(entry.action).toBe('none');
-    }
-  });
-
-  it('truncate mode sets action to "truncated" on overflow', () => {
-    const canvas = new Canvas(64);
-    // Force a very wide text with scale 2 — should overflow 64px
-    const wideText = 'ABCDEFGHIJKLMNO';
-    const textW = measureText(wideText, { font: FONT_5x7, scale: 2 });
-    if (textW > 64) {
-      const entry = renderAutoFitText(
-        canvas,
-        wideText,
-        0,
-        0,
-        0,
-        0,
-        { scale: 2 },
-        'truncate',
-        0,
-        0,
-        1,
-      );
-      expect(entry.action).toBe('truncated');
-    }
-  });
-
-  it('scroll mode sets action to "scrolling" on overflow', () => {
-    const canvas = new Canvas(64);
-    const wideText = 'ABCDEFGHIJKLMNO';
-    const textW = measureText(wideText, { font: FONT_5x7, scale: 2 });
-    if (textW > 64) {
-      const entry = renderAutoFitText(
-        canvas,
-        wideText,
-        0,
-        0,
-        0,
-        0,
-        { scale: 2 },
-        'scroll',
-        0,
-        0,
-        1,
-      );
-      expect(entry.action).toBe('scrolling');
-    }
-  });
-
   it('layout entry box has non-negative dimensions', () => {
     const canvas = new Canvas(64);
-    const entry = renderAutoFitText(canvas, 'Hi', 'center', 'center', 0, 0, {}, 'auto', 0, 0, 1);
+    const entry = renderAutoFitText(canvas, 'Hi', 'center', 'center', 0, 0, {}, 0);
     expect(entry.box.w).toBeGreaterThan(0);
     expect(entry.box.h).toBeGreaterThan(0);
   });
 
   it('center alignment places text within canvas bounds (with reasonable text)', () => {
     const canvas = new Canvas(64);
-    const entry = renderAutoFitText(canvas, 'Hi', 'center', 'center', 0, 0, {}, 'auto', 0, 0, 1);
+    const entry = renderAutoFitText(canvas, 'Hi', 'center', 'center', 0, 0, {}, 0);
     expect(entry.box.x).toBeGreaterThanOrEqual(0);
     expect(entry.box.y).toBeGreaterThanOrEqual(0);
   });
@@ -234,20 +172,7 @@ describe('renderAutoFitText', () => {
     const SHRINKABLE = 'HELLO WORLD!';
 
     it('compact on text that fits in standard renders compact', () => {
-      const entry = renderAutoFitText(
-        new Canvas(64),
-        'HI',
-        0,
-        0,
-        0,
-        0,
-        {},
-        'auto',
-        0,
-        0,
-        1,
-        'compact',
-      );
+      const entry = renderAutoFitText(new Canvas(64), 'HI', 0, 0, 0, 0, {}, 0, 'compact');
       expect(entry).toMatchObject({ font: 'compact', action: 'none', fits: true });
       expect(entry.box.h).toBe(FONT_3x5.height);
       expect(entry.box.w).toBe(measureText('HI', { font: FONT_3x5 }));
@@ -256,61 +181,71 @@ describe('renderAutoFitText', () => {
     it('standard on text that only fits compact overflows in standard instead of shrinking', () => {
       expect(measureText(SHRINKABLE, { font: FONT_5x7 })).toBeGreaterThan(64);
       expect(measureText(SHRINKABLE, { font: FONT_3x5 })).toBeLessThanOrEqual(64);
-      const entry = renderAutoFitText(
-        new Canvas(64),
-        SHRINKABLE,
-        0,
-        0,
-        0,
-        0,
-        {},
-        'auto',
-        0,
-        0,
-        1,
-        'standard',
-      );
-      expect(entry).toMatchObject({ font: 'standard', action: 'scrolling', fits: false });
+      const entry = renderAutoFitText(new Canvas(64), SHRINKABLE, 0, 0, 0, 0, {}, 0, 'standard');
+      expect(entry).toMatchObject({ font: 'standard', action: 'none', fits: false });
       expect(entry.box.w).toBe(measureText(SHRINKABLE, { font: FONT_5x7 }));
     });
 
     it('omitting the font keeps auto-fit: the same text shrinks to compact', () => {
-      const entry = renderAutoFitText(new Canvas(64), SHRINKABLE, 0, 0, 0, 0, {}, 'auto', 0, 0, 1);
+      const entry = renderAutoFitText(new Canvas(64), SHRINKABLE, 0, 0, 0, 0, {}, 0);
       expect(entry).toMatchObject({ font: 'compact', action: 'shrunk-to-compact', fits: true });
     });
 
-    it('compact that still overflows scrolls in compact', () => {
+    it('compact that still overflows stays compact', () => {
       const wide = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
       expect(measureText(wide, { font: FONT_3x5 })).toBeGreaterThan(64);
-      const entry = renderAutoFitText(
-        new Canvas(64),
-        wide,
-        0,
-        0,
-        0,
-        0,
-        {},
-        'auto',
-        0,
-        0,
-        1,
-        'compact',
-      );
-      expect(entry).toMatchObject({ font: 'compact', action: 'scrolling' });
+      const entry = renderAutoFitText(new Canvas(64), wide, 0, 0, 0, 0, {}, 0, 'compact');
+      expect(entry).toMatchObject({ font: 'compact', action: 'none', fits: false });
     });
   });
+});
 
-  it('non-zero frameIdx shifts scroll position', () => {
+describe('LayoutEntry', () => {
+  it('carries only the actions and element kinds a tool returns', () => {
+    expectTypeOf<LayoutEntry['action']>().toEqualTypeOf<
+      'none' | 'shrunk-to-compact' | 'scrolling'
+    >();
+    expectTypeOf<LayoutEntry['element']>().toEqualTypeOf<number>();
+  });
+});
+
+describe('renderAutoFitText: a font decision, never a scroll', () => {
+  const LONG = 'SCROLLING TICKER TEXT THAT OVERFLOWS';
+
+  it('text that fits once shrunk reports shrunk-to-compact', () => {
+    const entry = renderAutoFitText(
+      new Canvas(64),
+      'HELLO WORLD!',
+      'center',
+      'center',
+      0,
+      0,
+      {},
+      0,
+    );
+    expect(entry).toMatchObject({ font: 'compact', action: 'shrunk-to-compact', fits: true });
+  });
+
+  it('text too wide even in compact stays standard, action none, drawn where it is placed', () => {
+    const w = measureText(LONG, { font: FONT_5x7 });
+    expect(measureText(LONG, { font: FONT_3x5 })).toBeGreaterThan(64);
     const canvas = new Canvas(64);
-    const wideText = 'ABCDEFGHIJKLMNO';
-    const textW = measureText(wideText, { font: FONT_5x7, scale: 2 });
-    if (textW > 64) {
-      const e0 = renderAutoFitText(canvas, wideText, 0, 0, 0, 0, { scale: 2 }, 'scroll', 0, 0, 10);
-      const e5 = renderAutoFitText(canvas, wideText, 0, 0, 0, 0, { scale: 2 }, 'scroll', 0, 5, 10);
-      // Both should be scrolling; resolved box.x stays the same (based on non-animated resolvedX)
-      expect(e0.action).toBe('scrolling');
-      expect(e5.action).toBe('scrolling');
-    }
+    const entry = renderAutoFitText(canvas, LONG, 'center', 'center', 0, 0, {}, 0);
+    const x = Math.floor((64 - w) / 2);
+    expect(entry).toMatchObject({
+      font: 'standard',
+      action: 'none',
+      fits: false,
+      box: { x, y: 28, w, h: 7 },
+    });
+    const ref = new Canvas(64);
+    drawStyledText(ref, LONG, x, 28, {});
+    expect(Buffer.from(canvas.buffer).equals(Buffer.from(ref.buffer))).toBe(true);
+  });
+
+  it('a fixed font that overflows reports none in that font', () => {
+    const entry = renderAutoFitText(new Canvas(64), 'HELLO WORLD!', 0, 0, 0, 0, {}, 0, 'standard');
+    expect(entry).toMatchObject({ font: 'standard', action: 'none', fits: false });
   });
 });
 
@@ -343,20 +278,7 @@ describe('FONT_FACES', () => {
 
 describe('renderAutoFitText with numerals', () => {
   const layOut = (text: string, scale: number, fixedFont?: 'numerals') =>
-    renderAutoFitText(
-      new Canvas(64),
-      text,
-      'center',
-      'center',
-      0,
-      0,
-      { scale },
-      'auto',
-      0,
-      0,
-      1,
-      fixedFont,
-    );
+    renderAutoFitText(new Canvas(64), text, 'center', 'center', 0, 0, { scale }, 0, fixedFont);
 
   it('given explicitly, lays 12:45 out in numerals', () => {
     expect(layOut('12:45', 1, 'numerals')).toMatchObject({
@@ -367,10 +289,10 @@ describe('renderAutoFitText with numerals', () => {
     });
   });
 
-  it('too wide, it scrolls in numerals instead of falling back to compact', () => {
+  it('too wide, it overflows in numerals instead of falling back to compact', () => {
     expect(layOut('12:45', 2, 'numerals')).toMatchObject({
       font: 'numerals',
-      action: 'scrolling',
+      action: 'none',
       fits: false,
       box: { w: 116, h: 36 },
     });
@@ -384,32 +306,71 @@ describe('renderAutoFitText with numerals', () => {
     });
     expect(layOut('01234567890123456789', 1)).toMatchObject({
       font: 'standard',
-      action: 'scrolling',
+      action: 'none',
+      fits: false,
     });
   });
 });
 
-describe('missingNumeralGlyphs', () => {
+describe('missingGlyphs', () => {
+  const numerals = FONT_FACES.numerals;
+
   it('names each character the face lacks once, in order of first appearance', () => {
-    expect(missingNumeralGlyphs('72°F')).toEqual(['F']);
-    expect(missingNumeralGlyphs('am')).toEqual(['a', 'm']);
-    expect(missingNumeralGlyphs('m1a2m3a')).toEqual(['m', 'a']);
+    expect(missingGlyphs('72°F', numerals)).toEqual(['F']);
+    expect(missingGlyphs('am', numerals)).toEqual(['a', 'm']);
+    expect(missingGlyphs('m1a2m3a', numerals)).toEqual(['m', 'a']);
   });
 
   it('accepts every character the face holds, and empty text', () => {
     const held = Object.keys(FONT_DIGITS_11x18.glyphs).join('');
     expect([...held].sort()).toEqual([...'0123456789 :.-+/%°?'].sort());
-    expect(missingNumeralGlyphs(held)).toEqual([]);
-    expect(missingNumeralGlyphs('')).toEqual([]);
+    expect(missingGlyphs(held, numerals)).toEqual([]);
+    expect(missingGlyphs('', numerals)).toEqual([]);
   });
 
   it('treats a character outside the Basic Multilingual Plane as one character', () => {
-    expect(missingNumeralGlyphs('1😀2')).toEqual(['😀']);
+    expect(missingGlyphs('1😀2', numerals)).toEqual(['😀']);
+  });
+
+  it('reads standard and compact as one glyph set: printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · …', () => {
+    expect(Object.keys(FONT_5x7.glyphs).sort()).toEqual(Object.keys(FONT_3x5.glyphs).sort());
+    const ascii = String.fromCharCode(...Array.from({ length: 95 }, (_, i) => 32 + i));
+    for (const face of [FONT_FACES.standard, FONT_FACES.compact]) {
+      expect(missingGlyphs(`${ascii}°←↑→↓▲▼♥·…`, face)).toEqual([]);
+      expect(missingGlyphs('€€×', face)).toEqual(['€', '×']);
+      expect(missingGlyphs('♥️', face)).toEqual(['️']);
+      expect(missingGlyphs('a\nb c', face)).toEqual(['\n', ' ']);
+    }
   });
 
   it('describes the gap with the characters quoted and the face listed', () => {
     expect(describeMissingNumerals(['a', 'm'])).toBe(
       'Characters not in the numerals font: "a", "m". It draws 0–9, space, and : . - + / % ° ? only.',
+    );
+  });
+});
+
+describe('fallbackGlyphNotice', () => {
+  it('is undefined when every character has a glyph in standard and compact', () => {
+    expect(fallbackGlyphNotice([])).toBeUndefined();
+    expect(
+      fallbackGlyphNotice([
+        { element: 0, text: '72°F ▲3' },
+        { element: 1, text: '' },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it('groups the characters by element index, each once per element, with its code point', () => {
+    expect(
+      fallbackGlyphNotice([
+        { element: 0, text: 'OK' },
+        { element: 1, text: '9 ♥ 7×' },
+        { element: 2, text: '5€€' },
+        { element: 5, text: 'a\n😀' },
+      ]),
+    ).toBe(
+      'Not in the standard and compact fonts, so drawn as "?": element 1 "×" (U+00D7); element 2 "€" (U+20AC); element 5 "\\n" (U+000A), "😀" (U+1F600). Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only.',
     );
   });
 });
@@ -431,19 +392,7 @@ describe('boxFits', () => {
 
 describe('renderAutoFitText fits: the placed box, every edge', () => {
   it('"1" at scale 3 on a 16-px canvas is 21 px tall — it does not fit', () => {
-    const entry = renderAutoFitText(
-      new Canvas(16),
-      '1',
-      'center',
-      'center',
-      0,
-      0,
-      { scale: 3 },
-      'auto',
-      0,
-      0,
-      1,
-    );
+    const entry = renderAutoFitText(new Canvas(16), '1', 'center', 'center', 0, 0, { scale: 3 }, 0);
     expect(entry).toMatchObject({ box: { x: 3, y: -3, w: 9, h: 21 }, fits: false, action: 'none' });
   });
 
@@ -454,41 +403,17 @@ describe('renderAutoFitText fits: the placed box, every edge', () => {
     ['the bottom edge', false, 0, 58],
     ['no edge (flush right and bottom)', true, 55, 57],
   ] as const)('"Hi" (9×7) placed off %s: fits %s', (_edge, fits, x, y) => {
-    const entry = renderAutoFitText(new Canvas(64), 'Hi', x, y, 0, 0, {}, 'auto', 0, 0, 1);
+    const entry = renderAutoFitText(new Canvas(64), 'Hi', x, y, 0, 0, {}, 0);
     expect(entry).toMatchObject({ box: { x, y, w: 9, h: 7 }, fits, action: 'none' });
   });
 
   it('a dx/dy nudge that carries the text off an edge counts', () => {
-    const entry = renderAutoFitText(
-      new Canvas(64),
-      'Hi',
-      'left',
-      'top',
-      -2,
-      0,
-      {},
-      'auto',
-      0,
-      0,
-      1,
-    );
+    const entry = renderAutoFitText(new Canvas(64), 'Hi', 'left', 'top', -2, 0, {}, 0);
     expect(entry).toMatchObject({ box: { x: -2, y: 0 }, fits: false });
   });
 
   it('text shrunk to compact still fits only where its box is on the canvas', () => {
-    const shrunk = renderAutoFitText(
-      new Canvas(64),
-      'HELLO WORLD!',
-      'center',
-      62,
-      0,
-      0,
-      {},
-      'auto',
-      0,
-      0,
-      1,
-    );
+    const shrunk = renderAutoFitText(new Canvas(64), 'HELLO WORLD!', 'center', 62, 0, 0, {}, 0);
     expect(shrunk).toMatchObject({
       action: 'shrunk-to-compact',
       box: { y: 62, h: 5 },

@@ -15,9 +15,12 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Ceiling on a downloaded image before it is decoded. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+/** An https URL; the scheme is case-insensitive (RFC 3986 §3.1). */
+const HTTPS_URL = /^https:\/\//i;
+
 /** True when the string is a URL rather than a local filesystem path. */
 export function isRemoteSource(source: string): boolean {
-  return source.startsWith('https://') || source.startsWith('http://');
+  return /^https?:\/\//i.test(source);
 }
 
 /**
@@ -33,7 +36,7 @@ export function isRemoteSource(source: string): boolean {
  *
  * @throws {McpError} NotFound with `reason: 'asset_not_found'` for a non-https URL,
  *   an unreachable or non-2xx endpoint, or a response over {@link MAX_IMAGE_BYTES}. The
- *   message names the failure; the recovery is the calling tool's declared one.
+ *   message names the failure; the framework fills in the calling tool's declared recovery.
  * @throws {McpError} RequestCancelled when `ctx.signal` aborts while the body streams.
  * @throws {McpError} Timeout when the body outlasts {@link FETCH_TIMEOUT_MS}, or when the
  *   `ctx.signal` abort is a caller-side deadline (a `TimeoutError` reason). A tool handler
@@ -41,11 +44,10 @@ export function isRemoteSource(source: string): boolean {
  *   after the request's signal fired as a cancellation.
  */
 export async function fetchRemoteImageBytes(source: string, ctx: Context): Promise<Uint8Array> {
-  if (!source.startsWith('https://')) {
+  if (!HTTPS_URL.test(source)) {
     throw notFound(`Only https URLs are supported. Received: "${source}".`, {
       reason: 'asset_not_found',
       url: source,
-      ...ctx.recoveryFor('asset_not_found'),
     });
   }
 
@@ -56,7 +58,7 @@ export async function fetchRemoteImageBytes(source: string, ctx: Context): Promi
   }).catch((err: unknown) => {
     throw notFound(
       `Failed to fetch image from "${source}": ${err instanceof Error ? err.message : String(err)}`,
-      { reason: 'asset_not_found', url: source, ...ctx.recoveryFor('asset_not_found') },
+      { reason: 'asset_not_found', url: source },
     );
   });
 
@@ -66,7 +68,6 @@ export async function fetchRemoteImageBytes(source: string, ctx: Context): Promi
       reason: 'asset_not_found',
       url: source,
       [field]: bytes,
-      ...ctx.recoveryFor('asset_not_found'),
     });
 
   // content-length is advisory: it bails before the body is read, but the byte

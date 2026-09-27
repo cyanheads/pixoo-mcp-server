@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-09-27 00:28:59
+Generated on: 2026-09-27 03:23:43
 
 ```text
 pixoo-mcp-server/
@@ -129,6 +129,7 @@ pixoo-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
@@ -154,6 +155,7 @@ pixoo-mcp-server/
 │   │       │   ├── pixoo-display-text.tool.ts
 │   │       │   ├── pixoo-overlay-text.tool.ts
 │   │       │   └── pixoo-push-image.tool.ts
+│   │       ├── asset-source-schema.ts
 │   │       ├── device-push.ts
 │   │       └── finish-schema.ts
 │   ├── renderer/
@@ -170,6 +172,8 @@ pixoo-mcp-server/
 │   │       └── pixoo-service.ts
 │   └── index.ts
 ├── tests/
+│   ├── config/
+│   │   └── server-config.test.ts
 │   ├── helpers/
 │   │   ├── canvas-ink.ts
 │   │   ├── device-failure.ts
@@ -177,7 +181,8 @@ pixoo-mcp-server/
 │   │   ├── image-sources.ts
 │   │   ├── list-extra.ts
 │   │   ├── prototype-color-names.ts
-│   │   └── trickle-body.ts
+│   │   ├── trickle-body.ts
+│   │   └── zod-object-nodes.ts
 │   ├── prompts/
 │   ├── renderer/
 │   │   ├── finish.test.ts
@@ -197,10 +202,12 @@ pixoo-mcp-server/
 │   │   └── pixoo/
 │   │       └── pixoo-service.test.ts
 │   ├── tools/
+│   │   ├── pixoo-compose-scene.input-schema.test.ts
 │   │   ├── pixoo-compose-scene.tool.test.ts
 │   │   ├── pixoo-control-device.tool.test.ts
 │   │   ├── pixoo-design-brief.tool.test.ts
 │   │   ├── pixoo-discover-devices.tool.test.ts
+│   │   ├── pixoo-display-text.input-schema.test.ts
 │   │   ├── pixoo-display-text.tool.test.ts
 │   │   ├── pixoo-overlay-text.tool.test.ts
 │   │   ├── pixoo-push-image.tool.test.ts

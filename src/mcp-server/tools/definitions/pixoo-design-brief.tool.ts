@@ -15,7 +15,7 @@ const CRAFT_CONTENT: Record<string, string> = {
 
 **Legibility floors:** At 64px viewing distance, 1px features vanish. Minimum eye size: 1–2px. Minimum limb gaps: 2 rows. Use standard font (5×7) as the default; compact font (3×5) only when standard doesn't fit.
 
-**Symbols:** standard and compact draw printable ASCII plus \`° ← ↑ → ↓ ▲ ▼ ♥ · …\`, so \`72°F\`, \`▲3 ▼2\`, and \`← BACK\` print as written.
+**Symbols:** standard and compact draw printable ASCII plus \`° ← ↑ → ↓ ▲ ▼ ♥ · …\`, so \`72°F\`, \`▲3 ▼2\`, and \`← BACK\` print as written. Any other character draws as \`?\` — \`€\`, \`×\`, typographic quotes and dashes (\`’ —\`), a newline inside one string, and the invisible U+FE0F that often follows \`♥\` — and the response notice names each one with its code point and element index. Spell them in ASCII (\`EUR\`, \`x\`, \`'\`, \`-\`), and pass multi-line text as an array of lines.
 
 **Numerals:** \`font: "numerals"\` is an 11×18 face for clocks and big readouts. It draws 0–9, space, and \`: . - + / % ° ?\` only, every digit on one 13px advance so a changing time keeps its width; text holding any other character is rejected. \`12:45\` is 58×18 at scale 1, and at scale 2 (116px) it overflows a 64px panel. Auto-fit never picks numerals — set it explicitly, and put units and labels in a standard or compact text element beside it with pixoo_compose_scene.
 

@@ -63,7 +63,7 @@ export const pixooDiscoverDevices = tool('pixoo_discover_devices', {
       when: 'Divoom cloud discovery endpoint is unreachable.',
       retryable: true,
       recovery:
-        'Ensure this server has internet access. If the device is on a different subnet, set PIXOO_IP manually.',
+        'Ensure this server has internet access for the Divoom discovery endpoint, or set PIXOO_IP manually.',
       thrownBy: 'service',
     },
   ],

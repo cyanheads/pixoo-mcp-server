@@ -3,6 +3,7 @@
  * @module config/server-config
  */
 
+import * as path from 'node:path';
 import { z } from '@cyanheads/mcp-ts-core';
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
@@ -15,7 +16,13 @@ const ServerConfigSchema = z.object({
     })
     .default(64)
     .describe('Display size in pixels (16, 32, or 64).'),
-  pixooOutputDir: z.string().optional().describe('Auto-save directory for preview PNG/GIF files.'),
+  pixooOutputDir: z
+    .string()
+    .transform((dir) => path.resolve(dir))
+    .optional()
+    .describe(
+      'Auto-save directory for preview PNG/GIF files. A relative path resolves against the working directory the server was launched from, so every saved path it reports is absolute.',
+    ),
   pixooPushMinIntervalMs: z.coerce
     .number()
     .int()

@@ -29,8 +29,9 @@ import {
   FONT_FACES,
   FONT_VARIANTS,
   type FontVariant,
+  fallbackGlyphNotice,
   type LayoutEntry,
-  missingNumeralGlyphs,
+  missingGlyphs,
   renderAutoFitText,
   resolveX,
   scrollCycle,
@@ -110,15 +111,21 @@ function effectFrames(
   );
 }
 
+/*
+ * Every input object is a z.strictObject: an unknown key fails validation by its full
+ * path, naming the keys that object accepts, instead of being dropped. The root stays a
+ * plain z.object because the framework closes it.
+ */
+
 const StyleSchema = z
-  .object({
+  .strictObject({
     palette: z
       .union([
         z
           .enum(['ember', 'ice', 'neon', 'fire', 'lavender', 'claude', 'mono'])
           .describe('Named built-in color palette for the vertical ramp.'),
         z
-          .object({
+          .strictObject({
             from: z.string().describe('Gradient start color (top).'),
             to: z.string().describe('Gradient end color (bottom).'),
           })
@@ -161,9 +168,9 @@ export const pixooDisplayText = tool('pixoo_display_text', {
         .union([
           z.string().describe('Solid CSS hex color.'),
           z
-            .object({
+            .strictObject({
               gradient: z
-                .object({
+                .strictObject({
                   type: z.enum(['v', 'h']).describe('v = vertical, h = horizontal.'),
                   from: z.string().describe('Gradient start color.'),
                   to: z.string().describe('Gradient end color.'),
@@ -182,7 +189,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
           'Font variant, used as given — text too wide for it overflows rather than switching font: standard (5×7) or compact (3×5), each printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · …; or numerals (11×18 digits for clocks and readouts), which draws only 0–9, space, and : . - + / % ° ?, so text holding any other character is rejected. Omitted, single-line text tries standard and falls back to compact when standard overflows; multi-line text uses standard.',
         ),
       position: z
-        .object({
+        .strictObject({
           x: z
             .union([
               z.number().describe('Absolute pixel X coordinate (0 = left edge).'),
@@ -226,7 +233,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     })
     .superRefine((input, ctx) => {
       if (input.font !== 'numerals') return;
-      const missing = missingNumeralGlyphs([input.text].flat().join(''));
+      const missing = missingGlyphs([input.text].flat().join(''), FONT_FACES.numerals);
       if (missing.length === 0) return;
       ctx.addIssue({
         code: 'custom',
@@ -245,11 +252,10 @@ export const pixooDisplayText = tool('pixoo_display_text', {
         z
           .object({
             element: z
-              .union([
-                z.number().describe('Zero-based index of the element in the input array.'),
-                z.literal('background'),
-              ])
-              .describe('Element index or "background" for the background layer.'),
+              .number()
+              .describe(
+                'Zero-based line index: 0 for single-line text, the line position for an array.',
+              ),
             type: z.string().describe('Element type.'),
             box: z
               .object({
@@ -261,8 +267,10 @@ export const pixooDisplayText = tool('pixoo_display_text', {
               .describe('Resolved bounding box.'),
             fits: z.boolean().describe('Whether the element fits in the canvas.'),
             action: z
-              .enum(['none', 'shrunk-to-compact', 'scrolling', 'wrapped', 'truncated', 'clipped'])
-              .describe('Overflow action taken by the renderer.'),
+              .enum(['none', 'shrunk-to-compact', 'scrolling'])
+              .describe(
+                'What the renderer did about the width: shrunk-to-compact when single-line text fits only in the compact font; scrolling when the returned frames scroll (effect scroll, or auto on text too wide to fit); none otherwise. A line too wide for the panel that does not scroll reports none with fits false, drawn from x 0 and cut at the right edge.',
+              ),
             font: z.enum(FONT_VARIANTS).optional().describe('Font variant used.'),
             scale: z.number().optional().describe('Scale factor applied.'),
           })
@@ -392,6 +400,8 @@ export const pixooDisplayText = tool('pixoo_display_text', {
 
       // Render text — support multi-line by stacking
       if (lines.length === 1) {
+        // The renderer decides the font only; whether the text scrolls is decided below,
+        // with the effect, so the reported action matches the frames returned.
         const entry = renderAutoFitText(
           canvas,
           combinedText,
@@ -400,19 +410,15 @@ export const pixooDisplayText = tool('pixoo_display_text', {
           0,
           0,
           style,
-          'auto',
           0,
-          0,
-          1,
           input.font,
         );
         layoutEntries.push(entry);
         const font = entry.font ?? 'standard';
 
-        // When the text overflows and scrolls, frame 0 renders at x=size (off-canvas),
-        // producing a solid-background preview. Re-render the preview canvas with the
-        // text at x=0 so the preview shows legible text, and report the box it draws.
-        if (entry.action === 'scrolling') {
+        // A line wider than the panel is drawn from x=0 and cut at the right edge; the
+        // layout reports that box whether or not the text then scrolls.
+        if (entry.box.w > size) {
           applyBackground(canvas, bg);
           drawStyledText(canvas, combinedText, 0, entry.box.y, style, font);
           entry.box.x = 0;
@@ -467,11 +473,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       }
     } catch (err) {
       if (err instanceof Error && err.message.includes('Unknown color')) {
-        throw ctx.fail(
-          'invalid_color',
-          `${err.message}. Valid named colors: ${validColorNames}.`,
-          ctx.recoveryFor('invalid_color'),
-        );
+        throw ctx.fail('invalid_color', `${err.message}. Valid named colors: ${validColorNames}.`);
       }
       throw err;
     }
@@ -501,6 +503,8 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     const outputFiles = await autoSavePreview(writePreview);
 
     const notices: string[] = [];
+    const fallback = fallbackGlyphNotice(lines.map((text, element) => ({ element, text })));
+    if (fallback) notices.push(fallback);
     let pushed = false;
     let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {

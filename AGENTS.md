@@ -2,7 +2,7 @@
 
 **Server:** pixoo-mcp-server
 **Version:** 1.2.2
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.9`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.10`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.1.0 (protocol revision 2026-07-28 alongside the 2025 era)
 **Zod:** ^4.6.5
@@ -118,6 +118,7 @@ export const pixooDeviceStatusResource = resource('pixoo://device/status', {
 
 ```ts
 // src/config/server-config.ts
+import * as path from 'node:path';
 import { z } from '@cyanheads/mcp-ts-core';
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
@@ -126,7 +127,8 @@ const ServerConfigSchema = z.object({
   pixooSize: z.coerce.number()
     .refine((v) => v === 16 || v === 32 || v === 64)
     .default(64).describe('Display size in pixels (16, 32, or 64).'),
-  pixooOutputDir: z.string().optional().describe('Auto-save directory for preview PNG/GIF files.'),
+  pixooOutputDir: z.string().transform((dir) => path.resolve(dir)).optional()
+    .describe('Auto-save directory for preview PNG/GIF files; a relative path resolves against the launch directory.'),
   pixooPushMinIntervalMs: z.coerce.number().int().min(0).default(1000)
     .describe('Pacing floor between device pushes in milliseconds.'),
 });
@@ -164,12 +166,11 @@ Handlers receive a unified `ctx` object. Key properties used by this server:
 |:---------|:------------|
 | `ctx.log` | Request-scoped logger — `.debug()`, `.info()`, `.notice()`, `.warning()`, `.error()`. Auto-correlates requestId, traceId, tenantId. Dual-sink: Pino **and** `notifications/message` to the client, so treat it as client-visible. |
 | `ctx.enrich` | Success-path agent context — `.notice()` / `.total()` / `.echo()` / `.truncated()`. Lands only when the definition declares an `enrichment` block. |
-| `ctx.fail` | Typed throw against the definition's `errors[]` reason union — auto-populates `data.reason`. |
-| `ctx.recoveryFor` | `{ recovery: { hint } }` for a declared reason, resolved from the contract. Pass it as `ctx.fail`'s data argument (or spread it in) to put the declared hint on the wire. |
+| `ctx.fail` | Typed throw against the definition's `errors[]` reason union — auto-populates `data.reason`; the framework fills in the entry's `recovery` as `data.recovery.hint`. |
 | `ctx.state` | Tenant-scoped KV — `.get`, `.set(key, value, { ttl? })`, `.delete`, `.getMany`, `.list`. Accepts any JSON-serializable value; reads return its JSON form (a `Date` comes back as an ISO string). Keys are validated; colons are not legal separators. |
 | `ctx.requestInput` / `ctx.inputs` | Multi-round-trip input. `return ctx.requestInput(...)`; read the answers with `ctx.inputs.accepted(key, schema)` on re-entry. Unused by this server. |
 | `ctx.signal` | `AbortSignal` for cancellation. Pass it to any long-running I/O. |
-| `ctx.requestId` | Unique request ID. |
+| `ctx.requestId` | Request ID — the one every log record of the call carries and its error envelope returns as `data.requestId`. |
 | `ctx.tenantId` | Tenant ID from JWT; `'default'` for stdio or HTTP with auth off. |
 
 ---
@@ -192,7 +193,7 @@ Pixoo-specific error reasons declared on tools:
 | `unknown_icon` | `InvalidParams` | Icon name not in registry | — |
 | `discovery_failed` | `ServiceUnavailable` | Divoom cloud unreachable | `true` |
 
-`PixooService` and `src/renderer/` raise the device, configuration, and asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked, and every such site forwards its declared recovery with `ctx.recoveryFor`. A computed reason forwards the same way (`ctx.recoveryFor(reason)`); `lint:mcp` skips a definition whose `ctx.fail` reason is non-literal, so a clean lint says nothing about those sites.
+`PixooService` and `src/renderer/` raise the device, configuration, and asset reasons themselves (a factory error carrying `data.reason`), so those entries carry `thrownBy: 'service'` — lint-only metadata that keeps `error-contract-unthrown` from reading them as dead. A reason the handler throws with `ctx.fail` stays unmarked. Either way, the framework puts the entry's `recovery` on the wire when a failure carrying that `reason` arrives without a hint — a bare `ctx.fail('reason', message)` or a service throw with `data: { reason }` — as `data.recovery.hint`, mirrored into `content[]` unless the message already contains it. Pass an explicit `{ recovery: { hint } }` only to override it for one occurrence — a throw-site hint wins over the contract, so wording that holds for every occurrence of a reason lives in its `errors[]` entry, not at the throw. Every error envelope also carries `data.requestId`, and `content[]` closes with `(reason … · request <id>)`.
 
 A contract's `retryable` reaches the wire only through `ctx.fail`; a service throw carries it only when the service writes `data.retryable` itself. `classifyDeviceFailure` (in `pixoo-service.ts`) is the one place a failed device call becomes a reason and a retryability — `PixooService` writes both on its push-path throws, and `pixoo_overlay_text` passes the retryability into `ctx.fail` so it overrides the contract default per occurrence.
 
@@ -212,7 +213,7 @@ errors: [
 ],
 
 // in the handler
-throw ctx.fail('invalid_color', `Invalid color "${input.color}"`, ctx.recoveryFor('invalid_color'));
+throw ctx.fail('invalid_color', `Invalid color "${input.color}"`);
 ```
 
 Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`, `RequestCancelled`) bubble freely and don't need declaring. A tool argument that fails the input schema reaches the client as `InvalidParams` (-32602) with `structuredContent.error` — assert that code, not `ValidationError`, in tests.
@@ -240,6 +241,7 @@ src/
     remote-image.ts                     # https image fetch into memory for the toolkit loader; stops on ctx.signal
   mcp-server/
     tools/
+      asset-source-schema.ts            # Shared image `source` / sprite `path` schemas: absolute path or URL only
       device-push.ts                    # Shared post-render push: preview kept on failure, visibility notice
       finish-schema.ts                  # Shared `finish` input schema (colors | palette, plus dither)
     tools/definitions/
@@ -257,6 +259,8 @@ src/
       pixoo-design-guide.resource.ts
 tests/
   index.session-mode.test.ts            # Boots the entry point over HTTP, pins the declared session mode
+  config/                               # Server config parsed from env vars
+  helpers/                              # Shared fixtures and assertions (image sources, canvas ink, device failures)
   renderer/                             # Pure renderer unit tests (no device)
   resources/                            # Resource handler tests
   services/pixoo/                       # PixooService tests with a fake client
@@ -378,7 +382,7 @@ Each per-version file opens with YAML frontmatter: `summary` (required, ≤350 c
 ## Checklist
 
 - [ ] Zod schemas: all fields have `.describe()`, only JSON-Schema-serializable types (no `z.custom()`, `z.date()`, `z.transform()`, `z.bigint()`, `z.symbol()`, `z.void()`, `z.map()`, `z.set()`, `z.function()`, `z.nan()`)
-- [ ] Tool inputs are strict at the root — an undeclared argument key is rejected by name. Add `.passthrough()` / `.catchall()` only where an open object is genuinely required
+- [ ] Tool inputs are closed at every level — the framework closes the root `z.object`, and every nested input object is a `z.strictObject`, so an undeclared key fails by its full path (`Unknown key style.colour. style accepts: …`) instead of being dropped. A tool with nested input objects gets a schema test that walks its `input` and fails on any open object below the root (`tests/helpers/zod-object-nodes.ts`). Use `z.looseObject()` / `.catchall()` only where an open object is genuinely required
 - [ ] JSDoc `@fileoverview` + `@module` on every file
 - [ ] `ctx.log` for logging, `ctx.state` for storage
 - [ ] Handlers throw on failure — error factories or plain `Error`, no try/catch

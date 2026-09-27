@@ -4,7 +4,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { z } from '@cyanheads/mcp-ts-core';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
   createMockContext,
@@ -31,6 +34,7 @@ import { inkColors, inkPixels, inkRows } from '../helpers/canvas-ink.js';
 import {
   expectDeviceFailure,
   failDevicePush,
+  listFiles,
   resultText,
   stubDeviceState,
 } from '../helpers/device-failure.js';
@@ -183,6 +187,53 @@ describe('pixooDisplayText', () => {
     expect(result.outputFiles).toBeUndefined();
   });
 
+  describe('outputFiles under PIXOO_OUTPUT_DIR are absolute', () => {
+    /** The working directory the server runs from, as the process reports it. */
+    let cwd: string;
+    let previousCwd: string;
+
+    beforeEach(async () => {
+      cwd = await realpath(await mkdtemp(path.join(os.tmpdir(), 'pixoo-display-output-')));
+      previousCwd = process.cwd();
+      process.chdir(cwd);
+    });
+
+    afterEach(async () => {
+      process.chdir(previousCwd);
+      delete process.env['PIXOO_OUTPUT_DIR'];
+      resetServerConfig();
+      await rm(cwd, { recursive: true, force: true });
+    });
+
+    /** Render `HI` with push: false under PIXOO_OUTPUT_DIR=`dir`; return the saved paths. */
+    async function renderInto(dir: string) {
+      process.env['PIXOO_OUTPUT_DIR'] = dir;
+      resetServerConfig();
+      const result = await runToolContract(pixooDisplayText, { text: 'HI', push: false });
+      expect(result.isError).toBeFalsy();
+      const { outputFiles } = result.structuredContent as { outputFiles: string[] };
+      expect(outputFiles).toHaveLength(1);
+      expect(resultText(result)).toContain(`**Saved:** ${outputFiles[0]}`);
+      return outputFiles;
+    }
+
+    it('PIXOO_OUTPUT_DIR=previews saves under <working directory>/previews and reports that path', async () => {
+      const outputFiles = await renderInto('previews');
+      const [file] = outputFiles as [string];
+      expect(path.isAbsolute(file)).toBe(true);
+      expect(path.dirname(file)).toBe(path.join(cwd, 'previews'));
+      expect(path.basename(file)).toMatch(/^display-text-\d+\.png$/);
+      expect(await listFiles(path.join(cwd, 'previews'))).toEqual(outputFiles);
+    });
+
+    it('an absolute PIXOO_OUTPUT_DIR saves where it always has, traversal and trailing slash included', async () => {
+      const outputFiles = await renderInto(`${cwd}/a/../out/`);
+      const [file] = outputFiles as [string];
+      expect(file).toBe(path.join(cwd, 'out', path.basename(file)));
+      expect(await listFiles(path.join(cwd, 'out'))).toEqual(outputFiles);
+    });
+  });
+
   it('format() returns a text block containing pushed status and frame count', () => {
     const output = {
       pushed: false,
@@ -242,10 +293,9 @@ describe('pixooDisplayText', () => {
     expect(text).toContain('/tmp/test.png');
   });
 
-  it('scrolling layout preview is non-blank (contains non-background pixels)', async () => {
-    // A very long text forces scrolling overflow.
-    // Before the fix, frame 0 renders at x=64 (off-canvas) → solid black preview.
-    // After the fix, the preview re-renders at x=0 → text is visible.
+  it('overflowing layout preview is non-blank (contains non-background pixels)', async () => {
+    // A very long text overflows the panel even in the compact font; the static
+    // frame draws it from x=0 so the preview shows legible text.
     const { Canvas: CVS } = await import('@cyanheads/pixoo-toolkit');
     const { drawStyledText } = await import('@/renderer/text-engine.js');
 
@@ -254,8 +304,8 @@ describe('pixooDisplayText', () => {
     const input = pixooDisplayText.input.parse({ text: longText, push: false });
     const result = await pixooDisplayText.handler(input, ctx);
 
-    // Confirm scrolling was triggered
-    expect(result.layout[0]?.action).toBe('scrolling');
+    // One static frame: nothing scrolls, the line runs off the right edge.
+    expect(result).toMatchObject({ frames: 1, layout: [{ action: 'none', fits: false }] });
     const [preview] = getContentBlocks(ctx);
     expect(preview).toMatchObject({ type: 'image', mimeType: 'image/png' });
 
@@ -365,13 +415,13 @@ describe('pixooDisplayText', () => {
       `);
     });
 
-    it('single line that overflows (auto-fit scroll action, drawn at x=0)', async () => {
+    it('single line that overflows (static, drawn at x=0)', async () => {
       expect(
         await renderHashes({ text: 'SCROLLING TICKER TEXT THAT OVERFLOWS' }),
       ).toMatchInlineSnapshot(`
         {
           "layout": [
-            "scrolling standard @0,28",
+            "none standard @0,28",
           ],
           "preview": "76492a3db134d31773ffb9aa7505cbe9f04c5fe49dea20b409e2448747f596b1",
           "pushed": "a1cf08cbdc1aeea89ec2493c94943f0819cfcdcc1148dc82615d3548ccc449e5",
@@ -479,6 +529,23 @@ describe('pixooDisplayText', () => {
       const { notice } = result.structuredContent as { notice?: string };
       expect(notice).toMatch(/^Brightness set to 40 failed \(http\): HTTP 500\./);
       expect(notice).toMatch(/screen is off/);
+      expect(resultText(result)).toContain(notice);
+    });
+
+    it('composes after the fallback-character notice, then the visibility problem', async () => {
+      const client = stubDeviceState({ screenOn: false });
+      failBrightness(client);
+      const result = await runToolContract(pixooDisplayText, {
+        text: '20 €',
+        brightness: 40,
+        push: true,
+      });
+      const notice = [
+        'Not in the standard and compact fonts, so drawn as "?": element 0 "€" (U+20AC). Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only.',
+        'Brightness set to 40 failed (http): HTTP 500. Render and push will continue.',
+        'Pushed, but the render may not be visible: the screen is off (pixoo_control_device with screen: "on").',
+      ].join(' ');
+      expect(result.structuredContent).toMatchObject({ pushed: true, notice });
       expect(resultText(result)).toContain(notice);
     });
   });
@@ -652,8 +719,8 @@ describe('pixooDisplayText', () => {
 
     it('standard on text that only fits compact overflows in 5×7 instead of shrinking', async () => {
       const { result, sc, frames } = await render({ text: SHRINKABLE, font: 'standard' });
-      expect(sc.layout[0]).toMatchObject({ font: 'standard', action: 'scrolling', box: { h: 7 } });
-      expect(resultText(result)).toContain('action:scrolling font:standard');
+      expect(sc.layout[0]).toMatchObject({ font: 'standard', action: 'none', box: { h: 7 } });
+      expect(resultText(result)).toContain('fits:false action:none font:standard');
       expect(litHeight(frames[0]!)).toBe(7);
     });
 
@@ -968,16 +1035,16 @@ describe('pixooDisplayText', () => {
       expect(layoutOf(result)[0]).toMatchObject({ font: 'compact', action: 'shrunk-to-compact' });
     });
 
-    it('at scale 2, 12:45 (116 px) on a 64-px panel reports scrolling and stays in numerals', async () => {
+    it('at scale 2, 12:45 (116 px) on a 64-px panel overflows statically and stays in numerals', async () => {
       const { result } = await pushOne({ text: '12:45', font: 'numerals', style: { scale: 2 } });
       expect(layoutOf(result)[0]).toMatchObject({
         font: 'numerals',
-        action: 'scrolling',
+        action: 'none',
         fits: false,
         scale: 2,
-        box: { w: 116, h: 36 },
+        box: { x: 0, w: 116, h: 36 },
       });
-      expect(resultText(result)).toContain('116×36 fits:false action:scrolling font:numerals');
+      expect(resultText(result)).toContain('116×36 fits:false action:none font:numerals');
     });
 
     it('effect auto scrolls overflowing numerals, every frame in the 11×18 face', async () => {
@@ -1095,6 +1162,102 @@ describe('pixooDisplayText', () => {
         expect(layoutOf(result)[0]).toMatchObject({ font });
       }
     });
+
+    it('€ in numerals still fails -32602 with its message, and no fallback notice', async () => {
+      const result = await runToolContract(pixooDisplayText, {
+        text: '20 €',
+        font: 'numerals',
+        push: false,
+      });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: -32602, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain(
+        'Characters not in the numerals font: "€". It draws 0–9, space, and : . - + / % ° ? only. Set units and labels in the standard or compact font, or use pixoo_compose_scene to place a numerals text element beside a standard or compact label.',
+      );
+      expect(resultText(result)).not.toContain('drawn as "?"');
+    });
+  });
+
+  describe('characters the standard and compact fonts draw as ?', () => {
+    type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
+    const fallbackNotice = (named: string) =>
+      `Not in the standard and compact fonts, so drawn as "?": ${named}. Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only.`;
+    const render = (input: Omit<DisplayInput, 'push'>) =>
+      runToolContract(pixooDisplayText, { ...input, push: false });
+    const previewOf = (result: ToolResult) =>
+      result.content.flatMap((block) => (block.type === 'image' ? [block.data] : []));
+
+    it.each<[string, Omit<DisplayInput, 'push'>, Omit<DisplayInput, 'push'>]>([
+      ['"20 €"', { text: '20 €' }, { text: '20 ?' }],
+      ['["A€", "B"]', { text: ['A€', 'B'] }, { text: ['A?', 'B'] }],
+      [
+        '"9 ♥ 7×" in compact',
+        { text: '9 ♥ 7×', font: 'compact' },
+        { text: '9 ♥ 7?', font: 'compact' },
+      ],
+    ])('the preview of %s is byte-identical to its ? spelling', async (_label, input, spelled) => {
+      const [drawn, fallback] = await Promise.all([render(input), render(spelled)]);
+      expect(previewOf(drawn)).toHaveLength(1);
+      expect(previewOf(drawn)).toEqual(previewOf(fallback));
+    });
+
+    it('"20 €" names € (U+20AC) at element 0 on both surfaces', async () => {
+      const result = await render({ text: '20 €' });
+      expect(result.isError).toBeFalsy();
+      const notice = fallbackNotice('element 0 "€" (U+20AC)');
+      expect(result.structuredContent).toMatchObject({ pushed: false, notice });
+      expect(resultText(result)).toContain(notice);
+    });
+
+    it.each<[string, DisplayInput['text'], string]>([
+      ['only the line holding it', ['A€', 'B'], 'element 0 "€" (U+20AC)'],
+      [
+        'each character once, in first-appearance order',
+        '€€×',
+        'element 0 "€" (U+20AC), "×" (U+00D7)',
+      ],
+      ['the invisible variation selector after ♥', '♥️', 'element 0 "️" (U+FE0F)'],
+      ['a newline inside one string', 'a\nb', 'element 0 "\\n" (U+000A)'],
+      ['a no-break space', '20 C', 'element 0 " " (U+00A0)'],
+      ['a character outside the Basic Multilingual Plane', '1😀2', 'element 0 "😀" (U+1F600)'],
+      [
+        'every flagged line by index, deduplicated per line',
+        ['1€', 'ok', '2×€'],
+        'element 0 "€" (U+20AC); element 2 "×" (U+00D7), "€" (U+20AC)',
+      ],
+    ])('names %s', async (_label, text, named) => {
+      const result = await render({ text });
+      const notice = fallbackNotice(named);
+      expect((result.structuredContent as { notice?: string }).notice).toBe(notice);
+      expect(resultText(result)).toContain(notice);
+    });
+
+    it.each<[string, Omit<DisplayInput, 'push'>, string]>([
+      ['a scroll effect', { text: '20 €', effect: 'scroll' }, 'standard'],
+      ['a pulse effect', { text: '20 €', effect: 'pulse' }, 'standard'],
+      ['the compact font', { text: '20 €', font: 'compact' }, 'compact'],
+      ['auto-fit shrinking to compact', { text: '20 € 0123456789' }, 'compact'],
+    ])('names them under %s', async (_label, input, font) => {
+      const result = await render(input);
+      expect(layoutOf(result)[0]).toMatchObject({ font });
+      expect((result.structuredContent as { notice?: string }).notice).toBe(
+        fallbackNotice('element 0 "€" (U+20AC)'),
+      );
+    });
+
+    const ascii = String.fromCharCode(...Array.from({ length: 95 }, (_, i) => 32 + i));
+
+    it.each<[string, DisplayInput['text']]>([
+      ['72°F ▲3', '72°F ▲3'],
+      ['printable ASCII', ascii],
+      ['the ten added symbols', '°←↑→↓▲▼♥·…'],
+    ])('%s produces no notice key on either surface', async (_label, text) => {
+      const result = await render({ text });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).not.toHaveProperty('notice');
+      expect(resultText(result)).not.toContain('drawn as "?"');
+    });
   });
 
   describe('layout fits: the placed box lies wholly on the panel, all four edges', () => {
@@ -1162,12 +1325,12 @@ describe('pixooDisplayText', () => {
       ]);
     });
 
-    it('a scrolling line reports the box its static frame draws, from x = 0', async () => {
+    it('a line wider than the panel reports the box its static frame draws, from x = 0', async () => {
       const text = 'SCROLLING TICKER TEXT THAT OVERFLOWS';
       const { result, frame } = await pushOne({ text, style: { color: '#ffffff' } });
       const [entry] = layoutOf(result);
-      expect(entry).toMatchObject({ action: 'scrolling', box: { x: 0, y: 28, h: 7 }, fits: false });
-      expect(resultText(result)).toContain(`(0,28) ${entry!.box.w}×7 fits:false action:scrolling`);
+      expect(entry).toMatchObject({ action: 'none', box: { x: 0, y: 28, h: 7 }, fits: false });
+      expect(resultText(result)).toContain(`(0,28) ${entry!.box.w}×7 fits:false action:none`);
       expect(inkPixels(frame, [0, 0, 0])).toEqual(toolkitInk(text, FONT_5x7, 0, 28));
     });
 
@@ -1199,5 +1362,112 @@ describe('pixooDisplayText', () => {
         expect(sceneEntry).toMatchObject({ box: layout[0]!.box, fits: layout[0]!.fits });
       },
     );
+  });
+
+  describe('layout action: scrolling only when the returned frames scroll', () => {
+    const LONG = 'SCROLLING TICKER TEXT THAT OVERFLOWS';
+    const LONG_W = measureText(LONG, { font: FONT_5x7 });
+
+    /** Render without a push; return the result, its layout, and the content[] text. */
+    async function layoutFor(input: DisplayInput) {
+      const result = await runToolContract(pixooDisplayText, { ...input, push: false });
+      expect(result.isError).toBeFalsy();
+      return { result, layout: layoutOf(result), text: resultText(result) };
+    }
+
+    it('multi-line with a line wider than the panel, no effect: every line none', async () => {
+      const { result, layout, text } = await layoutFor({ text: ['AB', LONG] });
+      expect((result.structuredContent as { frames: number }).frames).toBe(1);
+      expect(layout.map((e) => [e.action, e.fits])).toEqual([
+        ['none', true],
+        ['none', false],
+      ]);
+      expect(text).toContain(`${LONG_W}×7 fits:false action:none`);
+      expect(text).not.toContain('action:scrolling');
+    });
+
+    it.each([
+      ['scroll', ['AB', 'CD']],
+      ['auto', ['AB', LONG]],
+    ] as const)('multi-line under effect %s: every line scrolling', async (effect, lines) => {
+      const { layout, text } = await layoutFor({ text: [...lines], effect });
+      expect(layout.map((e) => e.action)).toEqual(['scrolling', 'scrolling']);
+      expect(text.match(/action:scrolling/g)).toHaveLength(2);
+    });
+
+    it('multi-line under effect auto that fits: every line none, one frame', async () => {
+      const { result, layout } = await layoutFor({ text: ['AB', 'CD'], effect: 'auto' });
+      expect((result.structuredContent as { frames: number }).frames).toBe(1);
+      expect(layout.map((e) => e.action)).toEqual(['none', 'none']);
+    });
+
+    it('tools/list advertises action as none, shrunk-to-compact, scrolling and element as a number', () => {
+      const item = z.toJSONSchema(pixooDisplayText.output) as unknown as {
+        properties: { layout: { items: { properties: Record<string, Record<string, unknown>> } } };
+      };
+      const { action, element } = item.properties.layout.items.properties;
+      expect(action?.['enum']).toEqual(['none', 'shrunk-to-compact', 'scrolling']);
+      expect(element?.['type']).toBe('number');
+      expect(JSON.stringify(element)).not.toContain('background');
+    });
+
+    it.each([
+      ['omitted', undefined, 1],
+      ['none', 'none', 1],
+      ['float', 'float', 20],
+      ['pulse', 'pulse', 20],
+    ] as const)(
+      'a single line wider than the panel, effect %s, does not scroll: none, fits false, box.x 0',
+      async (_label, effect, frames) => {
+        const { result, layout, text } = await layoutFor({ text: LONG, ...(effect && { effect }) });
+        expect((result.structuredContent as { frames: number }).frames).toBe(frames);
+        expect(layout).toEqual([
+          {
+            element: 0,
+            type: 'text',
+            box: { x: 0, y: 28, w: LONG_W, h: 7 },
+            fits: false,
+            action: 'none',
+            font: 'standard',
+            scale: 1,
+          },
+        ]);
+        expect(text).toContain(
+          `[0] text @ (0,28) ${LONG_W}×7 fits:false action:none font:standard scale:1`,
+        );
+      },
+    );
+
+    it.each(['auto', 'scroll'] as const)(
+      'a single line wider than the panel, effect %s, scrolls: scrolling, fits false, box.x 0',
+      async (effect) => {
+        const { result, layout, text } = await layoutFor({ text: LONG, effect });
+        expect((result.structuredContent as { frames: number }).frames).toBe(40);
+        expect(layout).toEqual([
+          {
+            element: 0,
+            type: 'text',
+            box: { x: 0, y: 28, w: LONG_W, h: 7 },
+            fits: false,
+            action: 'scrolling',
+            font: 'standard',
+            scale: 1,
+          },
+        ]);
+        expect(text).toContain(
+          `[0] text @ (0,28) ${LONG_W}×7 fits:false action:scrolling font:standard scale:1`,
+        );
+      },
+    );
+
+    it.each([
+      ['HELLO WORLD!', undefined, 'shrunk-to-compact'],
+      ['Hi', 'scroll', 'scrolling'],
+      ['Hi', undefined, 'none'],
+    ] as const)('%s with effect %s reports %s on both surfaces', async (line, effect, action) => {
+      const { layout, text } = await layoutFor({ text: line, ...(effect && { effect }) });
+      expect(layout[0]?.action).toBe(action);
+      expect(text).toContain(`action:${action}`);
+    });
   });
 });

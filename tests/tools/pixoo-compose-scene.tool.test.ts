@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from '@cyanheads/mcp-ts-core';
@@ -28,12 +28,23 @@ import {
   resolveColor,
   savePng,
 } from '@cyanheads/pixoo-toolkit';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooComposeScene } from '@/mcp-server/tools/definitions/pixoo-compose-scene.tool.js';
 import { ICON_NAMES } from '@/renderer/icons.js';
 import { compileEffect, EFFECT_NAMES } from '@/renderer/keyframes.js';
 import { buildContactSheet, encodePreviewBlock } from '@/renderer/preview.js';
+import { renderScene } from '@/renderer/scene-renderer.js';
 import { PALETTE_NAMES, PALETTES } from '@/renderer/themes.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
 import { hashOf, inkColors, inkPixels, inkRows, isInk } from '../helpers/canvas-ink.js';
@@ -613,6 +624,165 @@ describe('pixooComposeScene', () => {
     });
   });
 
+  describe('an image source or sprite path that is neither absolute nor a URL fails input validation', () => {
+    const IMAGE_SOURCE_ERROR =
+      'Must be an absolute local path or an https URL, not a relative path, a ~ path, or a file:// URL.';
+    const SPRITE_PATH_ERROR =
+      'Must be an absolute local path, not a relative path, a ~ path, or a file:// URL.';
+    const HTTPS_IMAGE = 'https://images.test/relative-suite/art.png';
+
+    let sources: ImageSources;
+    /** A working directory holding the image at every relative spelling below. */
+    let cwd: string;
+    let previousCwd: string;
+
+    beforeAll(async () => {
+      sources = await writeImageSources();
+      cwd = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-relative-'));
+      for (const rel of [
+        'art.png',
+        '~/art.png',
+        'file:/tmp/art.png',
+        'assets/clawd.png',
+        'x/art.png',
+      ]) {
+        await mkdir(path.dirname(path.join(cwd, rel)), { recursive: true });
+        await writeFile(path.join(cwd, rel), sources.png.bytes);
+      }
+    });
+
+    afterAll(async () => {
+      await rm(cwd, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+      previousCwd = process.cwd();
+      process.chdir(cwd);
+    });
+
+    afterEach(() => {
+      process.chdir(previousCwd);
+    });
+
+    const RELATIVE = ['art.png', './art.png', '~/art.png', 'file:///tmp/art.png', ''];
+
+    it.each<[string, SceneInput['elements'][number], string]>([
+      ...RELATIVE.map(
+        (source) =>
+          [`image source ${JSON.stringify(source)}`, { type: 'image', source }, 'source'] as [
+            string,
+            SceneInput['elements'][number],
+            string,
+          ],
+      ),
+      ...[...RELATIVE, 'assets/clawd.png'].map(
+        (spritePath) =>
+          [
+            `sprite path ${JSON.stringify(spritePath)}`,
+            { type: 'sprite', path: spritePath, cols: 2, rows: 2 },
+            'path',
+          ] as [string, SceneInput['elements'][number], string],
+      ),
+    ])(
+      '%s at elements.2 fails -32602 naming the field; no other asset is fetched or read',
+      async (_label, element, field) => {
+        const client = stubDeviceState();
+        const handler = vi.spyOn(pixooComposeScene, 'handler');
+        const http = createFetchMock([
+          { match: HTTPS_IMAGE, respond: () => new Response(new Uint8Array(sources.png.bytes)) },
+        ]);
+        http.install();
+        try {
+          const result = await runToolContract(pixooComposeScene, {
+            background: '#000000',
+            elements: [
+              { type: 'image', source: HTTPS_IMAGE },
+              { type: 'sprite', path: sources.png.file, cols: 2, rows: 2 },
+              element,
+            ],
+            push: true,
+          });
+
+          const named = `elements.2.${field}: ${field === 'source' ? IMAGE_SOURCE_ERROR : SPRITE_PATH_ERROR}`;
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toMatchObject({
+            error: {
+              code: JsonRpcErrorCode.InvalidParams,
+              data: { reason: 'invalid_arguments', recovery: { hint: named } },
+            },
+          });
+          expect(JsonRpcErrorCode.InvalidParams).toBe(-32602);
+          expect(resultText(result)).toContain(named);
+          expect(result.content.some((block) => block.type === 'image')).toBe(false);
+          expect(handler).not.toHaveBeenCalled();
+          expect(http.calls).toHaveLength(0);
+          expect(client.push).not.toHaveBeenCalled();
+        } finally {
+          http.restore();
+        }
+      },
+    );
+
+    it('absolute image sources and sprite paths render, non-normalized ones included', async () => {
+      const normalized = path.join(cwd, 'x', 'art.png');
+      const traversing = `${cwd}/x/../x/art.png`;
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [
+          { type: 'image', source: normalized, w: 8, h: 8 },
+          { type: 'image', source: traversing, x: 8, w: 8, h: 8 },
+          { type: 'sprite', path: normalized, cols: 2, rows: 2, x: 0, y: 20 },
+          { type: 'sprite', path: traversing, cols: 2, rows: 2, x: 8, y: 20 },
+        ],
+        push: false,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        layout: [{ type: 'image' }, { type: 'image' }, { type: 'sprite' }, { type: 'sprite' }],
+      });
+      expect(result.content.filter((block) => block.type === 'image')).toHaveLength(1);
+    });
+
+    it('an http image source passes validation and still fails as asset_not_found', async () => {
+      const source = 'http://images.test/art.png';
+      const message = `Only https URLs are supported. Received: "${source}".`;
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'image', source }],
+        push: false,
+      });
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: JsonRpcErrorCode.NotFound,
+          message,
+          data: { reason: 'asset_not_found', url: source },
+        },
+      });
+      expect(resultText(result)).toContain(message);
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'asset_not_found');
+    });
+
+    it.each(['https://images.test/sheet.png', 'http://images.test/sheet.png'])(
+      'a sprite path given as the URL %s passes validation and still fails as asset_not_found',
+      async (url) => {
+        const result = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          elements: [{ type: 'sprite', path: url, cols: 2, rows: 1 }],
+          push: false,
+        });
+        const message = `Sprite sheet path "${url}" is a URL; sprite sheets take an absolute local path.`;
+        expect(result.structuredContent).toMatchObject({
+          error: {
+            code: JsonRpcErrorCode.NotFound,
+            message,
+            data: { reason: 'asset_not_found', path: url },
+          },
+        });
+        expect(resultText(result)).toContain(message);
+      },
+    );
+  });
+
   describe('image elements fit PIXOO_SIZE', () => {
     it.each([16, 32])('size %i: the pushed frame holds the whole image', async (size) => {
       const dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-size-'));
@@ -1091,7 +1261,15 @@ describe('pixooComposeScene', () => {
         ]);
       });
 
-      it.each<[string, SceneInput['elements'][number]]>([
+      it.each<
+        [
+          string,
+          Extract<
+            SceneInput['elements'][number],
+            { type: 'text' | 'icon' | 'rect' | 'circle' | 'line' | 'sparkline' }
+          >,
+        ]
+      >([
         ['text', { type: 'text', text: 'HI', x: 2, y: 2 }],
         ['icon', { type: 'icon', name: 'stop', x: 2, y: 2 }],
         ['rect', { type: 'rect', x: 2, y: 2, w: 8, h: 8 }],
@@ -1503,6 +1681,439 @@ describe('pixooComposeScene', () => {
     );
   });
 
+  describe('element refinements keep their messages', () => {
+    it.each<[string, Record<string, unknown>, string]>([
+      [
+        'strokeWidth on a rect without borderColor',
+        { type: 'rect', x: 0, y: 0, w: 8, h: 8, color: '#ffffff', strokeWidth: 2 },
+        'elements.0.strokeWidth: strokeWidth sets the thickness of the borderColor border; set borderColor, or drop strokeWidth.',
+      ],
+      [
+        'strokeWidth on a filled circle',
+        { type: 'circle', cx: 10, cy: 10, radius: 4, strokeWidth: 2 },
+        'elements.0.strokeWidth: strokeWidth applies to an outline circle only; set fill: false, or drop strokeWidth.',
+      ],
+      [
+        'antialias on a filled circle',
+        { type: 'circle', cx: 10, cy: 10, radius: 4, antialias: true },
+        'elements.0.antialias: antialias applies to an outline circle only; set fill: false, or drop antialias.',
+      ],
+      [
+        'a letter in the numerals font',
+        { type: 'text', text: '72°F', font: 'numerals' },
+        'elements.0.text: Characters not in the numerals font: "F". It draws 0–9, space, and : . - + / % ° ? only. Put units and labels in a separate text element in the standard or compact font.',
+      ],
+    ])('%s fails with its own message', async (_label, element, message) => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [element as SceneInput['elements'][number]],
+        push: false,
+      });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain(message);
+      expect(resultText(result)).not.toContain('Unknown key');
+    });
+  });
+
+  describe('every input object is closed: an unknown key fails by its full path', () => {
+    const rect = { type: 'rect', x: 0, y: 0, w: 8, h: 8, color: '#ffffff' } as const;
+    const gradient = { type: 'v', from: '#ff0000', to: '#0000ff' } as const;
+
+    /** Compose `input` with a push requested against a fake client; input is deliberately untyped. */
+    async function compose(input: Record<string, unknown>) {
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        push: true,
+        ...input,
+      } as SceneInput);
+      return { client, result };
+    }
+
+    /** Assert a -32602 `invalid_arguments` failure carrying every `expected` string, with nothing rendered or pushed. */
+    function expectRejected(
+      { client, result }: Awaited<ReturnType<typeof compose>>,
+      expected: string[],
+    ) {
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      for (const text of expected) {
+        expect(resultText(result)).toContain(text);
+        expect(JSON.stringify(result.structuredContent)).toContain(text);
+      }
+      expect(result.content.some((block) => block.type === 'image')).toBe(false);
+      expect(client.push).not.toHaveBeenCalled();
+      expect(client.pushAnimation).not.toHaveBeenCalled();
+    }
+
+    it('a misspelled rect color names the key and lists what the element accepts', async () => {
+      const outcome = await compose({
+        elements: [{ type: 'rect', x: 0, y: 0, w: 8, h: 8, colour: '#ff0000' }],
+      });
+      expectRejected(outcome, [
+        'Unknown key elements.0.colour. elements.0 accepts: type, x, y, w, h, color, gradient, borderColor, strokeWidth, visible, opacity, blend, dx, dy, effect, animate.',
+      ]);
+      const { hint } = (
+        outcome.result.structuredContent as { error: { data: { recovery: { hint: string } } } }
+      ).error.data.recovery;
+      expect(hint.startsWith('Unknown key elements.0.colour. elements.0 accepts:')).toBe(true);
+    });
+
+    it('a misspelled line strokeWidth names elements.0.strokewidth', async () => {
+      expectRejected(
+        await compose({
+          elements: [
+            { type: 'line', x0: 0, y0: 10, x1: 63, y1: 10, color: 'white', strokewidth: 5 },
+          ],
+        }),
+        ['Unknown key elements.0.strokewidth. elements.0 accepts: type, x0, y0, x1, y1, color,'],
+      );
+    });
+
+    it.each<[string, Record<string, unknown>, string[]]>([
+      [
+        'strokeWidth on text',
+        { type: 'text', text: 'HI', strokeWidth: 2 },
+        ['Unknown key elements.0.strokeWidth.', 'elements.0 accepts: type, text, x, y,'],
+      ],
+      ['antialias on a rect', { ...rect, antialias: true }, ['Unknown key elements.0.antialias.']],
+      [
+        'a misspelled style key',
+        { type: 'text', text: 'HI', style: { colour: '#ff0000' } },
+        [
+          'Unknown key elements.0.style.colour. elements.0.style accepts: palette, shadow, outline, scale, color.',
+        ],
+      ],
+      [
+        'an extra key in a custom style palette',
+        { type: 'text', text: 'HI', style: { palette: { from: 'red', to: 'blue', mid: 'white' } } },
+        ['Unknown key elements.0.style.palette.mid.', 'accepts: from, to.'],
+      ],
+      [
+        'a misspelled effect key',
+        { ...rect, effect: { name: 'float', amplitud: 3 } },
+        [
+          'Unknown key elements.0.effect.amplitud. elements.0.effect accepts: name, amplitude, period, phase.',
+        ],
+      ],
+      [
+        'a misspelled animate track',
+        { ...rect, animate: { opactiy: [[0, 50]] } },
+        [
+          'Unknown key elements.0.animate.opactiy. elements.0.animate accepts: dx, dy, opacity, visible, color.',
+        ],
+      ],
+      [
+        'an animate track for y, which animate does not drive',
+        {
+          ...rect,
+          animate: {
+            y: [
+              [0, 30],
+              [5, 24],
+            ],
+          },
+        },
+        ['Unknown key elements.0.animate.y.'],
+      ],
+      [
+        'an extra key in a rect gradient',
+        { ...rect, gradient: { ...gradient, mid: '#00ff00' } },
+        ['Unknown key elements.0.gradient.mid. elements.0.gradient accepts: type, from, to.'],
+      ],
+      [
+        'a misspelled color on a pixels point',
+        {
+          type: 'pixels',
+          data: [
+            { x: 0, y: 0, color: '#ffffff' },
+            { x: 1, y: 1, colour: 'red' },
+          ],
+        },
+        [
+          'Provide elements.0.data.1.color.',
+          'Unknown key elements.0.data.1.colour. elements.0.data.1 accepts: x, y, color.',
+        ],
+      ],
+      [
+        'radious without radius on a circle',
+        { type: 'circle', cx: 10, cy: 10, radious: 4 },
+        ['Provide elements.0.radius.', 'Unknown key elements.0.radious.'],
+      ],
+    ])(
+      '%s fails -32602 naming the key; nothing renders or pushes',
+      async (_label, element, expected) => {
+        expectRejected(await compose({ elements: [element] }), expected);
+      },
+    );
+
+    it('names a pixels point key past the first point, on a later element', async () => {
+      expectRejected(
+        await compose({
+          elements: [
+            rect,
+            { type: 'pixels', data: [{ x: 0, y: 0, color: 'red', colour: 'blue' }] },
+          ],
+        }),
+        ['Unknown key elements.1.data.0.colour.'],
+      );
+    });
+
+    it.each<[string, Record<string, unknown>]>([
+      ['bitmap', { type: 'bitmap', x: 0, y: 0, rows: ['1'], palette: ['#000', '#fff'] }],
+      ['progress', { type: 'progress', x: 0, y: 0, w: 8, h: 2, value: 1, max: 2 }],
+      ['image', { type: 'image', source: '/tmp/a.png' }],
+      ['sprite', { type: 'sprite', path: '/tmp/a.png', cols: 1, rows: 1 }],
+    ])(
+      'an animate color track fails on a %s, which has no color to drive',
+      async (_type, element) => {
+        expectRejected(
+          await compose({
+            frames: 2,
+            elements: [
+              {
+                ...element,
+                animate: {
+                  color: [
+                    [0, 'red'],
+                    [1, 'blue'],
+                  ],
+                },
+              },
+            ],
+          }),
+          [
+            'Unknown key elements.0.animate.color. elements.0.animate accepts: dx, dy, opacity, visible.',
+          ],
+        );
+      },
+    );
+
+    it('an animate color track still drives a rect', async () => {
+      const { client, result } = await compose({
+        frames: 2,
+        elements: [
+          {
+            ...rect,
+            animate: {
+              color: [
+                [0, '#ff0000'],
+                [1, '#0000ff'],
+              ],
+            },
+          },
+        ],
+      });
+      expect(result.isError).toBeFalsy();
+      const frames = client.pushAnimation.mock.calls[0]?.[0] as Canvas[];
+      expect(frames.map((frame) => inkColors(frame, 0, [0, 0, 0]))).toEqual([
+        [[255, 0, 0]],
+        [[0, 0, 255]],
+      ]);
+    });
+
+    it('a misspelled background key names background.gradeint and what background accepts', async () => {
+      expectRejected(await compose({ background: { gradeint: gradient }, elements: [] }), [
+        'Unknown key background.gradeint. background accepts: gradient, theme.',
+      ]);
+    });
+
+    it('an extra key inside the background gradient names its full path', async () => {
+      expectRejected(
+        await compose({ background: { gradient: { ...gradient, mid: '#00ff00' } }, elements: [] }),
+        ['Unknown key background.gradient.mid.'],
+      );
+    });
+
+    it('a background holding both gradient and theme fails instead of rendering the gradient', async () => {
+      expectRejected(await compose({ background: { gradient, theme: 'midnight' }, elements: [] }), [
+        'background: Set exactly one of gradient or theme.',
+      ]);
+    });
+
+    it('an empty background object fails with the same exactly-one rule', async () => {
+      expectRejected(await compose({ background: {}, elements: [] }), [
+        'background: Set exactly one of gradient or theme.',
+      ]);
+    });
+
+    it.each<[string, SceneInput['background'], RGB]>([
+      ['a theme alone', { theme: 'ice' }, resolveColor('#001030')],
+      [
+        'a gradient alone',
+        { gradient: { type: 'h', from: '#ff0000', to: '#ff0000' } },
+        [255, 0, 0],
+      ],
+    ])('%s still renders as the background', async (_label, background, corner) => {
+      const { client, result } = await compose({ background, elements: [] });
+      expect(result.isError).toBeFalsy();
+      const frame = client.push.mock.calls[0]?.[0] as Canvas;
+      expect(frame.getPixelRgba(0, 0).slice(0, 3)).toEqual(corner);
+    });
+  });
+
+  describe('an element takes effect or animate, not both', () => {
+    const TYPES = [
+      'text',
+      'icon',
+      'rect',
+      'circle',
+      'line',
+      'progress',
+      'sparkline',
+      'bitmap',
+      'pixels',
+      'image',
+      'sprite',
+    ] as const;
+    const EFFECT = { name: 'float', amplitude: 3 } as const;
+    const ANIMATE = {
+      dx: [
+        [0, 0],
+        [3, 6],
+      ],
+      opacity: [
+        [0, 100],
+        [3, 40],
+      ],
+    };
+    let dir: string;
+    let png: string;
+
+    beforeAll(async () => {
+      dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-effect-animate-'));
+      png = path.join(dir, 'sheet.png');
+      const sheet = new Canvas(16);
+      sheet.clear(resolveColor('#ff8800'));
+      await savePng(sheet, png);
+    });
+
+    afterAll(() => rm(dir, { recursive: true, force: true }));
+
+    /** One element of `type`, placed so every frame of a 4-frame animation stays on the canvas. */
+    function elementOf(type: (typeof TYPES)[number]): Record<string, unknown> {
+      switch (type) {
+        case 'text':
+          return { type, text: 'HI', x: 8, y: 8, color: '#ffffff' };
+        case 'icon':
+          return { type, name: 'heart', x: 8, y: 8 };
+        case 'rect':
+          return { type, x: 8, y: 8, w: 8, h: 8, color: '#ff0000' };
+        case 'circle':
+          return { type, cx: 20, cy: 20, radius: 6, color: '#00ff00' };
+        case 'line':
+          return { type, x0: 8, y0: 10, x1: 30, y1: 20, color: '#0000ff' };
+        case 'progress':
+          return { type, x: 8, y: 8, w: 30, h: 4, value: 5, max: 10 };
+        case 'sparkline':
+          return { type, x: 8, y: 8, w: 30, h: 10, data: [1, 5, 2, 8] };
+        case 'bitmap':
+          return { type, x: 8, y: 8, rows: ['0110', '1001'], palette: ['#ff0000', '#00ff00'] };
+        case 'pixels':
+          return {
+            type,
+            data: [
+              { x: 8, y: 8, color: '#ffffff' },
+              { x: 10, y: 12, color: 'red' },
+            ],
+          };
+        case 'image':
+          return { type, source: png, x: 8, y: 8, w: 16, h: 16 };
+        case 'sprite':
+          return { type, path: png, cols: 2, rows: 2, x: 8, y: 8 };
+      }
+    }
+
+    it.each([0, 1])(
+      'a rect holding both, at element %i, fails -32602 at its effect; nothing renders or pushes',
+      async (index) => {
+        const client = stubDeviceState();
+        const both = {
+          type: 'rect',
+          x: 0,
+          y: 0,
+          w: 8,
+          h: 8,
+          color: '#ff0000',
+          effect: { name: 'pulse' },
+          animate: {
+            dx: [
+              [0, 0],
+              [7, 10],
+            ],
+          },
+        };
+        const plain = { type: 'text', text: 'ok', y: 40 };
+        const result = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          frames: 8,
+          elements: (index === 0 ? [both, plain] : [plain, both]) as SceneInput['elements'],
+          push: true,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+        });
+        expect(resultText(result)).toContain(`elements.${index}.effect`);
+        expect(resultText(result)).toContain('either effect or animate');
+        expect(JSON.stringify(result.structuredContent)).toContain(`elements.${index}.effect`);
+        expect(JSON.stringify(result.structuredContent)).toContain('either effect or animate');
+        expect(result.content.some((block) => block.type === 'image')).toBe(false);
+        expect(client.push).not.toHaveBeenCalled();
+        expect(client.pushAnimation).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(TYPES)('a %s holding both fails at elements.0.effect', async (type) => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        frames: 4,
+        elements: [
+          { ...elementOf(type), effect: EFFECT, animate: ANIMATE },
+        ] as SceneInput['elements'],
+        push: false,
+      });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain('elements.0.effect');
+      expect(resultText(result)).toContain('either effect or animate');
+    });
+
+    describe.each([
+      ['effect', { effect: EFFECT }],
+      ['animate', { animate: ANIMATE }],
+    ] as const)('%s alone', (_label, motion) => {
+      it.each(TYPES)('animates a %s exactly as the scene renderer draws it', async (type) => {
+        const element = { ...elementOf(type), ...motion };
+        const result = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          frames: 4,
+          elements: [element] as SceneInput['elements'],
+          push: false,
+        });
+        expect(result.isError).toBeFalsy();
+        expect(result.structuredContent).toMatchObject({ pushed: false, frames: 4 });
+
+        const { frames } = await renderScene(
+          '#000000',
+          [element] as Parameters<typeof renderScene>[1],
+          4,
+          createMockContext(),
+          64,
+        );
+        // The motion is real: the first and last frames differ.
+        expect(hashOf(frames[3]!)).not.toBe(hashOf(frames[0]!));
+        const preview = result.content.find((block) => block.type === 'image');
+        expect(preview).toMatchObject({ data: (await buildContactSheet(frames)).data });
+      });
+    });
+  });
+
   describe('an empty animate track', () => {
     const rect = { type: 'rect', x: 0, y: 0, w: 4, h: 4, color: '#ffffff' } as const;
 
@@ -1583,13 +2194,11 @@ describe('pixooComposeScene', () => {
       expect(resultText(result)).toContain('"true"');
     });
 
-    it('a track under a key no element animates is accepted and leaves the render unchanged', async () => {
-      const plain = await composeOne(rect);
+    it('a track under a key no element animates fails naming it, with no preview', async () => {
       const extra = await composeOne({ ...rect, animate: { scale: [[0, 'anything']] } });
-      expect(extra.isError).toBeFalsy();
-      expect(extra.structuredContent).toEqual(plain.structuredContent);
-      // Text and preview image alike.
-      expect(extra.content).toEqual(plain.content);
+      expectInvalidArguments(extra, 'elements.0.animate.scale');
+      expect(resultText(extra)).toContain('Unknown key elements.0.animate.scale.');
+      expect(extra.content.some((block) => block.type === 'image')).toBe(false);
     });
 
     /** Assert `result` is a -32602 `invalid_arguments` failure naming `field` on both surfaces. */
@@ -2166,6 +2775,172 @@ describe('pixooComposeScene', () => {
         const rows = inkRows(frame, [0, 0, 0]);
         expect(rows.at(-1)! - rows[0]! + 1).toBe(18);
       }
+    });
+
+    it('€ in a numerals element still fails -32602 with its message, and no fallback notice', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'text', text: '20 €', font: 'numerals' }],
+        push: false,
+      });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: -32602, data: { reason: 'invalid_arguments' } },
+      });
+      expect(resultText(result)).toContain(
+        'elements.0.text: Characters not in the numerals font: "€". It draws 0–9, space, and : . - + / % ° ? only. Put units and labels in a separate text element in the standard or compact font.',
+      );
+      expect(resultText(result)).not.toContain('drawn as "?"');
+    });
+  });
+
+  describe('characters the standard and compact fonts draw as ?', () => {
+    type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
+    type Elements = SceneInput['elements'];
+    const fallbackNotice = (named: string) =>
+      `Not in the standard and compact fonts, so drawn as "?": ${named}. Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only.`;
+    const render = (elements: Elements, frames?: number) =>
+      runToolContract(pixooComposeScene, { background: '#000000', elements, frames, push: false });
+    const noticeOf = (result: ToolResult) =>
+      (result.structuredContent as { notice?: string }).notice;
+    const previewOf = (result: ToolResult) =>
+      result.content.flatMap((block) => (block.type === 'image' ? [block.data] : []));
+    const progress = (label?: string) =>
+      ({ type: 'progress', x: 0, y: 40, w: 40, h: 7, value: 1, max: 2, label }) as const;
+
+    it('names × at element 1 and € at element 2 on both surfaces', async () => {
+      const result = await render([
+        { type: 'text', text: 'OK' },
+        { type: 'text', text: '9 ♥ 7×', y: 10 },
+        progress('5€'),
+      ]);
+      expect(result.isError).toBeFalsy();
+      const notice = fallbackNotice('element 1 "×" (U+00D7); element 2 "€" (U+20AC)');
+      expect(result.structuredContent).toMatchObject({ pushed: false, notice });
+      expect(resultText(result)).toContain(notice);
+    });
+
+    it('the preview is byte-identical to the ? spelling of the same scene', async () => {
+      const [drawn, fallback] = await Promise.all([
+        render([{ type: 'text', text: '9 ♥ 7×' }, progress('5€')]),
+        render([{ type: 'text', text: '9 ♥ 7?' }, progress('5?')]),
+      ]);
+      expect(previewOf(drawn)).toHaveLength(1);
+      expect(previewOf(drawn)).toEqual(previewOf(fallback));
+    });
+
+    it('names a text element whatever its visibility, effect, or keyframes, once across frames', async () => {
+      const result = await render(
+        [
+          { type: 'text', text: 'a€€', visible: false },
+          { type: 'text', text: 'b×', y: 10, effect: { name: 'float' } },
+          {
+            type: 'text',
+            text: 'c©',
+            y: 20,
+            animate: {
+              visible: [
+                [0, false],
+                [3, true],
+              ],
+            },
+          },
+        ],
+        4,
+      );
+      expect(result.isError).toBeFalsy();
+      expect(noticeOf(result)).toBe(
+        fallbackNotice('element 0 "€" (U+20AC); element 1 "×" (U+00D7); element 2 "©" (U+00A9)'),
+      );
+    });
+
+    it.each<[string, Elements]>([
+      ['a text element holding 72°F ▲3', [{ type: 'text', text: '72°F ▲3' }]],
+      [
+        'a text element holding printable ASCII',
+        [
+          {
+            type: 'text',
+            text: String.fromCharCode(...Array.from({ length: 95 }, (_, i) => 32 + i)),
+          },
+        ],
+      ],
+      ['a text element holding the ten added symbols', [{ type: 'text', text: '°←↑→↓▲▼♥·…' }]],
+      ['a progress label holding 72°F ▲3', [progress('72°F ▲3')]],
+      ['a progress bar with no label', [progress()]],
+    ])('%s produces no notice key on either surface', async (_label, elements) => {
+      const result = await render(elements);
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).not.toHaveProperty('notice');
+      expect(resultText(result)).not.toContain('drawn as "?"');
+    });
+  });
+
+  describe('layout action: scene elements are placed as given, never refit', () => {
+    const LONG = 'SCROLLING TICKER TEXT THAT OVERFLOWS';
+
+    it('text wider than the panel at x center reports none, fits false, placed where drawn', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'text', text: LONG, x: 'center', y: 'center' }],
+        push: false,
+      });
+      const w = measureText(LONG, { font: FONT_5x7 });
+      const x = Math.floor((64 - w) / 2);
+      expect(layoutOf(result)).toEqual([
+        {
+          element: 0,
+          type: 'text',
+          box: { x, y: 28, w, h: 7 },
+          fits: false,
+          action: 'none',
+          font: 'standard',
+          scale: 1,
+        },
+      ]);
+      expect(resultText(result)).toContain(`[0] text @ (${x},28) ${w}×7 fits:false action:none`);
+    });
+
+    it('every element type, static and animated, reports action none on both surfaces', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        frames: 4,
+        elements: [
+          { type: 'text', text: LONG, x: 0, y: 0, effect: { name: 'float' } },
+          { type: 'icon', name: ICON_NAMES[0]!, x: 60, y: 60 },
+          { type: 'rect', x: -4, y: 10, w: 10, h: 5, color: '#ff0000' },
+          { type: 'circle', cx: 8, cy: 8, radius: 4 },
+          { type: 'line', x0: 0, y0: 5, x1: 80, y1: 5 },
+          { type: 'progress', x: 0, y: 20, w: 8, h: 2, value: 1, max: 2 },
+          { type: 'sparkline', x: 2, y: 30, w: 20, h: 8, data: [1, 3, 2, 5] },
+          { type: 'bitmap', x: 0, y: 40, rows: ['1'], palette: ['#000', '#fff'] },
+          { type: 'pixels', data: [{ x: 5, y: 50, color: 'white' }] },
+        ],
+        push: false,
+      });
+      expect(result.isError).toBeFalsy();
+      const layout = layoutOf(result) as Array<Entry & { element: unknown }>;
+      expect(layout.map((e) => e.element)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(new Set(layout.map((e) => e.action))).toEqual(new Set(['none']));
+      expect(layout.some((e) => !e.fits)).toBe(true);
+      expect(resultText(result).match(/action:none/g)).toHaveLength(9);
+    });
+
+    it('tools/list advertises action as none alone, pointing at fits, and element as a number', () => {
+      const item = z.toJSONSchema(pixooComposeScene.output) as unknown as {
+        properties: { layout: { items: { properties: Record<string, Record<string, unknown>> } } };
+      };
+      const { action, element } = item.properties.layout.items.properties;
+      expect(action?.['enum']).toEqual(['none']);
+      expect(action?.['description']).toMatch(/never refit/);
+      expect(action?.['description']).toMatch(/\bfits\b/);
+      expect(element?.['type']).toBe('number');
+      expect(JSON.stringify(element)).not.toContain('background');
+    });
+
+    it('the scene renderer types its layout entries as action none, element a number', () => {
+      type SceneEntry = Awaited<ReturnType<typeof renderScene>>['layoutEntries'][number];
+      expectTypeOf<SceneEntry['action']>().toEqualTypeOf<'none'>();
+      expectTypeOf<SceneEntry['element']>().toEqualTypeOf<number>();
     });
   });
 });

@@ -17,6 +17,7 @@ import {
 } from '@cyanheads/pixoo-toolkit';
 import sharp from 'sharp';
 import { getServerConfig } from '@/config/server-config.js';
+import { ImageSourceSchema } from '@/mcp-server/tools/asset-source-schema.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
 import { FinishSchema } from '@/mcp-server/tools/finish-schema.js';
 import { finishFrames } from '@/renderer/finish.js';
@@ -78,11 +79,9 @@ export const pixooPushImage = tool('pixoo_push_image', {
   annotations: { idempotentHint: true, destructiveHint: false, openWorldHint: true },
 
   input: z.object({
-    source: z
-      .string()
-      .describe(
-        'Absolute local file path or https (not http) URL of the image to display. An animated GIF or WebP, whatever its file name, pushes as an animation.',
-      ),
+    source: ImageSourceSchema.describe(
+      'Absolute local file path or https (not http) URL of the image to display; a relative path is rejected. An animated GIF or WebP, whatever its file name, pushes as an animation.',
+    ),
     fit: z
       .enum(['contain', 'cover', 'fill'])
       .default('contain')
@@ -219,7 +218,6 @@ export const pixooPushImage = tool('pixoo_push_image', {
       throw ctx.fail(
         'invalid_color',
         `Unknown color in finish.palette: "${unknownColor}". Valid named colors: ${Object.keys(NAMED_COLORS).join(', ')}.`,
-        ctx.recoveryFor('invalid_color'),
       );
     }
 
@@ -234,7 +232,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
         throw ctx.fail(
           'asset_not_found',
           `Image file not found or unreadable: "${input.source}". Verify the absolute path is correct and readable.`,
-          { path: input.source, ...ctx.recoveryFor('asset_not_found') },
+          { path: input.source },
         );
       }
     }
@@ -248,7 +246,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
       throw ctx.fail(
         'invalid_image',
         decodeFailureMessage('Image source', input.source, err),
-        { source: input.source, ...ctx.recoveryFor('invalid_image') },
+        { source: input.source },
         { cause: err },
       );
     });

@@ -204,10 +204,13 @@ describe('PixooService failure kind mapping', () => {
 
     const ctx = createMockContext();
     const canvas = new Canvas(64);
-    await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
+    const error = await svc.pushFrame(canvas, ctx).catch((err: unknown) => err);
+    expect(error).toMatchObject({
       code: JsonRpcErrorCode.ServiceUnavailable,
-      data: { reason: 'device_http_error', retryable, recovery: { hint: expect.any(String) } },
+      data: { reason: 'device_http_error', retryable },
     });
+    // The calling tool's declared recovery is filled in at the handler boundary.
+    expect((error as McpError).data).not.toHaveProperty('recovery');
   });
 
   it('pushAnimation maps a failure through the same contract as pushFrame', async () => {

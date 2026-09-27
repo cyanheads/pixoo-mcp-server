@@ -53,8 +53,8 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 ### `pixoo_display_text` <sub>tool</sub>
 
 - `text` as a string or an array of lines; `theme` (`midnight`, `ember`, `claude`, `ice`, `neon`, `forest`, `mono`) sets the background and default palette. `style` takes a `palette` ramp (`ember`, `ice`, `neon`, `fire`, `lavender`, `claude`, `mono`) or a custom `{ from, to }`, plus `shadow`, `outline`, and `scale` 1–8; `position` is semantic or in pixels, and `align` lines up multi-line text
-- `font`: `standard` (5×7) and `compact` (3×5) draw printable ASCII plus `° ← ↑ → ↓ ▲ ▼ ♥ · …`; `numerals` is an 11×18 digit face for clocks and readouts that draws 0–9, space, and `: . - + / % ° ?`, and text holding any other character fails validation, naming those characters
-- `layout[]` reports every fit decision as an `action` (`none`, `shrunk-to-compact`, or `scrolling`), the `font` used, and whether each line's box `fits` on the panel; a scrolling line's box starts at x 0, where its static frame draws it. Single-line text falls back from the standard to the compact font unless `font` is set — never to `numerals` — and text still too wide only scrolls under `effect: "auto"` or `"scroll"`
+- `font`: `standard` (5×7) and `compact` (3×5) draw printable ASCII plus `° ← ↑ → ↓ ▲ ▼ ♥ · …`, and any other character (`€`, `’`, a newline inside one string) as `?`, named with its code point and line index in the response `notice`; `numerals` is an 11×18 digit face for clocks and readouts that draws 0–9, space, and `: . - + / % ° ?`, and text holding any other character fails validation, naming those characters
+- `layout[]` reports every fit decision as an `action` (`shrunk-to-compact` when the text fits only in the compact font, `scrolling` when the returned frames scroll, `none` otherwise), the `font` used, and whether each line's box `fits` on the panel; a single line too wide for the panel starts at x 0, cut at the right edge when it does not scroll. Single-line text falls back from the standard to the compact font unless `font` is set — never to `numerals` — and text still too wide only scrolls under `effect: "auto"` or `"scroll"`
 - `effect`: `scroll` makes one pass in up to 40 frames, `auto` scrolls only on overflow, and `float` and `pulse` loop over 20 frames; `frames` reports the count, and the animation pushes as one device animation
 
 ---
@@ -63,8 +63,8 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 
 - Up to 50 `elements` drawn back-to-front: `text` (in the same three fonts as `pixoo_display_text`), `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image` (absolute path or https URL, with the same `finish` as `pixoo_push_image`), `sprite` (absolute path). The `background` is a solid color, a `v` / `h` / `r` gradient, or a `theme`
 - Every element takes `opacity` (each pixel lands at its own alpha × `opacity`, so soft edges fade evenly) and `blend`: `normal`, `add` (glows and light beams), `screen`, or `multiply`. `line` and outline `circle` take `strokeWidth` and `antialias`, and a `rect` border takes `strokeWidth`, growing inward; either field on a shape that draws no stroke fails validation, naming it
-- Returns `layout[]`: each element's placed box — for a wide or anti-aliased stroke, every pixel it draws — and whether it `fits` on the panel. An absolute `output` path saves the first frame as a PNG in place of the `PIXOO_OUTPUT_DIR` auto-save. Typed failures: `asset_not_found`, `invalid_image` (an image or sprite that was read but does not decode), `invalid_color`, `unknown_icon`, `invalid_output_path`
-- Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–40, `speed` 10–2000 ms per frame (default 150). An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
+- Returns `layout[]`: each element's placed box — for a wide or anti-aliased stroke, every pixel it draws — and whether it `fits` on the panel. Elements are placed as given and never refit, so `action` is always `none`. An absolute `output` path saves the first frame as a PNG in place of the `PIXOO_OUTPUT_DIR` auto-save. Typed failures: `asset_not_found`, `invalid_image` (an image or sprite that was read but does not decode), `invalid_color`, `unknown_icon`, `invalid_output_path`
+- Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–40, `speed` 10–2000 ms per frame (default 150). An element takes `effect` or `animate`, not both. An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
 
 ---
 
@@ -144,7 +144,7 @@ Pixoo-specific:
 Agent-friendly output:
 
 - Preview on every render: `pixoo_display_text`, `pixoo_compose_scene`, and `pixoo_push_image` return the frame as an 8× upscaled PNG image block, pushed or not, so `push: false` checks a design with no device attached. Animations preview as a grid of every frame, since GIF display varies across MCP clients; the GIF itself is saved to `PIXOO_OUTPUT_DIR` when set
-- Layout transparency: `layout[]` reports every renderer decision (font fallback, truncation, scrolling, clipping) so agents can refine a design
+- Layout transparency: `layout[]` reports every renderer decision (font fallback, scrolling, and whether each box fits on the panel) so agents can refine a design
 - Device truth: `pushed` reflects the device ACK, and the `deviceState` read back after a push comes with a notice naming the fix when the render won't be visible (screen off, brightness ≤ 10, off the custom channel)
 - Renders survive failed pushes: the typed error (`device_unreachable`, `device_http_error`, `device_rejected`, `no_device_configured`) carries `outputFiles` pointing at the saved preview (the `PIXOO_OUTPUT_DIR` copy, or a temp file when that is unset)
 
@@ -252,7 +252,7 @@ cp .env.example .env
 |:---|:---|:---|
 | `PIXOO_IP` | Device IP on the local network. **Required** for pushes, overlays, and device control; discovery, design briefs, and `push: false` renders work without it. | — |
 | `PIXOO_SIZE` | Display size in pixels: `16`, `32`, or `64`. | `64` |
-| `PIXOO_OUTPUT_DIR` | Directory where render tools save preview PNG and GIF files. Unset, previews are returned only in the response. | — |
+| `PIXOO_OUTPUT_DIR` | Directory where render tools save preview PNG and GIF files. A relative path resolves against the directory the server was launched from, so the saved paths it reports are absolute. Unset, previews are returned only in the response. | — |
 | `PIXOO_PUSH_MIN_INTERVAL_MS` | Minimum gap between device pushes, in ms. | `1000` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |

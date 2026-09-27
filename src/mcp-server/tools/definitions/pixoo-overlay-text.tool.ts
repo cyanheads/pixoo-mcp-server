@@ -138,7 +138,6 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       if (!result.ok) {
         const { reason, retryable } = classifyDeviceFailure(result);
         throw ctx.fail(reason, `Clear overlay failed (${result.kind}): ${result.message}`, {
-          ...ctx.recoveryFor(reason),
           ...(retryable !== undefined && { retryable }),
         });
       }
@@ -179,7 +178,6 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       throw ctx.fail(
         'invalid_color',
         `Invalid color "${input.color ?? '#ffffff'}": ${err instanceof Error ? err.message : String(err)}`,
-        ctx.recoveryFor('invalid_color'),
       );
     }
 
@@ -201,7 +199,6 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
     if (!result.ok) {
       const { reason, retryable } = classifyDeviceFailure(result);
       throw ctx.fail(reason, `Set overlay failed (${result.kind}): ${result.message}`, {
-        ...ctx.recoveryFor(reason),
         ...(retryable !== undefined && { retryable }),
       });
     }

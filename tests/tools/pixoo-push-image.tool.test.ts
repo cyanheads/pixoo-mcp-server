@@ -159,6 +159,110 @@ describe('pixooPushImage', () => {
     }
   });
 
+  describe('a source that is neither an absolute path nor a URL fails input validation', () => {
+    const SOURCE_ERROR =
+      'source: Must be an absolute local path or an https URL, not a relative path, a ~ path, or a file:// URL.';
+
+    /** A working directory holding art.png at each spelling a relative source could reach. */
+    let cwd: string;
+    let previousCwd: string;
+
+    beforeAll(async () => {
+      cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-push-relative-'));
+      const art = new Canvas(64).clear([0, 128, 255]);
+      for (const rel of ['art.png', '~/art.png', 'file:/tmp/art.png', 'x/art.png']) {
+        await fs.mkdir(path.dirname(path.join(cwd, rel)), { recursive: true });
+        await savePng(art, path.join(cwd, rel));
+      }
+    });
+
+    afterAll(async () => {
+      await fs.rm(cwd, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+      previousCwd = process.cwd();
+      process.chdir(cwd);
+    });
+
+    afterEach(() => {
+      process.chdir(previousCwd);
+    });
+
+    it.each(['art.png', './art.png', '~/art.png', 'file:///tmp/art.png', ''])(
+      'source %j fails -32602 invalid_arguments naming source, with the file in the working directory',
+      async (source) => {
+        const client = stubDeviceState();
+        const handler = vi.spyOn(pixooPushImage, 'handler');
+        const result = await runToolContract(pixooPushImage, { source, push: true });
+
+        expect(result.isError).toBe(true);
+        expect(JsonRpcErrorCode.InvalidParams).toBe(-32602);
+        expect(result.structuredContent).toMatchObject({
+          error: {
+            code: -32602,
+            data: { reason: 'invalid_arguments', recovery: { hint: SOURCE_ERROR } },
+          },
+        });
+        expect(resultText(result)).toContain(SOURCE_ERROR);
+        expect(result.content.some((block) => block.type === 'image')).toBe(false);
+        expect(handler).not.toHaveBeenCalled();
+        expect(client.push).not.toHaveBeenCalled();
+      },
+    );
+
+    it('an absolute path renders, a non-normalized one included', async () => {
+      const normalized = path.join(cwd, 'x', 'art.png');
+      for (const source of [normalized, `${cwd}/x/../x/art.png`]) {
+        const result = await runToolContract(pixooPushImage, { source, push: false });
+        expect(result.isError).toBeFalsy();
+        expect(result.structuredContent).toMatchObject({ pushed: false, frames: 1 });
+        expect(result.content.filter((block) => block.type === 'image')).toHaveLength(1);
+      }
+    });
+
+    it('an http source passes validation and still fails as asset_not_found', async () => {
+      const source = 'http://images.test/art.png';
+      const message = `Only https URLs are supported. Received: "${source}".`;
+      const result = await runToolContract(pixooPushImage, { source, push: false });
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: JsonRpcErrorCode.NotFound,
+          message,
+          data: { reason: 'asset_not_found', url: source },
+        },
+      });
+      expect(resultText(result)).toContain(message);
+      expectForwardedRecovery(result, pixooPushImage.errors, 'asset_not_found');
+    });
+
+    it('an https source with an uppercase scheme renders like its lowercase spelling', async () => {
+      const png = new Uint8Array(await fs.readFile(fixturePath));
+      const http = createFetchMock([
+        {
+          match: (request) => request.url === 'https://images.test/art.png',
+          respond: () => new Response(png),
+        },
+      ]);
+      http.install();
+      try {
+        const upper = await runToolContract(pixooPushImage, {
+          source: 'HTTPS://images.test/art.png',
+          push: false,
+        });
+        const lower = await runToolContract(pixooPushImage, {
+          source: 'https://images.test/art.png',
+          push: false,
+        });
+        expect(upper.isError).toBeFalsy();
+        expect(upper.content).toEqual(lower.content);
+        expect(http.calls).toHaveLength(2);
+      } finally {
+        http.restore();
+      }
+    });
+  });
+
   describe('device failures on push reach both surfaces through the contract', () => {
     it('device_unreachable carries retryable: true', async () => {
       failDevicePush({ ok: false, kind: 'network', message: 'connect EHOSTUNREACH' });

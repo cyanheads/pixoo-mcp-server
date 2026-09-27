@@ -17,7 +17,7 @@ At typical viewing distance for a 64×64 LED display:
 - **Font choices:**
   - Standard (5×7): default for all text. Readable at 1× scale. Excellent at 2× (14px tall = chunky block letters)
   - Compact (3×5): secondary text, captions, labels when space is tight
-  - Standard and compact both draw printable ASCII plus \`° ← ↑ → ↓ ▲ ▼ ♥ · …\` for units, trends, and separators
+  - Standard and compact both draw printable ASCII plus \`° ← ↑ → ↓ ▲ ▼ ♥ · …\` for units, trends, and separators. Any other character (\`€\`, \`×\`, \`’\`, \`—\`, a newline inside one string, the invisible U+FE0F after \`♥\`) draws as \`?\`, and the response notice names it with its code point and element index
   - Numerals (11×18): clocks and hero readouts. Draws 0–9, space, and \`: . - + / % ° ?\` only, each digit on one 13px advance so a changing value keeps its width. Auto-fit never picks it; text holding any other character is rejected, so units and labels go in their own standard or compact text element
   - Scale ≥2: decorative or hero use only — verify fit before pushing
 

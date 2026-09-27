@@ -36,13 +36,13 @@ export const FONT_FACES: Record<FontVariant, BitmapFont> = {
 };
 
 /**
- * The characters of `text` the numerals face has no glyph for, each once, in order of
- * first appearance. The face would draw every one of them as its `?`.
+ * The characters of `text` that `face` has no glyph for, each once, in order of first
+ * appearance. The face draws every one of them as its `?`.
  */
-export function missingNumeralGlyphs(text: string): string[] {
+export function missingGlyphs(text: string, face: BitmapFont): string[] {
   const missing = new Set<string>();
   for (const ch of text) {
-    if (!Object.hasOwn(FONT_DIGITS_11x18.glyphs, ch)) missing.add(ch);
+    if (!Object.hasOwn(face.glyphs, ch)) missing.add(ch);
   }
   return [...missing];
 }
@@ -51,6 +51,32 @@ export function missingNumeralGlyphs(text: string): string[] {
 export function describeMissingNumerals(missing: string[]): string {
   const named = missing.map((ch) => JSON.stringify(ch)).join(', ');
   return `Characters not in the numerals font: ${named}. It draws 0–9, space, and : . - + / % ° ? only.`;
+}
+
+/** One character quoted, then its code point — `"€" (U+20AC)` — so an invisible one is identifiable. */
+function nameCharacter(ch: string): string {
+  const codePoint = (ch.codePointAt(0) as number).toString(16).toUpperCase().padStart(4, '0');
+  return `${JSON.stringify(ch)} (U+${codePoint})`;
+}
+
+/**
+ * The notice naming the characters in `texts` that the standard and compact faces draw
+ * as `?`, grouped by element index, each once per element in order of first appearance;
+ * undefined when every character has a glyph. The two faces share one glyph set, so one
+ * check covers both. Numerals text never reaches here with a character outside its face,
+ * and every numerals glyph is also in that set.
+ */
+export function fallbackGlyphNotice(
+  texts: ReadonlyArray<{ element: number; text: string }>,
+): string | undefined {
+  const groups = texts.flatMap(({ element, text }) => {
+    const missing = missingGlyphs(text, FONT_FACES.standard);
+    return missing.length > 0
+      ? [`element ${element} ${missing.map(nameCharacter).join(', ')}`]
+      : [];
+  });
+  if (groups.length === 0) return;
+  return `Not in the standard and compact fonts, so drawn as "?": ${groups.join('; ')}. Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only.`;
 }
 
 /** Text style options for the styled text engine. */
@@ -67,14 +93,11 @@ export interface TextStyle {
   shadow?: boolean;
 }
 
-/** Overflow/fit mode for text rendering. */
-export type OverflowMode = 'auto' | 'shrink' | 'scroll' | 'wrap' | 'truncate';
-
 /** Layout report entry. */
 export interface LayoutEntry {
-  action: 'none' | 'shrunk-to-compact' | 'scrolling' | 'wrapped' | 'truncated' | 'clipped';
+  action: 'none' | 'shrunk-to-compact' | 'scrolling';
   box: { x: number; y: number; w: number; h: number };
-  element: number | 'background';
+  element: number;
   fits: boolean;
   font?: FontVariant;
   scale?: number;
@@ -238,12 +261,13 @@ export function drawStyledText(
 }
 
 /**
- * Render text with auto-fit logic: tries standard → compact → scroll. Auto-fit never
- * picks `numerals`; only a `fixedFont` does.
+ * Render text with auto-fit logic: text too wide in the standard font falls back to
+ * compact when compact fits. Auto-fit never picks `numerals`; only a `fixedFont` does.
  * A `fixedFont` pins the variant: the compact fallback is skipped, so text that
- * overflows in it takes the overflow action in that font.
+ * overflows in it overflows in that font. Scrolling is the caller's decision, so the
+ * entry's `action` is `none` or `shrunk-to-compact`.
  * Returns the layout entry describing what was done: `fits` holds when the placed box
- * lies wholly on the canvas, whatever the overflow action.
+ * lies wholly on the canvas.
  */
 export function renderAutoFitText(
   canvas: Canvas,
@@ -253,10 +277,7 @@ export function renderAutoFitText(
   dx: number,
   dy: number,
   style: TextStyle,
-  overflow: OverflowMode,
-  elementIdx: number | 'background',
-  frameIdx: number,
-  _totalFrames: number,
+  elementIdx: number,
   fixedFont?: FontVariant,
 ): LayoutEntry {
   const size = canvas.width;
@@ -264,18 +285,11 @@ export function renderAutoFitText(
   let fontVariant: FontVariant = fixedFont ?? 'standard';
   let action: LayoutEntry['action'] = 'none';
 
-  let fitsWidth = measureText(text, { font: FONT_FACES[fontVariant], scale }) <= size;
-
-  if (!fitsWidth && !fixedFont && (overflow === 'auto' || overflow === 'shrink')) {
-    if (measureText(text, { font: FONT_FACES.compact, scale }) <= size) {
-      fontVariant = 'compact';
-      action = 'shrunk-to-compact';
-      fitsWidth = true;
-    }
+  const fitsWidth = measureText(text, { font: FONT_FACES[fontVariant], scale }) <= size;
+  if (!fitsWidth && !fixedFont && measureText(text, { font: FONT_FACES.compact, scale }) <= size) {
+    fontVariant = 'compact';
+    action = 'shrunk-to-compact';
   }
-
-  if (!fitsWidth && (overflow === 'auto' || overflow === 'scroll')) action = 'scrolling';
-  if (!fitsWidth && overflow === 'truncate') action = 'truncated';
 
   const usedFont = FONT_FACES[fontVariant];
   const finalWidth = measureText(text, { font: usedFont, scale });
@@ -284,13 +298,7 @@ export function renderAutoFitText(
   const resolvedX = resolveX(px, finalWidth, size, dx);
   const resolvedY = resolveY(py, finalHeight, size, dy);
 
-  // For scrolling, apply frame-based dx
-  let renderX = resolvedX;
-  if (action === 'scrolling') {
-    renderX = size - ((frameIdx * SCROLL_STEP_PX) % (finalWidth + size));
-  }
-
-  drawStyledText(canvas, text, renderX, resolvedY, style, fontVariant);
+  drawStyledText(canvas, text, resolvedX, resolvedY, style, fontVariant);
 
   const box = { x: resolvedX, y: resolvedY, w: finalWidth, h: finalHeight };
   return {

@@ -39,6 +39,7 @@ import {
   renderFrame,
   renderScene,
   type SceneElement,
+  type SceneLayoutEntry,
   type SparklineElement,
   type SpriteElement,
   type TextElement,
@@ -186,7 +187,7 @@ describe('applyBackground', () => {
 describe('renderElement — rect', () => {
   it('solid rect paints pixels in the declared region', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: RectElement = { type: 'rect', x: 0, y: 0, w: 10, h: 5, color: '#00ff00' };
     renderElement(canvas, el, 0, 0, 1, emptyCache(), entries);
 
@@ -205,7 +206,7 @@ describe('renderElement — rect', () => {
 
   it('gradient rect produces different colors at opposing corners', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: RectElement = {
       type: 'rect',
       x: 0,
@@ -235,7 +236,7 @@ describe('renderElement — sparkline', () => {
   function sparkline(el: Omit<SparklineElement, 'type'>) {
     const canvas = new Canvas(64);
     canvas.clear([0, 0, 0]);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     renderElement(canvas, { type: 'sparkline', ...el }, 0, 0, 1, emptyCache(), entries);
     return { canvas, box: entries[0]!.box };
   }
@@ -308,7 +309,7 @@ describe('renderElement — sparkline', () => {
 
 describe('renderElement — icon', () => {
   it.each(ICON_NAMES)('registered icon "%s" renders and reports its box', (name) => {
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     renderElement(
       new Canvas(64),
       { type: 'icon', name, x: 3, y: 5, w: 16, h: 16 },
@@ -1332,7 +1333,7 @@ describe('renderScene — twinkle', () => {
 describe('renderElement — text', () => {
   it('text element produces a layout entry with correct type', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: TextElement = { type: 'text', text: 'AB', x: 0, y: 0 };
     renderElement(canvas, el, 0, 0, 1, emptyCache(), entries);
 
@@ -1344,7 +1345,7 @@ describe('renderElement — text', () => {
 
   it('text with scale:2 reports height = font.height * 2', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: TextElement = { type: 'text', text: 'X', x: 0, y: 0, style: { scale: 2 } };
     renderElement(canvas, el, 0, 0, 1, emptyCache(), entries);
     // Standard font height is 7; scale 2 → 14
@@ -1353,7 +1354,7 @@ describe('renderElement — text', () => {
 
   it('font numerals draws in the 11×18 face and reports numerals', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: TextElement = { type: 'text', text: '12:45', font: 'numerals', x: 2, y: 40 };
     renderElement(canvas, el, 0, 0, 1, emptyCache(), entries);
     expect(entries).toEqual([
@@ -1373,7 +1374,7 @@ describe('renderElement — text', () => {
   });
 
   it('a numerals element 18 px tall at y 50 runs off the bottom — fits: false', () => {
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: TextElement = { type: 'text', text: '1', font: 'numerals', x: 0, y: 50 };
     renderElement(new Canvas(64), el, 0, 0, 1, emptyCache(), entries);
     expect(entries[0]).toMatchObject({ box: { y: 50, h: 18 }, fits: false });
@@ -1385,7 +1386,7 @@ describe('renderElement — text', () => {
 describe('renderElement — progress', () => {
   it('progress bar renders fill and reports layout entry', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: ProgressElement = {
       type: 'progress',
       x: 0,
@@ -1407,7 +1408,7 @@ describe('renderElement — progress', () => {
 
   it('opacity < 100 blends the element (pixel alpha is between 0 and full)', () => {
     const canvas = new Canvas(64);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     const el: ProgressElement & { opacity: number } = {
       type: 'progress',
       x: 0,
@@ -1674,7 +1675,7 @@ describe('renderElement — stroke width and anti-aliasing', () => {
   function stroke(el: SceneElement, frame = 0, frames = 1) {
     const canvas = new Canvas(64);
     canvas.clear(BLACK);
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     renderElement(canvas, el, 0, frame, frames, emptyCache(), entries);
     return { canvas, entry: entries[0]! };
   }
@@ -1897,20 +1898,6 @@ describe('preloadAssets — local paths', () => {
     expect(sprite).toMatchObject({ cols: 4, rows: 4 });
   });
 
-  const ASSET_HINT = 'Point every asset at a readable local file and retry the scene.';
-  /** A context carrying a calling tool's contract, so the declared recovery resolves. */
-  const ctxWithContract = () =>
-    createMockContext({
-      errors: [
-        {
-          reason: 'asset_not_found',
-          code: JsonRpcErrorCode.NotFound,
-          when: 'The asset could not be read.',
-          recovery: ASSET_HINT,
-        },
-      ],
-    });
-
   it.each([
     [
       'image',
@@ -1923,19 +1910,15 @@ describe('preloadAssets — local paths', () => {
       (missing: string): SpriteElement => ({ type: 'sprite', path: missing, cols: 4, rows: 4 }),
     ],
   ])(
-    'a missing local %s path fails as asset_not_found with the declared recovery',
+    'a missing local %s path fails as asset_not_found, leaving the recovery to the calling tool',
     async (_kind, label, build) => {
       const missing = path.join(fixtureDir, 'does-not-exist.png');
-      const err = await preloadAssets([build(missing)], ctxWithContract(), 64).then(
+      const err = await preloadAssets([build(missing)], createMockContext(), 64).then(
         () => expect.fail('preloadAssets resolved'),
         (e: unknown) => e as { code: number; message: string; data: object },
       );
       expect(err.code).toBe(JsonRpcErrorCode.NotFound);
-      expect(err.data).toEqual({
-        reason: 'asset_not_found',
-        path: missing,
-        recovery: { hint: ASSET_HINT },
-      });
+      expect(err.data).toEqual({ reason: 'asset_not_found', path: missing });
       expect(err.message).toBe(`${label} not found or unreadable: "${missing}".`);
     },
   );
@@ -1948,18 +1931,14 @@ describe('preloadAssets — local paths', () => {
       try {
         const err = await preloadAssets(
           [{ type: 'sprite', path: url, cols: 2, rows: 1 }],
-          ctxWithContract(),
+          createMockContext(),
           64,
         ).then(
           () => expect.fail('preloadAssets resolved'),
           (e: unknown) => e as { code: number; message: string; data: object },
         );
         expect(err.code).toBe(JsonRpcErrorCode.NotFound);
-        expect(err.data).toEqual({
-          reason: 'asset_not_found',
-          path: url,
-          recovery: { hint: ASSET_HINT },
-        });
+        expect(err.data).toEqual({ reason: 'asset_not_found', path: url });
         expect(err.message).toBe(
           `Sprite sheet path "${url}" is a URL; sprite sheets take an absolute local path.`,
         );
@@ -1989,20 +1968,6 @@ describe('preloadAssets — local paths', () => {
 // ─── preloadAssets — sources that do not decode ───────────────────────────────
 
 describe('preloadAssets — sources that do not decode', () => {
-  const HINT = 'Point the source at a complete image and retry the scene.';
-  /** A context carrying a calling tool's contract, so the declared recovery resolves. */
-  const ctxWithContract = () =>
-    createMockContext({
-      errors: [
-        {
-          reason: 'invalid_image',
-          code: JsonRpcErrorCode.InvalidParams,
-          when: 'The source did not decode.',
-          recovery: HINT,
-        },
-      ],
-    });
-
   let sources: ImageSources;
 
   beforeAll(async () => {
@@ -2023,7 +1988,7 @@ describe('preloadAssets — sources that do not decode', () => {
       TRUNCATED_JPEG_REASON,
     ],
   ] as const)(
-    '%s fails as invalid_image with the declared recovery',
+    '%s fails as invalid_image, leaving the recovery to the calling tool',
     async (_label, type, name, via, decoderReason) => {
       const value = sources[name][via];
       const [element, field, label]: [SceneElement, string, string] =
@@ -2032,17 +1997,13 @@ describe('preloadAssets — sources that do not decode', () => {
           : [{ type, path: value, cols: 4, rows: 4 }, 'path', 'Sprite sheet'];
 
       const err = await withServedSources(sources, () =>
-        preloadAssets([element], ctxWithContract(), 64).then(
+        preloadAssets([element], createMockContext(), 64).then(
           () => expect.fail('preloadAssets resolved'),
           (e: unknown) => e as { code: number; message: string; data: object },
         ),
       );
       expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
-      expect(err.data).toEqual({
-        reason: 'invalid_image',
-        [field]: value,
-        recovery: { hint: HINT },
-      });
+      expect(err.data).toEqual({ reason: 'invalid_image', [field]: value });
       expect(err.message.startsWith(`${label} "${value}" could not be decoded: `)).toBe(true);
       expectNamesOnly(err.message, value, decoderReason);
     },
@@ -2057,7 +2018,7 @@ describe('preloadAssets — sources that do not decode', () => {
           { type: 'sprite', path: redPngPath, cols: 2, rows: 2 },
           { type: 'sprite', path: bad, cols: 2, rows: 2 },
         ],
-        ctxWithContract(),
+        createMockContext(),
         64,
       ),
     ).rejects.toMatchObject({ data: { reason: 'invalid_image', path: bad } });
@@ -2070,7 +2031,7 @@ describe('preloadAssets — sources that do not decode', () => {
         { type: 'sprite', path: sources.png.file, cols: 3, rows: 3 },
         { type: 'sprite', path: sources.png.file, cols: 2, rows: 2 },
       ],
-      ctxWithContract(),
+      createMockContext(),
       64,
     );
     // Sheets decode in parallel, so the cache fills in completion order.
@@ -2134,19 +2095,6 @@ describe('preloadAssets — remote image cancellation', () => {
 // ─── preloadAssets — assets shared across elements ────────────────────────────
 
 describe('preloadAssets — an asset shared across elements loads once', () => {
-  const INVALID_IMAGE_HINT = 'Point the source at a complete image and retry the scene.';
-  const ctxWithContract = () =>
-    createMockContext({
-      errors: [
-        {
-          reason: 'invalid_image',
-          code: JsonRpcErrorCode.InvalidParams,
-          when: 'The source did not decode.',
-          recovery: INVALID_IMAGE_HINT,
-        },
-      ],
-    });
-
   let sources: ImageSources;
 
   beforeAll(async () => {
@@ -2319,7 +2267,7 @@ describe('preloadAssets — an asset shared across elements loads once', () => {
       expect(
         preloadAssets(
           [{ type: 'image', source: redPngPath }, sheet(0), sheet(20), sheet(40)],
-          ctxWithContract(),
+          createMockContext(),
           64,
         ),
       ).rejects.toMatchObject({
@@ -2342,7 +2290,7 @@ describe('preloadAssets — an asset shared across elements loads once', () => {
     });
     let err: { code: number; message: string; data: object } | undefined;
     const unhandled = await unhandledDuring(async () => {
-      err = await preloadAssets([sheet(0), sheet(20), sheet(40)], ctxWithContract(), 64).then(
+      err = await preloadAssets([sheet(0), sheet(20), sheet(40)], createMockContext(), 64).then(
         () => expect.fail('preloadAssets resolved'),
         (e: unknown) => e as { code: number; message: string; data: object },
       );
@@ -2350,11 +2298,7 @@ describe('preloadAssets — an asset shared across elements loads once', () => {
     expect(unhandled).toEqual([]);
     expect(vi.mocked(downsampleSprite)).toHaveBeenCalledTimes(1);
     expect(err?.code).toBe(JsonRpcErrorCode.InvalidParams);
-    expect(err?.data).toEqual({
-      reason: 'invalid_image',
-      path: bad,
-      recovery: { hint: INVALID_IMAGE_HINT },
-    });
+    expect(err?.data).toEqual({ reason: 'invalid_image', path: bad });
     expectNamesOnly(err?.message ?? '', bad, NOT_IMAGE_REASON);
   });
 
@@ -2386,7 +2330,7 @@ describe('preloadAssets — an asset shared across elements loads once', () => {
       http.install();
       try {
         const unhandled = await unhandledDuring(() =>
-          expect(preloadAssets(elements, ctxWithContract(), 64)).rejects.toMatchObject({
+          expect(preloadAssets(elements, createMockContext(), 64)).rejects.toMatchObject({
             data: { reason },
           }),
         );
@@ -2438,7 +2382,7 @@ describe('layout report', () => {
 
   /** The layout entry one element reports on a 64px canvas. */
   function entryFor(el: SceneElement): LayoutEntry {
-    const entries: LayoutEntry[] = [];
+    const entries: SceneLayoutEntry[] = [];
     renderElement(new Canvas(64), el, 0, 0, 1, emptyCache(), entries);
     expect(entries).toHaveLength(1);
     return entries[0]!;

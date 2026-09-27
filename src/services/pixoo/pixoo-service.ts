@@ -72,34 +72,21 @@ export function classifyDeviceFailure(fail: PixooFailure): {
   }
 }
 
-/** Map a PixooResult failure to the appropriate MCP error. */
+/**
+ * Map a PixooResult failure to the appropriate MCP error. The throw carries the reason
+ * and retryability; the framework fills in the calling tool's declared recovery.
+ */
 function mapFailure(fail: PixooFailure): never {
   const { reason, retryable } = classifyDeviceFailure(fail);
   switch (reason) {
     case 'device_unreachable':
-      throw serviceUnavailable(`Device unreachable: ${fail.message}`, {
-        reason,
-        retryable,
-        recovery: {
-          hint: 'Check the device is powered on and on the same network. Retry in a few seconds.',
-        },
-      });
+      throw serviceUnavailable(`Device unreachable: ${fail.message}`, { reason, retryable });
     case 'device_http_error':
-      throw serviceUnavailable(`Device HTTP error: ${fail.message}`, {
-        reason,
-        retryable,
-        recovery: {
-          hint: 'The device may be busy or rebooting; wait a few seconds and retry. If it persists, run pixoo_discover_devices to confirm PIXOO_IP points at the Pixoo.',
-        },
-      });
+      throw serviceUnavailable(`Device HTTP error: ${fail.message}`, { reason, retryable });
     case 'device_rejected':
       throw serviceUnavailable(
         `Device rejected command (error_code ${fail.deviceCode ?? '?'}): ${fail.message}`,
-        {
-          reason,
-          deviceCode: fail.deviceCode,
-          recovery: { hint: 'Note the device error code and check the Pixoo documentation.' },
-        },
+        { reason, deviceCode: fail.deviceCode },
       );
   }
 }
@@ -116,12 +103,7 @@ export class PixooService {
       if (!cfg.pixooIp) {
         throw invalidParams(
           'No device configured — PIXOO_IP is not set. Run pixoo_discover_devices to find your device IP.',
-          {
-            reason: 'no_device_configured',
-            recovery: {
-              hint: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
-            },
-          },
+          { reason: 'no_device_configured' },
         );
       }
       this.client = new PixooClient(cfg.pixooIp, {
@@ -300,13 +282,7 @@ export class PixooService {
     } catch {
       throw serviceUnavailable(
         'Divoom cloud discovery endpoint unreachable — check internet connectivity.',
-        {
-          reason: 'discovery_failed',
-          retryable: true,
-          recovery: {
-            hint: 'Ensure this server has internet access for the Divoom discovery endpoint, or set PIXOO_IP manually.',
-          },
-        },
+        { reason: 'discovery_failed', retryable: true },
       );
     }
   }

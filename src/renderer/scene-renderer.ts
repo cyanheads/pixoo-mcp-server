@@ -45,11 +45,16 @@ import {
 } from './text-engine.js';
 import { type GradientStop, PALETTES, type PaletteName, THEMES, type ThemeName } from './themes.js';
 
-/** Background specification. */
+/**
+ * Background specification: a solid color string, or an object holding exactly one of
+ * `gradient` or `theme` (the compose tool's input schema enforces the exactly-one rule).
+ */
 export type BackgroundSpec =
-  | string // solid color
-  | { gradient: { type: 'v' | 'h' | 'r'; from: string; to: string } }
-  | { theme: ThemeName };
+  | string
+  | {
+      gradient?: { type: 'v' | 'h' | 'r'; from: string; to: string } | undefined;
+      theme?: ThemeName | undefined;
+    };
 
 /** Effect specification for elements. */
 export interface EffectSpec {
@@ -242,16 +247,16 @@ function spriteKey(el: SpriteElement): string {
  * Confirm a local image or sprite-sheet path is readable before the toolkit's
  * loader reaches it — the loader fails a missing file with an unclassified error.
  *
- * @throws {McpError} NotFound with `reason: 'asset_not_found'` and the calling tool's
- *   declared recovery when the path is missing or unreadable.
+ * @throws {McpError} NotFound with `reason: 'asset_not_found'` when the path is missing
+ *   or unreadable; the framework fills in the calling tool's declared recovery.
  */
-async function assertReadableAsset(assetPath: string, label: string, ctx: Context): Promise<void> {
+async function assertReadableAsset(assetPath: string, label: string): Promise<void> {
   try {
     await fs.access(assetPath, fs.constants.R_OK);
   } catch (err) {
     throw notFound(
       `${label} not found or unreadable: "${assetPath}".`,
-      { reason: 'asset_not_found', path: assetPath, ...ctx.recoveryFor('asset_not_found') },
+      { reason: 'asset_not_found', path: assetPath },
       { cause: err },
     );
   }
@@ -269,15 +274,15 @@ export function decodeFailureMessage(label: string, source: string, err: unknown
 
 /**
  * The error for an image source or sprite sheet that was read but did not decode — a
- * text file, an HTML page, a truncated download. Carries the calling tool's declared
- * `invalid_image` recovery.
+ * text file, an HTML page, a truncated download. The framework fills in the calling
+ * tool's declared `invalid_image` recovery.
  */
-function undecodableAsset(el: ImageElement | SpriteElement, err: unknown, ctx: Context): McpError {
+function undecodableAsset(el: ImageElement | SpriteElement, err: unknown): McpError {
   const [label, field, value] =
     el.type === 'image' ? ['Image source', 'source', el.source] : ['Sprite sheet', 'path', el.path];
   return invalidParams(
     decodeFailureMessage(label, value, err),
-    { reason: 'invalid_image', [field]: value, ...ctx.recoveryFor('invalid_image') },
+    { reason: 'invalid_image', [field]: value },
     { cause: err },
   );
 }
@@ -288,7 +293,7 @@ function undecodableAsset(el: ImageElement | SpriteElement, err: unknown, ctx: C
  */
 async function readImageSource(source: string, ctx: Context): Promise<string | Uint8Array> {
   if (isRemoteSource(source)) return fetchRemoteImageBytes(source, ctx);
-  await assertReadableAsset(source, 'Image file', ctx);
+  await assertReadableAsset(source, 'Image file');
   return source;
 }
 
@@ -296,16 +301,16 @@ async function readImageSource(source: string, ctx: Context): Promise<string | U
  * Downsample a sprite element's sheet to its grid. The sheet must be a local file;
  * a URL is refused without being fetched.
  */
-async function loadSpriteSheet(el: SpriteElement, ctx: Context): Promise<SpriteSheet> {
+async function loadSpriteSheet(el: SpriteElement): Promise<SpriteSheet> {
   if (isRemoteSource(el.path)) {
     throw notFound(
       `Sprite sheet path "${el.path}" is a URL; sprite sheets take an absolute local path.`,
-      { reason: 'asset_not_found', path: el.path, ...ctx.recoveryFor('asset_not_found') },
+      { reason: 'asset_not_found', path: el.path },
     );
   }
-  await assertReadableAsset(el.path, 'Sprite sheet', ctx);
+  await assertReadableAsset(el.path, 'Sprite sheet');
   return downsampleSprite(el.path, el.cols, el.rows).catch((err: unknown) => {
-    throw undecodableAsset(el, err, ctx);
+    throw undecodableAsset(el, err);
   });
 }
 
@@ -377,7 +382,7 @@ export async function preloadAssets(
               readImageSource(el.source, ctx),
             );
             return loadImage(image, placement).catch((err: unknown) => {
-              throw undecodableAsset(el, err, ctx);
+              throw undecodableAsset(el, err);
             });
           });
         const { finish } = el;
@@ -389,7 +394,7 @@ export async function preloadAssets(
         cache.images.set(el, canvas);
       } else if (el.type === 'sprite') {
         const key = spriteKey(el);
-        cache.sprites.set(key, await loadOnce(sheetLoads, key, () => loadSpriteSheet(el, ctx)));
+        cache.sprites.set(key, await loadOnce(sheetLoads, key, () => loadSpriteSheet(el)));
       }
     }),
   );
@@ -408,7 +413,7 @@ export function applyBackground(canvas: Canvas, bg: BackgroundSpec): void {
     return;
   }
 
-  if ('theme' in bg) {
+  if (bg.theme) {
     const theme = THEMES[bg.theme];
     if (!theme) {
       throw invalidParams(
@@ -424,7 +429,7 @@ export function applyBackground(canvas: Canvas, bg: BackgroundSpec): void {
     return;
   }
 
-  if ('gradient' in bg) {
+  if (bg.gradient) {
     const grad = bg.gradient;
     const from_ = resolveColor(grad.from);
     const to_ = resolveColor(grad.to);
@@ -495,6 +500,9 @@ function renderIconRamp(
   }
 }
 
+/** A scene element's layout entry: elements are placed as given and never refit. */
+export type SceneLayoutEntry = LayoutEntry & { action: 'none' };
+
 /**
  * The layout entry for an element drawn over `box` — its placed pixels, `dx`/`dy` included.
  * The element fits when the box lies wholly on the canvas.
@@ -504,7 +512,7 @@ function placedEntry(
   type: SceneElement['type'],
   box: LayoutEntry['box'],
   canvas: Canvas,
-): LayoutEntry {
+): SceneLayoutEntry {
   return { element, type, box, fits: boxFits(box, canvas.width, canvas.height), action: 'none' };
 }
 
@@ -605,7 +613,7 @@ export function renderElement(
   frameIdx: number,
   totalFrames: number,
   assets: AssetCache,
-  layoutEntries: LayoutEntry[],
+  layoutEntries: SceneLayoutEntry[],
 ): void {
   // Compute keyframes / effects
   const kf: KeyframeMap | undefined = el.animate
@@ -958,9 +966,9 @@ export function renderFrame(
   elements: SceneElement[],
   assets: AssetCache,
   size: 16 | 32 | 64 = 64,
-): { canvas: Canvas; layoutEntries: LayoutEntry[] } {
+): { canvas: Canvas; layoutEntries: SceneLayoutEntry[] } {
   const canvas = new Canvas(size);
-  const layoutEntries: LayoutEntry[] = [];
+  const layoutEntries: SceneLayoutEntry[] = [];
 
   applyBackground(canvas, background);
 
@@ -979,9 +987,9 @@ export async function renderScene(
   frameCount: number,
   ctx: Context,
   size: PixooSize = 64,
-): Promise<{ frames: Canvas[]; layoutEntries: LayoutEntry[] }> {
+): Promise<{ frames: Canvas[]; layoutEntries: SceneLayoutEntry[] }> {
   const assets = await preloadAssets(elements, ctx, size);
-  const allLayoutEntries: LayoutEntry[] = [];
+  const allLayoutEntries: SceneLayoutEntry[] = [];
   const frames: Canvas[] = [];
 
   for (let i = 0; i < frameCount; i++) {

@@ -21,7 +21,9 @@
         "MCP_AUTH_MODE": "none",
         "NODE_ENV": "production",
         "PIXOO_IP": "${user_config.pixoo_ip}",
-        "PIXOO_SIZE": "${user_config.pixoo_size}"
+        "PIXOO_SIZE": "${user_config.pixoo_size}",
+        "PIXOO_OUTPUT_DIR": "${user_config.pixoo_output_dir}",
+        "PIXOO_PUSH_MIN_INTERVAL_MS": "${user_config.pixoo_push_min_interval_ms}"
       }
     }
   },
@@ -44,6 +46,20 @@
       "description": "Display size in pixels: 16, 32, or 64. Must match your physical device. Defaults to 64 (Pixoo-64).",
       "required": false,
       "default": "64"
+    },
+    "pixoo_output_dir": {
+      "type": "string",
+      "title": "Preview Output Directory",
+      "description": "Directory where render tools save preview PNG and GIF files. Leave blank to return previews only in the tool response.",
+      "required": false,
+      "default": ""
+    },
+    "pixoo_push_min_interval_ms": {
+      "type": "string",
+      "title": "Minimum Push Interval (ms)",
+      "description": "Minimum gap between device pushes, in milliseconds, so rapid pushes don't freeze the device. Defaults to 1000.",
+      "required": false,
+      "default": "1000"
     }
   }
 }

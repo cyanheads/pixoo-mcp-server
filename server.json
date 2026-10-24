@@ -12,18 +12,8 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pixoo-mcp-server",
-      "runtimeHint": "bun",
+      "runtimeHint": "npx",
       "version": "1.4.0",
-      "packageArguments": [
-        {
-          "type": "positional",
-          "value": "run"
-        },
-        {
-          "type": "positional",
-          "value": "start:stdio"
-        }
-      ],
       "environmentVariables": [
         {
           "name": "PIXOO_IP",
@@ -92,19 +82,15 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pixoo-mcp-server",
-      "runtimeHint": "bun",
+      "runtimeHint": "npx",
       "version": "1.4.0",
-      "packageArguments": [
-        {
-          "type": "positional",
-          "value": "run"
-        },
-        {
-          "type": "positional",
-          "value": "start:http"
-        }
-      ],
       "environmentVariables": [
+        {
+          "name": "MCP_TRANSPORT_TYPE",
+          "description": "Selects the HTTP transport.",
+          "format": "string",
+          "value": "http"
+        },
         {
           "name": "PIXOO_IP",
           "description": "Device IP address on the local network (e.g. 192.168.1.50). Required for device tools; discovery and pure-render (push: false) work without it.",

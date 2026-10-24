@@ -342,7 +342,7 @@ const DIRECT_DEPS: ReadonlySet<string> = new Set(
   ),
 );
 
-// ── Minimal range matching (alias attribution only) ──────────────────
+// ── Minimal range matching (alias attribution, advisory ranges) ──────
 
 type VersionTriple = readonly [number, number, number];
 
@@ -549,6 +549,21 @@ function renderOutdatedTable(output: string): string {
   ].join('\n');
 }
 
+/** The version installed at the project root, i.e. the copy a direct dependency resolves to. */
+function installedRootVersion(pkg: string): string | null {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(path.join(ROOT_DIR, 'node_modules', pkg, 'package.json'), 'utf-8'),
+    );
+    return typeof manifest.version === 'string' ? manifest.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Trailing vulnerable range of an advisory line: `high: … (>=2.0.0 <2.4.0) - https://…`. */
+const ADVISORY_RANGE = /\(([^()]+)\)(?:\s+-\s+\S+)?\s*$/;
+
 /**
  * Parses `bun audit` output and classifies high/critical vulnerabilities as
  * direct (in our package.json) or upstream (transitive dependency we can't fix).
@@ -556,10 +571,15 @@ function renderOutdatedTable(output: string): string {
  * Bun audit format per vulnerability block — Bun 1.4 changed the header token
  * and the path separator, so both shapes are accepted:
  *   <package>  <version-range>        ← header, Bun <1.4 (no indent, 2+ spaces before range)
- *   <package>@<version>               ← header, Bun ≥1.4
+ *   <package>@<version>[, <version>]  ← header, Bun ≥1.4 (every installed copy)
  *     <parent> › <child> [› ...]      ← dependency path (indented; › or, Bun ≥1.4, > = transitive)
  *     (direct dependency)             ← dependency path of a direct dependency, Bun ≥1.4
- *     <severity>: <description>       ← advisory (indented)
+ *     <severity>: <description> (<vulnerable range>) - <url>   ← advisory (indented)
+ *
+ * One block covers every installed copy of a package, so a direct dependency's
+ * block also carries the advisories of an older copy a dev tool pins. The block
+ * counts as direct only when the copy installed at the root falls inside a
+ * high/critical advisory's range; an unreadable version or range counts as direct.
  *
  * Returns null if parsing yields no results (caller should fall back to default behavior).
  */
@@ -583,31 +603,39 @@ function classifyAuditVulns(output: string): { direct: string[]; upstream: strin
       const [, pkg, versionRange] = pkgMatch;
       i++;
 
-      let hasHighCritical = false;
+      const highCriticalRanges: (string | null)[] = [];
       const paths: string[] = [];
 
       // Collect indented lines belonging to this block
       while (i < lines.length && (lines[i]?.startsWith('  ') ?? false)) {
         const trimmed = (lines[i] ?? '').trim();
         if (/^(critical|high):/i.test(trimmed)) {
-          hasHighCritical = true;
+          highCriticalRanges.push(ADVISORY_RANGE.exec(trimmed)?.[1] ?? null);
         } else if (trimmed && !/^(moderate|low):/i.test(trimmed)) {
           paths.push(trimmed);
         }
         i++;
       }
 
-      if (!hasHighCritical) continue;
+      if (highCriticalRanges.length === 0) continue;
 
-      // Direct if: the vulnerable package is in our package.json, or any
-      // dependency path lacks a transitive separator — U+203A `›` (Bun <1.4)
-      // or `>` (Bun ≥1.4). Bun 1.4's literal `(direct dependency)` path has neither.
+      // A path without a transitive separator — U+203A `›` (Bun <1.4) or `>`
+      // (Bun ≥1.4) — reaches the package directly; Bun 1.4's literal
+      // `(direct dependency)` path has neither. When transitive paths share the
+      // block, only the copy installed at the root decides.
       const pkgName = pkg ?? '';
-      const isDirect = DIRECT_DEPS.has(pkgName) || paths.some((p) => !/[\u203a>]/.test(p));
+      const transitivePaths = paths.filter((p) => /[\u203a>]/.test(p));
+      let isDirect = DIRECT_DEPS.has(pkgName) || transitivePaths.length < paths.length;
+      if (isDirect && transitivePaths.length > 0) {
+        const rootVersion = installedRootVersion(pkgName);
+        isDirect =
+          rootVersion === null ||
+          highCriticalRanges.some((range) => range === null || rangeAdmits(range, rootVersion));
+      }
       if (isDirect) {
         direct.push(`${pkgName} ${versionRange}`);
       } else {
-        const via = paths[0]?.split(/\s*[\u203a>]\s*/)[0] ?? 'unknown';
+        const via = transitivePaths[0]?.split(/\s*[\u203a>]\s*/)[0] ?? 'unknown';
         upstream.push(`${pkgName} ${versionRange} (via ${via})`);
       }
     }
@@ -639,15 +667,25 @@ const ALL_CHECKS: Check[] = [
     canFix: false,
     getCommand: (ctx) => {
       if (!isGitRepo()) return null; // no repo to grep — fresh scaffold before `git init`
-      // git grep -n (line number) -E (extended regex) -i (case-insensitive)
-      const baseCmd = ['git', 'grep', '-nEi', '\\b(TODO|FIXME)\\b'];
-      // Exclude files where TODO/FIXME appears as prose or intentional stubs
+      // -w is git's own whole-word test: macOS's regex library reads `\b` in an
+      // extended regex as a literal `b`. Case-sensitive, so a lowercase `todo`
+      // variable or stop word is not a marker.
+      const baseCmd = ['git', 'grep', '-nwE', '(TODO|FIXME)'];
+      // Exclude files where TODO/FIXME appears as prose or intentional stubs:
+      // changelogs, tests, this script, and the framework's skill prose wherever
+      // the maintenance sync copies it.
       const excludes = [
         ':!CHANGELOG.md',
         ':!changelog/',
         ':!*.lock',
         ':!scripts/devcheck.ts',
         ':!tests/',
+        ':!framework-skills/',
+        ':!.claude/skills/',
+        ':!.agents/skills/',
+        ':!.codex/skills/',
+        ':!.cursor/skills/',
+        ':!.windsurf/skills/',
       ];
       if (ctx.isHuskyHook && ctx.stagedFiles.length > 0) {
         // Check only staged files in the working tree
@@ -670,28 +708,38 @@ const ALL_CHECKS: Check[] = [
     name: 'Tracked Secrets',
     flag: '--no-secrets',
     canFix: false,
-    // Check if common sensitive files are tracked by git.
+    // Check if common sensitive files are tracked by git. `:(glob)` makes `**/`
+    // match zero or more directories, so each shape is caught at the repository
+    // root too; under it `*` stops at `/`, so the two name-prefix shapes carry a
+    // `/**` twin for the files inside a directory of that name (`secrets/`,
+    // `.env.d/`).
     getCommand: () => {
       if (!isGitRepo()) return null; // no repo — `git ls-files` would exit 128, not a finding
       return [
         'git',
         'ls-files',
-        '*.env*',
-        '**/.npmrc',
-        '**/.netrc',
-        '**/credentials.json',
-        '**/*.pem',
-        '**/*.key',
-        '**/secret*',
-        '**/.htpasswd',
+        ':(glob)**/*.env*',
+        ':(glob)**/*.env*/**',
+        ':(glob)**/.npmrc',
+        ':(glob)**/.netrc',
+        ':(glob)**/credentials.json',
+        ':(glob)**/*.pem',
+        ':(glob)**/*.key',
+        ':(glob)**/secret*',
+        ':(glob)**/secret*/**',
+        ':(glob)**/.htpasswd',
       ];
     },
-    // Success if output is empty OR only contains safe patterns.
+    // Success if output is empty OR only contains safe files: `.env` templates
+    // anywhere, and GitHub's secret scanning config at the one path it reads.
     isSuccess: (result, _mode) => {
       if (result.exitCode !== 0) return false;
-      const SAFE_PATTERNS = ['.env.example', '.env.template', '.env.sample'];
+      const SAFE_SUFFIXES = ['.env.example', '.env.template', '.env.sample'];
+      const SAFE_PATHS = ['.github/secret_scanning.yml'];
       const files = result.stdout.trim().split('\n').filter(Boolean);
-      const dangerous = files.filter((f) => !SAFE_PATTERNS.some((safe) => f.endsWith(safe)));
+      const dangerous = files.filter(
+        (f) => !SAFE_PATHS.includes(f) && !SAFE_SUFFIXES.some((safe) => f.endsWith(safe)),
+      );
       return dangerous.length === 0;
     },
     tip: (c) =>
@@ -712,11 +760,12 @@ const ALL_CHECKS: Check[] = [
     // Validates env var alignment between manifest.json (MCPB bundle) and
     // server.json (MCP Registry), plus plugin marketplace manifests (#240), the
     // bundle-content guards on .mcpbignore (#343), the README version badge
-    // (#418), and the Dockerfile build platform. Runs when any of those inputs
-    // is present; skipped cleanly when none exist — consumers on an HTTP-only
-    // deploy are unaffected. README.md and Dockerfile are triggers in their own
-    // right: each check must gate a project that carries no bundle or plugin
-    // metadata at all, which the other inputs only covered incidentally.
+    // (#418), the Dockerfile build platform, and the launch shape of server.json
+    // npm entries (#622). Runs when any of those inputs is present; skipped
+    // cleanly when none exist — consumers on an HTTP-only deploy are unaffected.
+    // README.md, Dockerfile, and server.json are triggers in their own right:
+    // each check must gate a project that carries no bundle or plugin metadata
+    // at all, which the other inputs only covered incidentally.
     getCommand: () => {
       const inputs = [
         'manifest.json',
@@ -726,12 +775,13 @@ const ALL_CHECKS: Check[] = [
         '.mcpbignore',
         'README.md',
         'Dockerfile',
+        'server.json',
       ];
       if (!inputs.some((input) => existsSync(path.join(ROOT_DIR, input)))) return null;
       return ['bun', 'run', 'scripts/lint-packaging.ts'];
     },
     tip: (c) =>
-      `Align env var names between ${c.bold('manifest.json')} ${c.bold('mcp_config.env')} and ${c.bold('server.json')} stdio package ${c.bold('environmentVariables[]')}.`,
+      `Each ${c.bold('✗')} line above names the file and the change that fixes it; ${c.bold('scripts/lint-packaging.ts')} documents every check.`,
   },
   {
     name: 'Framework Antipatterns',

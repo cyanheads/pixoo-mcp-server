@@ -4,7 +4,7 @@ description: >
   Read-only audit of MCP definition language across an existing surface — tools, resources, prompts, server instructions. Walks every definition file and checks 16 categories the LLM reads to decide whether and how to call: voice & tense, internal leaks, audience leaks, defaults, recovery hints, field descriptions, cross-references, sparsity, examples, structure, mutator observability, unit-bearing numeric names, validator-enforced constraints, annotations truthfulness, single-line strings, exclusive modes in the schema — then a cross-surface pass: naming taxonomy, parameter vocabulary, tool overlap, instructions drift, length outliers. Produces grouped findings with file:line citations and a numbered options list. Use during polish, after a refactor, or before a release. Complements `field-test` (behavior testing) and `security-pass` (security audit).
 metadata:
   author: cyanheads
-  version: "1.7"
+  version: "1.9"
   audience: external
   type: audit
 ---
@@ -205,11 +205,11 @@ Field-test catches this in its leak audit; this skill is the more thorough pass.
 
 **Look in:** input schemas where two or more optional fields are alternatives rather than additions — the describes say "provide either X or Y", "ignored when Z is set", "one of".
 
-**Check:** the exclusivity is in the schema, as a `z.discriminatedUnion` on a mode literal, so each branch advertises its own `required` list and the model reads which arguments go together. A mutex that lives only in prose reaches a weaker model unreliably: it fills both, or neither, and the handler answers with a validation error for a rule the schema said nothing about.
+**Check:** exclusivity is enforced and every mode's fields reach the target client. Claude clients flatten a root `oneOf`, losing later branches; tools supporting them need a flat `z.object()`, an enum discriminator describing each mode's required fields, optional per-mode fields and handler checks. Where clients preserve union branches, a `z.discriminatedUnion` advertises each branch's `required` list.
 
-**Smell:** every field optional with a describe explaining when to omit it; a handler opening with `if (!a && !b) throw` / `if (a && b) throw`; a `mode`/`kind`/`by` enum whose value decides which *other* fields are required.
+**Smell:** alternatives described only in prose with no combination check; a union root whose later fields disappear in the target client; a discriminator that never explains which fields each mode requires. Flat per-mode fields with explicit handler checks are not a finding when required for client compatibility.
 
-**Fix:** `input: z.discriminatedUnion('mode', [...])` — see the `add-tool` skill. Not every all-optional schema qualifies: fields that genuinely compose (independent filters, pagination) stay flat.
+**Fix:** choose the compatible input shape and enforce its combinations — see `add-tool` § *Multi-mode tools*. Independent filters and pagination stay flat.
 
 ### 3. Cross-surface pass
 
@@ -219,7 +219,7 @@ The per-file walk misses drift that only shows between files. After it, sweep th
 - **Parameter vocabulary** — one name per concept everywhere: `query` vs `q`, `limit` vs `maxResults`, `nctId` vs `nct_id` on sibling tools is a finding.
 - **Tool overlap** — for any pair with adjacent scope, the two descriptions alone must answer "when X vs Y." If an agent can't pick, that's material.
 - **Instructions drift** — if the server sets `instructions`: every tool it names exists, workflow guidance reflects the current surface (new tools that belong in it, renamed or removed ones purged), and nothing contradicts a per-tool description. Shape is a finding too: two to three cohesive sentences in one string literal (no `+`-joined fragments, no one-line-per-tool inventory — the catalog already carries that), written for the calling agent only. Operator configuration (`*_BASE_URL`, API keys, ports) belongs in the README and `.env.example`, not here — the agent cannot act on it.
-- **Length outliers** — a description several times longer than its siblings (attention drag), or a one-liner that underspecifies (selection risk).
+- **Length outliers** — a description several times longer than its siblings (attention drag), or a one-liner that underspecifies (selection risk). Weigh the `output` and `enrichment` field `.describe()` prose per tool as well. It often outweighs the tool description and is loaded on every session. The usual causes are a cross-field rule restated on every field it touches, per-field narration of upstream mechanics, and a subschema emitted at several paths repeating its prose. State a shared rule once on the parent, cut narration down to what a caller needs to read the value, and guard a byte budget with a test so later edits stay under it.
 
 Cross-surface findings use the same finding format, cited at the file:line you'd change (the `instructions` string is a citable location).
 

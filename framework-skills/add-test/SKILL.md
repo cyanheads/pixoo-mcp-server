@@ -4,7 +4,7 @@ description: >
   Scaffold a test file for an existing tool, resource, or service. Use when the user asks to add tests, improve coverage, or when a definition exists without a matching test file.
 metadata:
   author: cyanheads
-  version: "1.8"
+  version: "1.10"
   audience: external
   type: reference
 ---
@@ -40,8 +40,10 @@ Read the handler and identify:
 | **`ctx.clientCapabilities`** | When the handler asks only if the client declared a capability, seed `createMockContext({ clientCapabilities })` with and without it and assert it asks in one case and falls through in the other. Seeding it also filters `inputResponses` to the declared kinds, as production does. |
 | **`ctx.signal`** | Pass `createMockContext({ signal: controller.signal })` and assert a long loop stops early rather than running to completion. |
 | **`ctx.fail` (typed contract)** | Definitions with `errors[]` need `fail` attached to the mock ctx — `createMockContext({ errors: myTool.errors })` does it for you. Assert on `data.reason` (stable per-contract entry), not just `code`. |
+| **Error recovery on both surfaces** | Use `runToolContract` with a fake I/O boundary. Assert the structured reason/hint and the text content; any candidates, IDs or field names the hint tells the caller to use must be present in text too. A hint saying “choose a listed value” is unusable if the list exists only in custom error data. |
 | **`format` function** | Test separately if defined — it's pure, no ctx needed. Verify it renders the IDs and fields the model needs, not just a count or title. For projection-style tools, test non-default field selections. |
-| **Sparse upstream payloads** | For third-party API integrations, build a fixture with omitted fields. Assert normalized output still validates and `format()` preserves unknown values instead of inventing facts. |
+| **Sparse upstream payloads** | Preserve real payload variants: omitted fields, explicit nulls, and identity flags or IDs present when display names are absent. Assert normalization uses the available evidence, output validates, and `format()` preserves unknown values instead of inventing facts. |
+| **Runtime package identity** | For a built-server handshake, compare the advertised version with `package.json`; a hardcoded release number makes every version bump fail an unrelated integration test. |
 | **Form-client payloads** | If handler has optional fields: test with empty-string inner values (form clients send `""` instead of `undefined`). Assert handler doesn't break or produce invalid output. |
 | **Auth scopes** | Not tested at handler level (framework enforces) — skip |
 
@@ -227,20 +229,20 @@ For a destructive consent gate, the second round completes only when the context
 
 ### Cancellation test
 
-```typescript
-it('respects cancellation', async () => {
-  const controller = new AbortController();
-  const ctx = createMockContext({ signal: controller.signal });
-  const input = {{TOOL_EXPORT}}.input.parse({ count: 100, delayMs: 10 });
+Pass an `AbortController` signal through `createMockContext` or `runToolContract`.
+Abort after a controlled I/O operation or loop iteration starts, then assert that
+the pending call settles and no further requests or iterations run. Use a deferred
+fixture or fake timers so the test does not depend on a wall-clock delay; restore
+timers and close any fixture resources afterward. A defined result alone does not
+prove cancellation stopped the work.
 
-  setTimeout(() => controller.abort(), 50);
-  const result = await {{TOOL_EXPORT}}.handler(input, ctx);
-
-  // Should have returned a partial result rather than throwing on cancellation.
-  // Assert on a field from the tool's actual output schema.
-  expect(result).toBeDefined();
-});
-```
+When an abort-aware handler throws after the signal fires, `runToolContract` returns
+`isError: true` with `structuredContent.error.code` equal to
+`JsonRpcErrorCode.RequestCancelled`; assert the cancellation message in `content[]`
+as well. Use schema-valid arguments: invalid arguments still return `InvalidParams`
+before the handler runs. A partial success is appropriate only when the tool's
+contract explicitly supports it; assert its actual partial-result fields, output
+schema, and `format()` content instead of requiring every handler to return one.
 
 ### Prompt test
 
@@ -310,6 +312,7 @@ When scaffolding tests for an existing handler, use the Zod schemas to generate 
 - [ ] JSDoc `@fileoverview` and `@module` header present
 - [ ] Happy path tested with valid input → expected output
 - [ ] Error paths tested (at least one `.rejects.toThrow()`)
+- [ ] Declared recovery tested through `runToolContract` on both response surfaces, including every value the hint refers to
 - [ ] `format` function tested if defined
 - [ ] `createMockContext` options match handler's ctx usage (`tenantId`, `inputResponses`, `requestState`, `clientCapabilities`, `errors`, `signal`)
 - [ ] Service re-initialized in `beforeEach` if handler depends on a service singleton

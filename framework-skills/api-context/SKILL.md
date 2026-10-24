@@ -4,7 +4,7 @@ description: >
   Canonical reference for the unified `Context` object passed to every tool and resource handler in `@cyanheads/mcp-ts-core`. Covers the full interface, its `RequestContext` base, all sub-APIs (`ctx.log`, `ctx.state`, `ctx.requestInput`, `ctx.inputs`, `ctx.clientCapabilities`, `ctx.enrich`, `ctx.content`), and when to use each.
 metadata:
   author: cyanheads
-  version: "2.9"
+  version: "2.13"
   audience: external
   type: reference
 ---
@@ -87,7 +87,7 @@ interface Context extends RequestContext {
 
 | Field | Always present | Source |
 |:------|:--------------|:-------|
-| `requestId` | Yes | The client's JSON-RPC id when it is a string, otherwise a generated `XXXXX-XXXXX` token. Every log record of the call carries it, and the framework returns it on the call's error envelope as `data.requestId` |
+| `requestId` | Yes | A generated `XXXXX-XXXXX` token, one per call — never the client's JSON-RPC id, which the call's log records carry as `jsonRpcId` instead. Every log record of the call carries it, and the framework returns it on the call's error envelope as `data.requestId`. A 2025-era `ctx.requestInput` round trip re-enters the handler under a new token; the shared `jsonRpcId` ties the entries together |
 | `timestamp` | Yes | ISO 8601, request start |
 | `tenantId` | Stdio and HTTP+`MCP_AUTH_MODE=none` (as `'default'`); JWT `tid` claim in HTTP+`jwt`/`oauth` | JWT / single-tenant default |
 | `sessionId` | HTTP `stateful` / `auto` mode; undefined for stdio and stateless HTTP unless opted in | `Mcp-Session-Id` header (or server-minted) — see [§ `ctx.sessionId`](#ctxsessionid) |
@@ -122,11 +122,11 @@ Three supported ways, most common first:
 
 ```ts
 // 1. Per-log-call metadata — the common case. Nothing lands on the context.
-ctx.log.info('Retrying upstream call', { attempt, url });
+ctx.log.info('Retrying upstream call', { attempt, endpoint: 'search' });
 
 // 2. A copy of this context carrying extra fields. `withExtra` MERGES into any
 //    bag the parent already had; a hand-written `{ ...ctx, extra: {…} }` replaces it.
-logger.warning('Retrying upstream call', withExtra(ctx, { attempt, url }));
+logger.warning('Retrying upstream call', withExtra(ctx, { attempt, endpoint: 'search' }));
 
 // 3. A derived context for a sub-operation. `additionalContext` lands on `extra`,
 //    merged over whatever the parent already carried.
@@ -154,7 +154,7 @@ Never re-open the shape to get past a type error: no index signature, no widenin
 
 Request-scoped structured logger. Every log line is automatically annotated with `requestId`, `traceId`, and `tenantId` — no manual spreading needed.
 
-**Dual-sink.** Each call writes to Pino *and* mirrors onto the MCP wire as a `notifications/message` (the framework advertises the `logging` capability, and the SDK filters by the level the client set via `logging/setLevel`). The wire payload is `{ message, ...data }`; `ctx.log.error` adds `error: <message>`. `message` and `error` are reserved wire keys, written after `data`: a `message` in `data` never replaces the log line on the wire, and on `ctx.log.error` with an `Error` the `error` key is always that error's message. The process log line still carries the caller's own fields, except one reusing a canonical name the context already sets (`requestId`, `traceId`, `spanId`, `tenantId`, …) — there the context's value wins, so the line stays correlated to its request. Delivery is fire-and-forget — a client that never upgraded to SSE, set a higher level, or already disconnected drops the notification, and a failed send never fails the handler. Treat `ctx.log` as client-visible: it is no longer a server-only sink, so don't log anything there you wouldn't put in a tool result.
+**Dual-sink.** Each call writes to Pino *and* mirrors onto the MCP wire as a `notifications/message` (the framework advertises the `logging` capability). One level check gates both sinks: `MCP_LOG_LEVEL` (or a runtime `logger.setLevel()`) is a floor for the client stream as well as the process log, compared on the RFC 5424 order, so a `notice` floor drops `info` from both. The SDK then filters by the client's own level — `logging/setLevel`, or the `io.modelcontextprotocol/logLevel` a 2026-07-28 request carries — which can only narrow the floor, never widen it. The wire payload is `{ message, ...data }` with every sensitive field masked as `[REDACTED]` at any depth: the same field list and matcher the logs are redacted with, extensible through `sanitization.setSensitiveFields`. A key is masked when some run of its adjacent words, joined, equals a sensitive name, case and separators ignored — words split at every character other than a letter or digit, at a lowercase letter followed by a capital, at the end of a run of capitals, and around each run of digits — so `API_KEY`, `x-api-key`, `accessToken`, `apiKey2`, and `tokenCount` are masked while `max_tokens`, `MAX_TOKENS`, and `tokenizer` are not. A single word is also masked when it ends with a sensitive name, or ends in `key` with one before that `key` (`DBPASSWORD`, `accesstoken`, `AWSSECRETACCESSKEY`), but not when it only starts with one (`PASSWORDLESS`, `PASSWORDHASH`). An `Error` in `data`, at any depth, goes on the wire as `{ type, message }` only — no stack, cause, or other own property such as a request URL; the process log writes it in full (`api-telemetry` Logs). The mirror keeps the process log's bounds: objects through 15 levels below the data root, one 16 levels down as `'[MaxDepth]'`, repeated content (an object or `toJSON()` result reached again, or a string of 1,024+ characters written again) charged about its written size against 1,000,000 characters and cut with `'[Truncated]'`, at most 400,000 reads a walk, one per object, field, and array element (so data a getter or Proxy builds on every read is cut too), at most 16 MiB (16,777,216 characters) of strings, field names, and primitives a walk writes, repeated or not, then `'[Truncated]'` and nothing more, a reference back to an enclosing object as `'[Circular]'`, and a value whose read throws (a getter, a Proxy trap, a `toJSON`) as `'[Unreadable]'`, with `data` that cannot be read at all (a revoked Proxy) written as `data: '[Unreadable]'` on both sinks — so no value in `data` can stall the handler or fail it. The caller's `data` object is never modified. `ctx.log.error` adds `error: <message>`. `message` and `error` are reserved wire keys, written after `data`: a `message` in `data` never replaces the log line on the wire, and on `ctx.log.error` with an `Error` the `error` key is always that error's message as a string — a Symbol as `'Symbol(…)'`, a number as its digits, and `'[Unreadable]'` when reading it throws or it is an object — and the notification is still sent. The process log line still carries the caller's own fields, except one reusing a canonical name the context already sets (`requestId`, `traceId`, `spanId`, `tenantId`, …) — there the context's value wins, so the line stays correlated to its request — and one named after a field the logger writes on the line itself (`level`, `time`, `msg`, `env`, `version`, `pid`, `hostname`, and `err` on `ctx.log.error` with an `Error`), which is written as `data_<name>` so the line keeps its own `level` and `version`. Delivery is fire-and-forget — a client that never upgraded to SSE, set a higher level, or already disconnected drops the notification, and a failed send never fails the handler. Treat `ctx.log` as client-visible: it is no longer a server-only sink, so don't log anything there you wouldn't put in a tool result.
 
 ### Methods
 
@@ -193,6 +193,8 @@ The global `logger` is imported from `@cyanheads/mcp-ts-core/utils`. In handlers
 ## `ctx.state`
 
 Tenant-scoped key-value storage. Delegates to `StorageService` with automatic `tenantId` scoping — data written under tenant A is invisible to tenant B.
+
+`ctx.state` captures the request's original abort signal; spreading `ctx` with a replacement `signal` does not rebind its methods. Do not retain the facade for expiry, rollback or background cleanup after that request ends. Inject `core.storage` into the service and pass a tenant-bearing `RequestContext` for those lifecycle operations; check the current request signal explicitly for cancellable foreground work.
 
 ### Interface
 
@@ -332,7 +334,7 @@ Always present, on every transport and both protocol eras. A handler that needs 
 
 One code path serves both eras. A 2026-07-28 client fulfils the embedded requests and retries the call; for a 2025-era session the SDK's legacy shim fulfils the same returns by issuing real `elicitation/create` / `sampling/createMessage` / `roots/list` round trips and re-entering the handler itself.
 
-**A 2025-era client that declared no matching capability is refused, with an envelope.** URL-mode elicitation needs `elicitation.url`, form-mode needs `elicitation.form` (a bare `elicitation: {}` satisfies it), sampling needs `sampling` — `sampling.tools` when the request carries `tools` / `toolChoice` — and `roots/list` needs `roots`. `ctx.requestInput` runs the check on the result it builds and throws the refusal instead of the signal, so it never reaches the wire and the handler fails where it stands — the execution measurement records it as a failed call, its `Error in tool:<name>` record logs at `notice` (a property of the client's connection, not a server fault), and each family's usual error path shapes it. A tool gets `isError` with `structuredContent.error.code = -32600` (`InvalidRequest`), `data.reason: 'client_capability_missing'`, and a `data.recovery.hint` naming the capability; a resource read gets the same code, reason, and hint through the JSON-RPC error envelope. A prompt's `generate` receives no `ctx`, so it has no `ctx.requestInput` to gate. The check runs on every round, so a handler that elicits first and samples second is gated again on the second. A return carrying only `requestState` asks the client for nothing and is never gated. On the 2026-07-28 leg the SDK owns this check and a violation surfaces as its `MissingRequiredClientCapabilityError` (`-32021`) instead.
+**A 2025-era client that declared no matching capability is refused, with an envelope.** URL-mode elicitation needs `elicitation.url`, form-mode needs `elicitation.form` (a bare `elicitation: {}` satisfies it), sampling needs `sampling` — `sampling.tools` when the request carries `tools` / `toolChoice` — and `roots/list` needs `roots`. `ctx.requestInput` runs the check on the result it builds and throws the refusal instead of the signal, so it never reaches the wire and the handler fails where it stands — the execution measurement records it as a failed call, its `Error in tool:<name>` record logs at `notice` with no stack (a property of the client's connection, not a server fault), and each family's usual error path shapes it. A tool gets `isError` with `structuredContent.error.code = -32600` (`InvalidRequest`), `data.reason: 'client_capability_missing'`, and a `data.recovery.hint` naming the capability; a resource read gets the same code, reason, and hint through the JSON-RPC error envelope. A prompt's `generate` receives no `ctx`, so it has no `ctx.requestInput` to gate. The check runs on every round, so a handler that elicits first and samples second is gated again on the second. A return carrying only `requestState` asks the client for nothing and is never gated. On the 2026-07-28 leg the SDK owns this check and a violation surfaces as its `MissingRequiredClientCapabilityError` (`-32021`) instead.
 
 **The refusal's hint ends at reconnecting** — ``Reconnect with a client that declares the `elicitation.form` capability.`` — and offers no other way to supply the answer, because a consent gate deliberately has no input field for it: the model would fill it in. A handler whose own arguments can stand in for the answer says so per call with the optional second argument, a sentence appended to the hint after a space:
 
@@ -625,6 +627,8 @@ On 2026-07-28 there is no `resources/subscribe` method and no registry. The URI 
 
 Standard `AbortSignal`. Present on every context. Fires when the client cancels the request — and when the transport closes, which aborts every in-flight handler.
 
+Once it has fired, the call settles as `RequestCancelled` (`-32011`) whatever the handler does next: a throw, an early return, or a partial result folded from the legs the abort failed are all recorded as a cancellation, never a success. Checking it is for stopping work early, not for shaping what the caller receives — the SDK writes no response to a cancelled request.
+
 ```ts
 // Check before expensive operations
 if (ctx.signal.aborted) return earlyResult;
@@ -829,7 +833,8 @@ ctx.enrich.truncated({ shown, cap, ceiling?, guidance? }): void
 | No block | Calling `ctx.enrich` on a tool that declared no `enrichment` is a silent no-op (values are stripped by the parse) — the price of service-layer callability. |
 | Service usage | Services accepting `ctx: Context` can call `ctx.enrich(...)`; the value reaches `structuredContent` exactly as if the handler had. |
 | `format-parity` | Enrichment lives outside `output`, so the `format-parity` lint never requires it in `format()`. |
-| Trailer rendering | Per field: kind-tag if set (notice/total/echo/delta), else the definition's `enrichmentTrailer.render`/`label`, else `**key:** value` (objects/arrays `JSON.stringify`'d). A structured field with no `render` errors under `enrichment-trailer-render` — supply one so it renders as markdown; `structuredContent` keeps the full value regardless. |
+| Trailer rendering | Per field: the definition's `enrichmentTrailer.render` if set, else the kind-tag (notice/total/echo/delta), else `**key:** value` with `label` replacing the key (objects/arrays `JSON.stringify`'d). A `render` overrides a kind-tagged field's default line; a `label` relabels only the generic and `delta` lines. A structured field with no `render` errors under `enrichment-trailer-render` — supply one so it renders as markdown; `structuredContent` keeps the full value regardless. |
+| Trailer escaping | Echo, delta, and generic values are data: their strings, and an object's JSON, render through `escapeMarkdownInline()`, so a CommonMark parse reads them back as written; numbers, booleans, and `null` render as themselves. Pass them raw — escaping first puts the backslashes in `structuredContent` too. A `render` result, a `label`, the `total` line, and the `notice` blockquote are authored Markdown and stay live; escape untrusted text embedded in a `notice` or `render` yourself. |
 | Trailer layout | One field per line. A field whose last line opens a block quote or a list item (`notice`, or a `render` ending in `>`, `-`, `*`, `1.`) gets a blank line after it, so the next field renders as its own block instead of being folded into that container by CommonMark lazy continuation. |
 
 ### `ctx.enrich.truncated()` — capped-list disclosure
@@ -843,7 +848,7 @@ enrichment: {
   truncated: z.boolean().optional().describe('True when the list was capped.'),
   shown: z.number().optional().describe('Number of items returned.'),
   cap: z.number().optional().describe('The limit that was applied.'),
-  truncationCeiling: z.number().optional().describe('Upper bound for omitted items (threshold bound).'),
+  truncationCeiling: z.number().optional().describe('Upper bound for the items after this page (threshold bound).'),
 },
 async handler(input, ctx) {
   const items = await fetch(input.limit);

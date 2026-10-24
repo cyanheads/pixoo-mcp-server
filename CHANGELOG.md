@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.4.1](changelog/1.4.x/1.4.1.md) — 2026-10-24
+
+Runs on mcp-ts-core 0.13.16: tool error and recovery text in content[] is Markdown-escaped, numeric and boolean strings in tool arguments are repaired before validation, an out-of-range framework environment value stops startup with the variable named, and device and page text this server echoes into content[] is escaped too.
+
 ## [1.4.0](changelog/1.4.x/1.4.0.md) — 2026-09-27
 
 New pixoo_render_html renders agent-authored HTML, CSS, and Canvas in an isolated headless browser on a virtual clock, with a pixoo page runtime for crisp bitmap text and icons. Animations of more than 40 frames, up to 800, play as one GIF the device downloads from this host.

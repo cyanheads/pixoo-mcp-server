@@ -4,12 +4,17 @@
 # This stage installs all dependencies (including dev), builds the TypeScript
 # source code into JavaScript, and prepares the production assets.
 #
-# Pinned to $BUILDPLATFORM so a multi-arch build runs `tsc` once, natively. Only
-# `dist/` crosses into the production stage and that output is JavaScript, so it
-# is architecture-independent — emulating this stage buys nothing, and Bun 1.4
-# aborts with MemoryExhaustion under QEMU x86_64 when it is emulated.
+# Pinned to $BUILDPLATFORM rather than the target platform: `bun run build` emits
+# JavaScript, and only `dist/` crosses into the production stage. Built for the
+# target instead, the non-native leg of a `--platform linux/amd64,linux/arm64`
+# build runs under QEMU, where bun >= 1.4 aborts with a JavaScriptCore allocator
+# assertion and fails the multi-arch push.
+#
+# The constraint this assumes: the build stage produces platform-independent
+# output. A stage that compiles a native addon needs the target-arch toolchain
+# and cannot cross-compile this way — drop the flag there.
 # ==============================================================================
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.2 AS build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4 AS build
 
 WORKDIR /usr/src/app
 
@@ -33,15 +38,15 @@ RUN bun run build
 #
 # Installs the production dependency tree for the target platform. Every step
 # here can run JavaScript — bunfig.toml's security scanner runs as a Bun
-# program, and so does the OTel script — so the stage runs on $BUILDPLATFORM
-# and cross-installs with `--os`/`--cpu`, which pick each platform-specific
-# optional dependency (sharp's native `@img/*` bindings) for the target. Only
-# `node_modules` leaves this stage.
+# program, and so do the OTel and musl-prune scripts — so the stage runs on
+# $BUILDPLATFORM and cross-installs with `--os`/`--cpu`, which pick each
+# platform-specific optional dependency (sharp's native `@img/*` bindings) for
+# the target. Only `node_modules` leaves this stage.
 #
 # A clean image rather than `FROM build`: the build stage's node_modules holds
 # devDependencies.
 # ==============================================================================
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.2 AS deps
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4 AS deps
 
 WORKDIR /usr/src/app
 
@@ -88,6 +93,15 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
       bun scripts/install-otel.ts --os="$TARGETOS" --cpu="$(cat .bun-cpu)"; \
     fi
 
+# `--os`/`--cpu` have no libc counterpart, so a native dependency published in
+# glibc and musl variants (sharp's `@img/*` bindings, for one) installs both. The
+# runtime image is Debian (glibc) and never loads the musl copy; the script
+# deletes every package whose own `libc` admits only musl. It follows every
+# install, since a later `bun install` restores what it removes. A server on a
+# musl (Alpine) runtime image drops these two lines.
+COPY scripts/prune-musl-packages.ts ./scripts/
+RUN bun scripts/prune-musl-packages.ts
+
 # The seeded scanner served only the installs above; keep it out of the image.
 RUN rm -rf node_modules/@socketsecurity/bun-security-scanner
 
@@ -100,7 +114,7 @@ RUN rm -rf node_modules/@socketsecurity/bun-security-scanner
 # dependencies and build artifacts. Its only Bun invocations are HEALTHCHECK
 # and CMD, which run on the real target at container start.
 # ==============================================================================
-FROM oven/bun:1.4.2-slim AS production
+FROM oven/bun:1.4.4-slim AS production
 
 WORKDIR /usr/src/app
 

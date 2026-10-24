@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import type { PixooResult } from '@cyanheads/pixoo-toolkit';
 import { getPixooService } from '@/services/pixoo/pixoo-service.js';
 
@@ -90,7 +91,8 @@ export const pixooControlDevice = tool('pixoo_control_device', {
 
     const record = (setting: string, res: PixooResult) => {
       if (res.ok) applied.push(setting);
-      else failed.push(`${setting} failed (${res.kind}): ${res.message}`);
+      // The notice renders as live Markdown; the device's message is not ours to format.
+      else failed.push(`${setting} failed (${res.kind}): ${escapeMarkdownInline(res.message)}`);
     };
 
     // Apply changes

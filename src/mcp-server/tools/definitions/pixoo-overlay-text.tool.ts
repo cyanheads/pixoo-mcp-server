@@ -92,7 +92,7 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
     {
       reason: 'device_unreachable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Device is not reachable.',
+      when: 'Device is not reachable over the network.',
       retryable: true,
       recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
     },

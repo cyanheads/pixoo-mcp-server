@@ -6,6 +6,7 @@
 import * as fs from 'node:fs/promises';
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import {
   type Canvas,
   type LoadedAnimation,
@@ -175,7 +176,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
     {
       reason: 'device_unreachable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Device is not reachable.',
+      when: 'Device is not reachable over the network.',
       retryable: true,
       recovery: 'Check the device is powered on and on the same network. Retry in a few seconds.',
       thrownBy: 'service',
@@ -206,7 +207,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
     {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
-      when: 'PIXOO_IP is not set.',
+      when: 'PIXOO_IP is not set and push was requested.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
       thrownBy: 'service',
     },
@@ -349,7 +350,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
     }
 
     if (result.outputFiles?.length) {
-      lines.push(`**Saved:** ${result.outputFiles.join(', ')}`);
+      lines.push(`**Saved:** ${result.outputFiles.map(escapeMarkdownInline).join(', ')}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

@@ -7,6 +7,7 @@
 import * as path from 'node:path';
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { type Canvas, NAMED_COLORS, savePng, tryResolveColor } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
@@ -366,11 +367,11 @@ export const pixooRenderHtml = tool('pixoo_render_html', {
       lines.push('**Page errors:** none');
     } else {
       lines.push(`**Page errors (${result.pageErrors.length}):**`);
-      for (const text of result.pageErrors) lines.push(`- ${text}`);
+      for (const text of result.pageErrors) lines.push(`- ${escapeMarkdownInline(text)}`);
     }
 
     if (result.outputFiles?.length) {
-      lines.push(`**Saved:** ${result.outputFiles.join(', ')}`);
+      lines.push(`**Saved:** ${result.outputFiles.map(escapeMarkdownInline).join(', ')}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

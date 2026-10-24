@@ -6,6 +6,7 @@
 import * as path from 'node:path';
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { Canvas, NAMED_COLORS, type PixooSize, savePng } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { ImageSourceSchema, SpritePathSchema } from '@/mcp-server/tools/asset-source-schema.js';
@@ -823,7 +824,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
     }
 
     if (result.outputFiles?.length) {
-      lines.push(`\n**Saved:** ${result.outputFiles.join(', ')}`);
+      lines.push(`\n**Saved:** ${result.outputFiles.map(escapeMarkdownInline).join(', ')}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

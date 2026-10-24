@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdown } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
 import { getPixooService } from '@/services/pixoo/pixoo-service.js';
 
@@ -81,7 +82,7 @@ export const pixooDiscoverDevices = tool('pixoo_discover_devices', {
       configuredIpFound = devices.some((d) => d.ip === configuredIp);
       if (!configuredIpFound) {
         ctx.enrich.notice(
-          `PIXOO_IP is set to "${configuredIp}" but that IP was not found in discovery results. ` +
+          `PIXOO_IP is set to "${escapeMarkdownInline(configuredIp)}" but that IP was not found in discovery results. ` +
             `Check the device is on and connected to the same network, or update PIXOO_IP to one of the discovered IPs above.`,
         );
       }
@@ -93,7 +94,7 @@ export const pixooDiscoverDevices = tool('pixoo_discover_devices', {
     } else {
       const firstIp = devices[0]?.ip ?? '';
       ctx.enrich.notice(
-        `Found ${devices.length} device(s). Set PIXOO_IP=${firstIp} to configure the server.`,
+        `Found ${devices.length} device(s). Set PIXOO_IP=${escapeMarkdownInline(firstIp)} to configure the server.`,
       );
     }
 
@@ -112,13 +113,15 @@ export const pixooDiscoverDevices = tool('pixoo_discover_devices', {
     } else {
       lines.push(`Found **${result.devices.length}** device(s):\n`);
       for (const d of result.devices) {
-        lines.push(`- **${d.name}** (ID: ${d.id}) — IP: \`${d.ip}\``);
+        lines.push(
+          `- **${escapeMarkdownInline(d.name)}** (ID: ${d.id}) — IP: ${markdown().inlineCode(d.ip).build()}`,
+        );
       }
     }
 
     if (result.configuredIp) {
       lines.push(
-        `\n**Configured PIXOO_IP:** \`${result.configuredIp}\`` +
+        `\n**Configured PIXOO_IP:** ${markdown().inlineCode(result.configuredIp).build()}` +
           (result.configuredIpFound !== undefined
             ? ` (${result.configuredIpFound ? '✓ found in results' : '✗ not found in results'})`
             : ''),

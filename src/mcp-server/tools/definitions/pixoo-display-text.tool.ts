@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { Canvas, measureText, NAMED_COLORS, type PixooSize } from '@cyanheads/pixoo-toolkit';
 import { getServerConfig } from '@/config/server-config.js';
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
@@ -338,7 +339,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
-      when: 'PIXOO_IP is not set.',
+      when: 'PIXOO_IP is not set and push was requested.',
       recovery: 'Run pixoo_discover_devices to find the device IP, then set PIXOO_IP.',
       thrownBy: 'service',
     },
@@ -515,7 +516,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
             const brightnessResult = await svc.setBrightness(input.brightness, ctx);
             if (!brightnessResult.ok) {
               notices.push(
-                `Brightness set to ${input.brightness} failed (${brightnessResult.kind}): ${brightnessResult.message}. Render and push will continue.`,
+                `Brightness set to ${input.brightness} failed (${brightnessResult.kind}): ${escapeMarkdownInline(brightnessResult.message)}. Render and push will continue.`,
               );
             }
           }
@@ -572,7 +573,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
     }
 
     if (result.outputFiles?.length) {
-      lines.push(`\n**Saved:** ${result.outputFiles.join(', ')}`);
+      lines.push(`\n**Saved:** ${result.outputFiles.map(escapeMarkdownInline).join(', ')}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

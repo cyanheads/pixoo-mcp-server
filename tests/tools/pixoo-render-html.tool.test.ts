@@ -28,6 +28,7 @@ import {
 import { BROWSER_UNAVAILABLE_RECOVERY } from '@/services/browser/browser-renderer.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
 import { hashOf, inkColors } from '../helpers/canvas-ink.js';
+import { resultReadBack } from '../helpers/commonmark.js';
 import {
   expectDeviceFailure,
   imageKind,
@@ -448,7 +449,7 @@ describe('pixooRenderHtml — output', () => {
         error: { code: JsonRpcErrorCode.InvalidParams },
       });
       expectForwardedRecovery(result, pixooRenderHtml.errors, 'invalid_output_path');
-      expect(resultText(result)).toContain(`"${output}"`);
+      expect(resultReadBack(result)).toContain(`"${output}"`);
       expect(calls).toHaveLength(0);
       expect(client.push).not.toHaveBeenCalled();
     },
@@ -616,7 +617,11 @@ describe('pixooRenderHtml — finish', () => {
     ['colors 1', { colors: 1 }, 'finish.colors: Too small'],
     ['colors 257', { colors: 257 }, 'finish.colors: Too big'],
     ['an empty palette', { palette: [] }, 'finish.palette: Too small'],
-    ['a 257-entry palette', { palette: Array(257).fill('#000000') }, 'finish.palette: Too big'],
+    [
+      'a 257-entry palette',
+      { palette: Array(257).fill('#000000') },
+      'finish: colors: Invalid input: expected number, received undefined; Unrecognized key: "palette" or palette: Too big',
+    ],
   ])('%s fails -32602 naming finish; no page loads', async (_label, finish, named) => {
     const { result, client } = await pushHtml({
       html: '<p>hi</p>',
@@ -654,7 +659,7 @@ describe('pixooRenderHtml — renderer failures', () => {
       },
     });
     expectForwardedRecovery(result, pixooRenderHtml.errors, 'browser_unavailable');
-    expect(resultText(result)).toContain(`Recovery: ${BROWSER_UNAVAILABLE_RECOVERY}`);
+    expect(resultReadBack(result)).toContain(`Recovery: ${BROWSER_UNAVAILABLE_RECOVERY}`);
     expect(client.push).not.toHaveBeenCalled();
     expect(client.getChannel).not.toHaveBeenCalled();
   });

@@ -1,12 +1,13 @@
 /**
  * @fileoverview Asserts that a tool error result carries its declared `errors[]` recovery
  * on both client surfaces — `structuredContent.error.data.recovery.hint` and the
- * `Recovery:` line of the `content[]` text.
+ * `Recovery:` line of the `content[]` text, read back through CommonMark.
  * @module tests/helpers/expect-forwarded-recovery
  */
 
 import type { runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { expect } from 'vitest';
+import { resultReadBack } from './commonmark.js';
 
 type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
 
@@ -24,9 +25,7 @@ export function expectForwardedRecovery(
     error: { data: { reason, recovery: { hint } } },
   });
 
-  const text = result.content
-    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-    .join('\n');
+  const text = resultReadBack(result);
   expect(text).toContain(`Recovery: ${hint}`);
   expect(text).toContain(`(reason ${reason}`);
 }

@@ -8,7 +8,7 @@
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { expect } from 'vitest';
-import { resultText } from './device-failure.js';
+import { resultReadBack } from './commonmark.js';
 import { expectForwardedRecovery } from './expect-forwarded-recovery.js';
 
 type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
@@ -32,5 +32,5 @@ export function expectInvalidColor(
     error: { code: JsonRpcErrorCode.InvalidParams },
   });
   expectForwardedRecovery(result, errors, 'invalid_color');
-  expect(resultText(result)).toContain(JSON.stringify(value));
+  expect(resultReadBack(result)).toContain(JSON.stringify(value));
 }

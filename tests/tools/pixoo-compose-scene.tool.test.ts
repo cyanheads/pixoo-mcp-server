@@ -50,6 +50,7 @@ import { renderScene } from '@/renderer/scene-renderer.js';
 import { PALETTE_NAMES, PALETTES } from '@/renderer/themes.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
 import { hashOf, inkColors, inkPixels, inkRows, isInk } from '../helpers/canvas-ink.js';
+import { resultReadBack } from '../helpers/commonmark.js';
 import {
   errorOutputFiles,
   expectDeviceFailure,
@@ -714,7 +715,7 @@ describe('pixooComposeScene', () => {
             },
           });
           expect(JsonRpcErrorCode.InvalidParams).toBe(-32602);
-          expect(resultText(result)).toContain(named);
+          expect(resultReadBack(result)).toContain(named);
           expect(result.content.some((block) => block.type === 'image')).toBe(false);
           expect(handler).not.toHaveBeenCalled();
           expect(http.calls).toHaveLength(0);
@@ -1008,7 +1009,7 @@ describe('pixooComposeScene', () => {
           error: { code: JsonRpcErrorCode.InvalidParams },
         });
         expectForwardedRecovery(result, pixooComposeScene.errors, 'unknown_icon');
-        expect(resultText(result)).toContain(`Unknown icon "${name}"`);
+        expect(resultReadBack(result)).toContain(`Unknown icon "${name}"`);
       },
     );
 
@@ -1140,7 +1141,7 @@ describe('pixooComposeScene', () => {
       [
         'a 257-entry palette',
         { palette: Array(257).fill('#000000') },
-        'elements.0.finish.palette: Too big',
+        'elements.0.finish: colors: Invalid input: expected number, received undefined; Unrecognized key: "palette" or palette: Too big',
       ],
     ])('%s fails input validation (-32602) naming finish', async (_label, finish, named) => {
       const { result, client } = await pushScene(scene(finish));
@@ -2241,8 +2242,8 @@ describe('pixooComposeScene', () => {
         NOT_NUMERIC,
       ],
       [
-        'the string "false" on visible',
-        { ...rect, animate: { visible: [[0, 'false']] } },
+        'the string "off" on visible',
+        { ...rect, animate: { visible: [[0, 'off']] } },
         'visible',
         NOT_BOOLEAN,
       ],

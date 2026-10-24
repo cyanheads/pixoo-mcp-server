@@ -49,7 +49,14 @@ export function trickleRoute(
         { highWaterMark: 0 },
       );
       const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-      source.pipeTo(writable, { signal: request.signal }).catch(() => undefined);
+      /**
+       * `fetch` links the caller's signal to its Request only weakly, so the pipe holds the
+       * Request until it settles: a GC mid-download would otherwise drop the abort.
+       */
+      source
+        .pipeTo(writable, { signal: request.signal })
+        .catch(() => undefined)
+        .finally(() => request);
       return new Response(readable);
     },
   };

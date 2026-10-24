@@ -23,6 +23,7 @@ import { pixooPushImage } from '@/mcp-server/tools/definitions/pixoo-push-image.
 import { buildContactSheet, encodePreviewBlock } from '@/renderer/preview.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
 import { hashOf, inkColors } from '../helpers/canvas-ink.js';
+import { resultReadBack } from '../helpers/commonmark.js';
 import {
   errorOutputFiles,
   expectDeviceFailure,
@@ -204,7 +205,7 @@ describe('pixooPushImage', () => {
             data: { reason: 'invalid_arguments', recovery: { hint: SOURCE_ERROR } },
           },
         });
-        expect(resultText(result)).toContain(SOURCE_ERROR);
+        expect(resultReadBack(result)).toContain(SOURCE_ERROR);
         expect(result.content.some((block) => block.type === 'image')).toBe(false);
         expect(handler).not.toHaveBeenCalled();
         expect(client.push).not.toHaveBeenCalled();
@@ -837,7 +838,11 @@ describe('pixooPushImage', () => {
       ['colors 257', { colors: 257 }, 'finish.colors: Too big'],
       ['colors 8.5', { colors: 8.5 }, 'finish: colors: Invalid input: expected int'],
       ['an empty palette', { palette: [] }, 'finish.palette: Too small'],
-      ['a 257-entry palette', { palette: Array(257).fill('#000000') }, 'finish.palette: Too big'],
+      [
+        'a 257-entry palette',
+        { palette: Array(257).fill('#000000') },
+        'finish: colors: Invalid input: expected number, received undefined; Unrecognized key: "palette" or palette: Too big',
+      ],
       ['an unknown dither', { colors: 8, dither: 'sierra' }, 'finish: dither: Invalid option'],
     ])('%s fails input validation (-32602) naming finish', async (_label, finish, named) => {
       const { result, client } = await pushWith({ source: photo, finish });

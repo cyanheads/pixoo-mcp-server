@@ -214,11 +214,15 @@ describe('finishFrames past one 4096-row column', () => {
     }
   }
 
-  it('finish: { colors: 4 } over 800 frames of 64 px holds at most 4 colors in all', () => {
-    const source = panelFrames(800, 64);
+  /**
+   * 200 frames of 64 px span four columns: enough to prove one palette across columns, with a
+   * quarter of the 800-frame work that outran the default timeout on a loaded machine.
+   */
+  it('finish: { colors: 4 } over 200 frames of 64 px holds at most 4 colors in all', () => {
+    const source = panelFrames(200, 64);
     expect(opaqueColors(...source).size).toBeGreaterThan(4);
     const out = finishFrames(source, { colors: 4 });
-    expect(out).toHaveLength(800);
+    expect(out).toHaveLength(200);
     const colors = opaqueColors(...out).size;
     expect(colors).toBeLessThanOrEqual(4);
     expect(colors).toBeGreaterThan(1);

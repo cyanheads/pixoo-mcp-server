@@ -57,6 +57,8 @@ await createApp({
     pixooDesignGuideResource,
   ],
   prompts: [],
+  // Root skills/ (pixoo-guide), served as skill:// resources and in the MCPB bundle.
+  skills: 'skills',
   // No handler requests input mid-call, so nothing needs a 2025-era session.
   sessionMode: 'stateless',
   /**
@@ -78,5 +80,5 @@ await createApp({
   async teardown() {
     await getBrowserRenderer().close();
   },
-  instructions: `Run pixoo_design_brief with a topic first for craft guidance and live device state, then render with pixoo_display_text for styled text or pixoo_compose_scene for layered scenes, widgets, and animations${pixooHtmlEnabled ? '; pixoo_render_html draws anything HTML, CSS, or Canvas can, including generative animation' : ''}. Every render tool returns a preview image, so pass push: false to inspect a design before it reaches the Pixoo display.`,
+  instructions: `Run pixoo_design_brief with a topic first for craft guidance and live device state, then render with pixoo_display_text for styled text or pixoo_compose_scene for layered scenes, widgets, and animations${pixooHtmlEnabled ? '; pixoo_render_html draws anything HTML, CSS, or Canvas can, including generative animation' : ''}. Every render tool returns a preview image, so pass push: false to inspect a design before it reaches the Pixoo display. The pixoo-guide skill (skill://pixoo-guide/SKILL.md) covers device setup, what a push takes over, and failure recovery.`,
 });

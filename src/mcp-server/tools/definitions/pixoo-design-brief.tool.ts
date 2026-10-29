@@ -121,7 +121,7 @@ pixoo_render_html lays out a page in a square viewport, one CSS pixel per LED (6
 
 **Seamless loops:** Define \`window.render(t, frame)\`. It runs before each capture with \`t = frame / frames\`, from 0 up to (frames − 1) / frames, so motion periodic in \`t\` — \`Math.cos(2 * Math.PI * t)\` — closes the loop with no seam. It may be async. If it throws or rejects, the call fails \`page_error\` naming the frame.
 
-**Virtual clock:** Each frame advances the clock by \`speed\` ms, so frames are deterministic and two calls capture the same pixels. \`requestAnimationFrame\` callbacks run once per frame; \`setTimeout\` and \`setInterval\` fire on virtual time, a nested or repeating timer waiting at least 4 ms; \`performance.now()\` reads 0 at load and \`frame × speed\` at each frame; \`Date\` starts at the real time and then follows the virtual clock. CSS animations and transitions are paused and seeked to the same time. \`requestIdleCallback\` and iframes keep real time, so don't drive motion with them. Workers are blocked.
+**Virtual clock:** Each frame advances the clock by \`speed\` ms, so two calls capture the same pixels unless the page reads \`Math.random\` (unseeded — use a seeded generator when the push must match the preview) or the starting \`Date\`. \`requestAnimationFrame\` callbacks run once per frame; \`setTimeout\` and \`setInterval\` fire on virtual time, a nested or repeating timer waiting at least 4 ms; \`performance.now()\` reads 0 at load and \`frame × speed\` at each frame; \`Date\` starts at the real time and then follows the virtual clock. CSS animations and transitions are paused and seeked to the same time. \`requestIdleCallback\` and iframes keep real time, so don't drive motion with them. Workers are blocked.
 
 **No network:** Nothing loads from a network URL — no web fonts, CDN scripts, or remote images. Inline scripts, styles, and SVG, and use \`data:\` or \`blob:\` URLs for assets. A blocked request's URL appears in \`pageErrors\`. Navigating the page away is blocked and reported as \`Blocked navigation: <url>\`; a popup is blocked without its URL being reported.
 
@@ -263,12 +263,12 @@ export const pixooDesignBrief = tool('pixoo_design_brief', {
         displaySize: z
           .number()
           .describe(
-            'Configured display canvas size in pixels (16, 32, or 64). Design coordinates scale to this value.',
+            'Configured display canvas size in pixels (16, 32, or 64). Coordinates are panel pixels and do not scale: lay out for this size.',
           ),
         reachable: z
           .boolean()
           .describe(
-            'True if device is currently reachable. When false, push: false is implied for all render tools.',
+            'True if the device answered. False both when no device is configured and when the configured one does not answer; pixoo://device/status configuredIp (null when unconfigured) tells them apart. Render tools still default to push: true, so pass push: false while this is false.',
           ),
         channel: z.string().optional().describe('Current device channel. Absent when unreachable.'),
         brightness: z

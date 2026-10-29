@@ -63,7 +63,7 @@ const EffectSchema = z
       .number()
       .optional()
       .describe(
-        'Effect intensity. float, scroll-left, scroll-right, drift: movement in pixels (default 2). pulse, twinkle: 0–1 depth of the opacity dip below 100 (default 0.5 and 0.6). Other effects ignore it.',
+        'Effect intensity (default 2 for motion effects). float: vertical swing of ±amplitude px. drift: horizontal swing of ±4 × amplitude px. scroll-left, scroll-right: speed — the element moves 2 × amplitude px per frame from where it is placed and never wraps, so start it at the edge it enters from and give it enough frames to cross. pulse, twinkle: 0–1 depth of the opacity dip below 100 (default 0.5 and 0.6). Other effects ignore it.',
       ),
     period: z
       .number()

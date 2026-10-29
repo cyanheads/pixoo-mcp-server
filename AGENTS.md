@@ -2,9 +2,9 @@
 
 **Server:** pixoo-mcp-server
 **Version:** 1.4.1
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.16`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.3.1 (protocol revision 2026-07-28 alongside the 2025 era)
+**MCP SDK:** `@modelcontextprotocol/server` ^2.4.0 (protocol revision 2026-07-28 alongside the 2025 era)
 **Zod:** ^4.6.7
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -304,7 +304,16 @@ tests/
 
 ## Skills
 
-Skills are modular instructions in `framework-skills/` at the project root. Read them directly when a task matches — e.g., `framework-skills/add-tool/SKILL.md` when adding a tool. `bun run list-skills` prints the full registry. The directory is deliberately not `skills/`: Claude Code and Codex auto-load a plugin's root `skills/`, and this server ships `.claude-plugin/` and `.codex-plugin/`, so a root `skills/` would hand these development skills to every agent that installs it.
+Two skill trees live at the project root, written for different readers:
+
+| Tree | For | Written by |
+|:-----|:----|:-----------|
+| `framework-skills/` | The agent developing this server — framework skills (`metadata.audience: external`) plus any development-time skills of the server's own | `init` and the `maintenance` sync (framework skills); you (your own) |
+| `skills/` | The agents that install the server and call its tools — tool chains, identifier sources, gates | You, deliberately, with the `add-skill` skill |
+
+Development skills are modular instructions. Read them directly when a task matches — e.g., `framework-skills/add-tool/SKILL.md` when adding a tool. `bun run list-skills` prints the full registry. Their directory is deliberately not `skills/`: Claude Code and Codex auto-load a plugin's root `skills/`, and this server ships `.claude-plugin/` and `.codex-plugin/`, so a root `skills/` would hand them to every agent that installs it.
+
+A published skill in root `skills/` reaches plugin installs and the `.mcpb` bundle as-is, ships in the npm package and the Docker image, and reaches MCP clients when the server opts in with `createApp({ skills: 'skills' })`. `lint:packaging` validates the tree.
 
 **Agent skill directories:** `.claude/skills/` and `.agents/skills/` carry copies of `framework-skills/`. After framework updates, run the `maintenance` skill — Phase B re-syncs both.
 
@@ -318,6 +327,7 @@ Available skills:
 | `add-app-tool` | Scaffold an MCP App tool + paired UI resource |
 | `add-resource` | Scaffold a new resource definition |
 | `add-prompt` | Scaffold a new prompt definition |
+| `add-skill` | Author a skill the server publishes in root `skills/` for the agents that use it — when one earns its place, structure, validation, delivery |
 | `add-service` | Scaffold a new service integration |
 | `add-test` | Scaffold test file for a tool, resource, or service |
 | `field-test` | Exercise tools/resources/prompts with real inputs, verify behavior, report issues |
@@ -361,7 +371,7 @@ Available skills:
 | `bun run audit:fix` | `bun audit fix` — upgrade vulnerable packages to the lowest safe version within existing ranges (`--dry-run` previews, `--latest` rewrites ranges). First response when `devcheck` flags a transitive advisory; then `bun update <name>`, then `bun dedupe` |
 | `bun run audit:refresh` | Delete `bun.lock` and reinstall. Last resort after `audit:fix`, `bun update <name>`, and `bun dedupe` — re-resolves every ranged dep (the framework pin included) and rewrites the lockfile as `lockfileVersion: 2` |
 | `bun run lint:mcp` | Run the MCP definition linter standalone (rule catalog: `api-linter` skill) |
-| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity, MCPB `user_config` wiring, plugin manifests, manifest and README version parity, Dockerfile build platform (run by devcheck) |
+| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity, MCPB `user_config` wiring, `.mcpbignore` coverage, plugin manifests, manifest and README version parity, Dockerfile build platform, the published `skills/` tree (run by devcheck) |
 | `bun run list-skills` | Print the skill registry |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting (safe fixes only) |
@@ -380,7 +390,7 @@ Available skills:
 
 ## Bundling
 
-`bun run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies and strips dependency-shipped agent docs and platform-specific native bindings that root-anchored `.mcpbignore` patterns cannot reach. MCPB is stdio-only — HTTP deployments are unaffected.
+`bun run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. `mcpb pack` reads `.mcpbignore`, not `.gitignore`, so every root path the bundle must not ship — source, tests, docs, caches, logs, agent docs, plugin manifests, gitignored local files — needs a root-anchored line there (`/docs/`, never `docs/`, which also strips `node_modules/*/docs/`); `lint:packaging` names each missing or unanchored line. Root `skills/` ships on purpose. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies and strips what root-anchored patterns cannot reach inside `node_modules/`: dependency-shipped agent docs at a package root, platform-specific native bindings, node-gyp build output beside a `binding.gyp`, and the framework's build-only files. MCPB is stdio-only — HTTP deployments are unaffected.
 
 `lint:packaging` verifies that `server.json` and `manifest.json` declare the same env var names, that every `manifest.json` `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.<key>}"` (the host substitutes nothing else), that an optional string option carries `"default": ""`, that no plugin manifest writes an empty `env` value, that `manifest.json` and the README `Version-` badge carry the `package.json` version, and that the Dockerfile stage running `bun run build` starts `FROM --platform=$BUILDPLATFORM` (a multi-arch build otherwise runs it under QEMU, where Bun aborts).
 
@@ -414,4 +424,6 @@ Each per-version file opens with YAML frontmatter: `summary` (required, ≤350 c
 - [ ] Renderer functions have no device dependency — testable without hardware
 - [ ] Env var added? Declared in BOTH `server.json` and `manifest.json` (`lint:packaging` enforces parity)
 - [ ] `.codex-plugin/plugin.json` and `.claude-plugin/plugin.json` carry the `package.json` `version`; display fields use the unscoped repo name `pixoo-mcp-server`. A user-supplied variable goes in `env_vars` (`.codex-plugin/mcp.json`) or `userConfig` + `"${user_config.<option>}"` (`.claude-plugin/plugin.json`) — never `"KEY": ""` in `env`
+- [ ] Root `plugin.json` + `mcp.json` (Agent Plugins 1.0.0) carry the `package.json` `version` and metadata; `mcp.json` holds one `"type": "stdio"` entry keyed `pixoo-mcp-server` with the same fixed `env` as `.codex-plugin/mcp.json` and no user-supplied variable — those reach Codex through `.codex-plugin/mcp.json` `env_vars`, which works only while `.codex-plugin/plugin.json` keeps `"mcpServers": "./.codex-plugin/mcp.json"`
+- [ ] Any new root dev path has a root-anchored line in `.mcpbignore`; `bun run bundle` and `lint:packaging` pass
 - [ ] `bun run devcheck` and `bun run test` pass

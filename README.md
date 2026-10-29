@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-1.4.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pixoo-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pixoo-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pixoo-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-1.4.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pixoo-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pixoo-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pixoo-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -81,9 +81,9 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 ### `pixoo_render_html` <sub>tool</sub>
 
 - `html` is a full document or a body fragment, up to 500,000 characters, laid out in a square viewport one CSS pixel per LED. The page is the panel: `body` has no margin, scrollbars are hidden, and a page that paints no background renders on black (unlit). Its own CSS overrides each
-- `frames` 1–800 (default 1), `speed` 10–2000 ms per frame (default 150). Each frame advances a virtual clock by `speed`: `window.render(t, frame)`, when the page defines it, runs before each capture with `t = frame / frames`, so periodic motion loops seamlessly; `requestAnimationFrame`, `setTimeout` / `setInterval` (4 ms floor for nested and repeating timers), `Date` (starting at the real time), and `performance.now()` (0 at load) follow the same clock, and CSS animations are paused and seeked to it, so every frame is deterministic. `requestIdleCallback` and iframes keep real time. Past 40 frames the page plays as one GIF the device downloads from this host, as on `pixoo_compose_scene`
+- `frames` 1–800 (default 1), `speed` 10–2000 ms per frame (default 150). Each frame advances a virtual clock by `speed`: `window.render(t, frame)`, when the page defines it, runs before each capture with `t = frame / frames`, so periodic motion loops seamlessly; `requestAnimationFrame`, `setTimeout` / `setInterval` (4 ms floor for nested and repeating timers), `Date` (starting at the real time), and `performance.now()` (0 at load) follow the same clock, and CSS animations are paused and seeked to it, so two calls capture the same frames unless the page reads `Math.random` (unseeded) or the starting `Date`. `requestIdleCallback` and iframes keep real time. Past 40 frames the page plays as one GIF the device downloads from this host, as on `pixoo_compose_scene`
 - `sampling`: `native` (default) or `supersample`, which renders at 8× and area-averages into each LED, smoothing transforms, text, SVG, and canvas. Chromium snaps a plain box's edges to whole CSS pixels before scaling, so a box at `left: 0.5px` still lands on one LED; move it with `transform` for sub-pixel motion. `finish` takes the same palette reduction as `pixoo_push_image`, applied before the preview
-- Nothing loads from the network and workers are blocked. `pageErrors` returns the page's uncaught errors, `console.error` output, and blocked URLs (a blocked navigation as `Blocked navigation: <url>`): the first 20, each cut to 500 characters. A `window.render` that throws or rejects fails as `page_error`, naming the frame; with no browser found, the call fails as `browser_unavailable` with install steps (see [Prerequisites](#prerequisites)); `render_timeout` and `render_crashed` cover a render past 30 s and a crashed browser or page. `PIXOO_HTML_ENABLED=false` removes the tool
+- Nothing loads from the network and workers are blocked. `pageErrors` returns the page's uncaught errors, `console.error` output, and blocked URLs (a blocked navigation as `Blocked navigation: <url>`): the first 20, each cut to 500 characters. A `window.render` that throws or rejects fails as `page_error`, naming the frame; with no browser found, the call fails as `browser_unavailable` with install steps (see [Local development](#local-development)); `render_timeout` and `render_crashed` cover a render past 30 s and a crashed browser or page. `PIXOO_HTML_ENABLED=false` removes the tool
 - Every page gets a `pixoo` global before its own scripts run, for the crisp bitmap text, palettes, and icons that browser anti-aliasing would smear across LEDs:
   - `pixoo.context()` is the 2D context of a transparent panel-size canvas fixed over the page.
   - `pixoo.text(ctx, text, x, y, { font, color, palette, scale, shadow, outline })` draws `pixoo_display_text`'s fonts.
@@ -186,107 +186,27 @@ Agent-friendly output:
 
 ## Getting started
 
-Add the following to your MCP client configuration file, with `PIXOO_IP` set to your Pixoo's LAN address. `pixoo_discover_devices` finds it if you don't know it.
+Add it to Claude Code, with `PIXOO_IP` set to your Pixoo's LAN address (`pixoo_discover_devices` finds it if you don't know it):
 
-```json
-{
-  "mcpServers": {
-    "pixoo-mcp-server": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@cyanheads/pixoo-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "PIXOO_IP": "192.168.1.50"
-      }
-    }
-  }
-}
+```sh
+claude mcp add pixoo-mcp-server -e PIXOO_IP=192.168.1.50 -- npx -y @cyanheads/pixoo-mcp-server
 ```
 
-Or with npx (no Bun required):
+For other clients, add this to the MCP config file:
 
 ```json
 {
   "mcpServers": {
     "pixoo-mcp-server": {
-      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cyanheads/pixoo-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "PIXOO_IP": "192.168.1.50"
-      }
+      "args": ["-y", "@cyanheads/pixoo-mcp-server"],
+      "env": { "PIXOO_IP": "192.168.1.50" }
     }
   }
 }
 ```
 
-Or with Docker:
-
-```json
-{
-  "mcpServers": {
-    "pixoo-mcp-server": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "MCP_TRANSPORT_TYPE=stdio",
-        "-e", "PIXOO_IP=192.168.1.50",
-        "-e", "PIXOO_SERVE_HOST=192.168.1.20",
-        "-e", "PIXOO_SERVE_PORT=8765",
-        "-p", "8765:8765",
-        "ghcr.io/cyanheads/pixoo-mcp-server:latest"
-      ]
-    }
-  }
-}
-```
-
-The device downloads an animation of more than 40 frames from this host, and on Docker's default bridge network the address routed to the device is the container's own, which the device can't reach. Set `PIXOO_SERVE_HOST` to the Docker host's LAN address and publish a fixed `PIXOO_SERVE_PORT`, as above; 40 frames or fewer need neither.
-
-For Streamable HTTP, set the transport and start the server:
-
-```sh
-MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 PIXOO_IP=192.168.1.50 bun run start:http
-# Server listens at http://localhost:3010/mcp
-```
-
-### Prerequisites
-
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
-- A Divoom Pixoo on the local network (Pixoo-64, Pixoo-32, or Pixoo-16).
-- Optional, for the HTML renderer: [chrome-headless-shell](https://developer.chrome.com/docs/automation-and-testing/headless-chrome-shell). `npx @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer` installs it where the server looks by default. Installed anywhere else with `--path <dir>`, set `PIXOO_BROWSER_PATH` to the executable path the install prints. The server launches it headless, with no DevTools port, only when a render needs it.
-
-### Installation
-
-1. **Clone the repository:**
-
-```sh
-git clone https://github.com/cyanheads/pixoo-mcp-server.git
-```
-
-2. **Navigate into the directory:**
-
-```sh
-cd pixoo-mcp-server
-```
-
-3. **Install dependencies:**
-
-```sh
-bun install
-```
-
-4. **Configure environment:**
-
-```sh
-cp .env.example .env
-# edit .env and set PIXOO_IP
-```
+`pixoo_render_html` also needs a local chrome-headless-shell ([install steps](#local-development)). For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
@@ -315,6 +235,18 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
+Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+) and a Divoom Pixoo on the local network (Pixoo-64, Pixoo-32, or Pixoo-16).
+
+The HTML renderer also needs [chrome-headless-shell](https://developer.chrome.com/docs/automation-and-testing/headless-chrome-shell). `npx @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer` installs it where the server looks by default. Installed anywhere else with `--path <dir>`, set `PIXOO_BROWSER_PATH` to the executable path the install prints. The server launches it headless, with no DevTools port, only when a render needs it.
+
+- **Clone and install:**
+
+  ```sh
+  git clone https://github.com/cyanheads/pixoo-mcp-server.git
+  cd pixoo-mcp-server && bun install
+  cp .env.example .env   # set PIXOO_IP
+  ```
+
 - **Build and run:**
 
   ```sh
@@ -323,7 +255,7 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
   # Run the built server
   bun run start:stdio
-  # or
+  # or, Streamable HTTP at http://localhost:3010/mcp
   bun run start:http
   ```
 
@@ -341,15 +273,36 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 ### Docker
 
 ```sh
-docker build -t pixoo-mcp-server .
 docker run --rm -e PIXOO_IP=192.168.1.50 -p 3010:3010 \
   -e PIXOO_SERVE_HOST=192.168.1.20 -e PIXOO_SERVE_PORT=8765 -p 8765:8765 \
-  pixoo-mcp-server
+  ghcr.io/cyanheads/pixoo-mcp-server:latest
 ```
 
-`PIXOO_SERVE_HOST` (the Docker host's LAN address) and the published `PIXOO_SERVE_PORT` let the device download animations of more than 40 frames from inside the container, as in the stdio configuration above.
+To run it over stdio from an MCP client:
 
-The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `/var/log/pixoo-mcp-server`. OpenTelemetry peer dependencies are installed by default; build with `--build-arg OTEL_ENABLED=false` to omit them.
+```json
+{
+  "mcpServers": {
+    "pixoo-mcp-server": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "MCP_TRANSPORT_TYPE=stdio",
+        "-e", "PIXOO_IP=192.168.1.50",
+        "-e", "PIXOO_SERVE_HOST=192.168.1.20",
+        "-e", "PIXOO_SERVE_PORT=8765",
+        "-p", "8765:8765",
+        "ghcr.io/cyanheads/pixoo-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+The device downloads an animation of more than 40 frames from this host, and on Docker's default bridge network the address routed to the device is the container's own, which the device can't reach. Set `PIXOO_SERVE_HOST` to the Docker host's LAN address and publish a fixed `PIXOO_SERVE_PORT`, as above; 40 frames or fewer need neither.
+
+The image defaults to HTTP transport, stateless session mode, and logs to `/var/log/pixoo-mcp-server`, and ships no browser for `pixoo_render_html`. To build locally, `docker build -t pixoo-mcp-server .`; OpenTelemetry peers are installed by default — build with `--build-arg OTEL_ENABLED=false` to omit them.
 
 ## Project structure
 

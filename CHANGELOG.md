@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.5.0](changelog/1.5.x/1.5.0.md) — 2026-10-28
+
+Publishes the pixoo-guide agent skill over MCP and in every package, moves to mcp-ts-core 0.13.18 (fixing a per-request HTTP memory leak under Bun), and corrects four tool-description statements.
+
 ## [1.4.1](changelog/1.4.x/1.4.1.md) — 2026-10-24
 
 Runs on mcp-ts-core 0.13.16: tool error and recovery text in content[] is Markdown-escaped, numeric and boolean strings in tool arguments are repaired before validation, an out-of-range framework environment value stops startup with the variable named, and device and page text this server echoes into content[] is escaped too.

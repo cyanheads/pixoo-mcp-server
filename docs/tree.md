@@ -1,6 +1,6 @@
 # pixoo-mcp-server - Directory Structure
 
-Generated on: 2026-10-24 15:27:25
+Generated on: 2026-10-29 02:53:35
 
 ```text
 pixoo-mcp-server/
@@ -30,6 +30,7 @@ pixoo-mcp-server/
 │   ├── 1.2.x/
 │   ├── 1.3.x/
 │   ├── 1.4.x/
+│   ├── 1.5.x/
 │   └── template.md
 ├── docs/
 │   └── design.md
@@ -41,6 +42,8 @@ pixoo-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -140,6 +143,9 @@ pixoo-mcp-server/
 │   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
+├── skills/
+│   └── pixoo-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -234,6 +240,8 @@ pixoo-mcp-server/
 │   │   ├── pixoo-device-status.resource.test.ts
 │   │   ├── pixoo-icons.resource.test.ts
 │   │   └── pixoo-themes.resource.test.ts
+│   ├── scripts/
+│   │   └── agent-doc-entry.test.ts
 │   ├── services/
 │   │   ├── browser/
 │   │   │   ├── browser-renderer.discovery.test.ts
@@ -274,7 +282,9 @@ pixoo-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json

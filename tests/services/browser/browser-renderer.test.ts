@@ -9,7 +9,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { access, mkdir } from 'node:fs/promises';
+import { access, chmod, mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
@@ -133,10 +133,11 @@ function render<T>(
 const browser = (i = 0): FakeBrowser => endpoint.browsers[i] as FakeBrowser;
 const commandsOf = (method: string, i = 0) =>
   browser(i).commands.filter((c) => c.method === method);
-const profileOf = (i = 0) =>
-  (browser(i).launch?.argv.find((a) => a.startsWith('--user-data-dir=')) ?? '').slice(
+const profileDirOf = (fake: FakeBrowser) =>
+  (fake.launch?.argv.find((a) => a.startsWith('--user-data-dir=')) ?? '').slice(
     '--user-data-dir='.length,
   );
+const profileOf = (i = 0) => profileDirOf(browser(i));
 const exists = (file: string) =>
   access(file).then(
     () => true,
@@ -966,6 +967,24 @@ describe('crashes', () => {
 });
 
 describe('lifecycle', () => {
+  /**
+   * Whether `fake` is still running and its profile still on disk. The pid check is
+   * synchronous, so chained onto a promise it reads the instant that promise settled.
+   */
+  const stateOf = async (fake: FakeBrowser) => ({
+    running: alive(fake.launch?.pid ?? 0),
+    profile: await exists(profileDirOf(fake)),
+  });
+  const GONE = { running: false, profile: false };
+
+  /** Acknowledge `Browser.close`, then exit once `exit` resolves: a browser slow to exit. */
+  const exitOn =
+    (exit: Promise<void>): CommandHandler =>
+    (_command, b) => {
+      void exit.then(() => b.disconnect());
+      return {};
+    };
+
   it('launches once for consecutive renders', async () => {
     await render(async () => {});
     await render(async () => {});
@@ -979,10 +998,12 @@ describe('lifecycle', () => {
     const first = browser(0);
     const profile = profileOf(0);
     expect(await exists(profile)).toBe(true);
-    await first.disconnected;
+    await first.waitForCommand('Browser.close');
+    // Joins the idle close in flight: settles once that browser has exited and its profile is gone.
+    await renderer.close();
     expect(commandsOf('Browser.close')).toHaveLength(1);
-    await vi.waitFor(async () => expect(await exists(profile)).toBe(false));
     expect(alive(first.launch?.pid ?? 0)).toBe(false);
+    expect(await exists(profile)).toBe(false);
 
     await render(async () => {});
     expect(endpoint.browsers).toHaveLength(2);
@@ -1001,6 +1022,8 @@ describe('lifecycle', () => {
   });
 
   it('close() stops the browser and deletes its profile', async () => {
+    // A grace period past the test's timeout: only a browser that exits on Browser.close passes.
+    makeRenderer({ graceMs: 60_000 });
     await render(async () => {});
     const { pid } = browser().launch ?? { pid: 0 };
     const profile = profileOf();
@@ -1024,5 +1047,107 @@ describe('lifecycle', () => {
   it('close() with no browser running does nothing', async () => {
     await expect(renderer.close()).resolves.toBeUndefined();
     expect(endpoint.browsers).toHaveLength(0);
+  });
+
+  it('close() after a finished close returns, sending nothing more', async () => {
+    await render(async () => {});
+    await renderer.close();
+    await expect(renderer.close()).resolves.toBeUndefined();
+    expect(commandsOf('Browser.close')).toHaveLength(1);
+    expect(endpoint.browsers).toHaveLength(1);
+  });
+
+  it('a close whose profile deletion failed rejects that once; the next browser closes cleanly', async () => {
+    await render(async () => {});
+    // An entry the profile deletion cannot unlink: its directory is not writable.
+    const locked = path.join(profileOf(0), 'locked');
+    await mkdir(locked);
+    await writeFile(path.join(locked, 'entry'), '');
+    await chmod(locked, 0o500);
+    try {
+      await expect(renderer.close()).rejects.toMatchObject({
+        code: expect.stringMatching(/^(EACCES|EPERM)$/),
+      });
+    } finally {
+      await chmod(locked, 0o700);
+    }
+    expect(alive(browser(0).launch?.pid ?? 0)).toBe(false);
+
+    await render(async () => {});
+    expect(endpoint.browsers).toHaveLength(2);
+    const second = browser(1);
+    expect(await renderer.close().then(() => stateOf(second))).toEqual(GONE);
+  });
+
+  it('close() during an in-flight idle close resolves only after the profile is deleted', async () => {
+    makeRenderer({ idleMs: 100 });
+    const exit = Promise.withResolvers<void>();
+    endpoint.handle('Browser.close', exitOn(exit.promise));
+    await render(async () => {});
+    const first = browser();
+    await first.waitForCommand('Browser.close');
+    const closed = renderer.close().then(() => stateOf(first));
+    exit.resolve();
+    expect(await closed).toEqual(GONE);
+    expect(commandsOf('Browser.close')).toHaveLength(1);
+  });
+
+  it('concurrent close() calls each resolve after the profile is gone, sending one Browser.close', async () => {
+    await render(async () => {});
+    const first = browser();
+    const closes = [renderer.close(), renderer.close()].map((c) => c.then(() => stateOf(first)));
+    expect(await Promise.all(closes)).toEqual([GONE, GONE]);
+    expect(commandsOf('Browser.close')).toHaveLength(1);
+  });
+
+  it('a close in flight on a browser that never exits ends in the kill, and close() settles after it', async () => {
+    makeRenderer({ idleMs: 100, graceMs: 200 });
+    endpoint.handle('Browser.close', () => ({}));
+    await render(async () => {});
+    const first = browser();
+    await first.waitForCommand('Browser.close');
+    expect(await renderer.close().then(() => stateOf(first))).toEqual(GONE);
+    expect(commandsOf('Browser.close')).toHaveLength(1);
+  });
+
+  it('a render during an in-flight idle close gets a new browser; close() then waits for both', async () => {
+    makeRenderer({ idleMs: 100 });
+    const exitFirst = Promise.withResolvers<void>();
+    endpoint.handle('Browser.close', (command, b) =>
+      exitOn(b === browser(0) ? exitFirst.promise : Promise.resolve())(command, b),
+    );
+    await render(async () => {});
+    const first = browser(0);
+    await first.waitForCommand('Browser.close');
+
+    const frame = await render((page) => page.capture());
+    expect(frame.buffer).toEqual(panel(16));
+    expect(endpoint.browsers).toHaveLength(2);
+    const second = browser(1);
+
+    const closed = renderer.close().then(async () => [await stateOf(first), await stateOf(second)]);
+    // The second browser exits on Browser.close; the first only when the test lets it.
+    await vi.waitFor(async () => expect(await stateOf(second)).toEqual(GONE));
+    exitFirst.resolve();
+    expect(await closed).toEqual([GONE, GONE]);
+    expect([0, 1].map((i) => commandsOf('Browser.close', i).length)).toEqual([1, 1]);
+  });
+
+  it('close() during a launch that fails resolves once the failed launch is cleaned up', async () => {
+    const fail = Promise.withResolvers<void>();
+    endpoint.handle('Fetch.enable', async (_command, b) => {
+      await fail.promise;
+      b.kill();
+      return never();
+    });
+    const arrived = endpoint.nextBrowser();
+    const rendering = rejection(render(async () => {}));
+    const launched = await arrived;
+    await launched.waitForCommand('Fetch.enable');
+    const closes = [renderer.close(), renderer.close()].map((c) => c.then(() => stateOf(launched)));
+    fail.resolve();
+    expect(await Promise.all(closes)).toEqual([GONE, GONE]);
+    expect((await rendering).data?.reason).toBe('browser_unavailable');
+    expect(commandsOf('Browser.close')).toHaveLength(0);
   });
 });

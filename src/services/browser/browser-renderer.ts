@@ -148,6 +148,8 @@ export class BrowserRenderer {
   readonly #graceMs: number;
   readonly #idleMs: number;
   #launching: Promise<LiveBrowser> | undefined;
+  /** Shutdowns begun by `close()`, the idle close's included, that have not settled. */
+  readonly #closing = new Set<Promise<void>>();
   #active = 0;
   #idleTimer: NodeJS.Timeout | undefined;
 
@@ -289,13 +291,24 @@ export class BrowserRenderer {
 
   /**
    * Close the browser, if one is running, and delete its profile. A render in progress
-   * fails `render_crashed`. The next render launches a new browser.
+   * fails `render_crashed`. The next render launches a new browser. Resolves once every
+   * browser this call or an earlier one began closing, the idle close included, has
+   * exited and had its profile deleted.
    */
   async close(): Promise<void> {
     clearTimeout(this.#idleTimer);
     const launching = this.#launching;
     this.#launching = undefined;
-    const browser = await launching?.catch(() => undefined);
+    if (launching) {
+      const shutdown = this.#shutdown(launching).finally(() => this.#closing.delete(shutdown));
+      this.#closing.add(shutdown);
+    }
+    await Promise.all(this.#closing);
+  }
+
+  /** Close the browser `launching` yields; one still running after the grace period is killed. */
+  async #shutdown(launching: Promise<LiveBrowser>): Promise<void> {
+    const browser = await launching.catch(() => undefined);
     if (!browser) return;
     const grace = AbortSignal.timeout(this.#graceMs);
     await browser.process.cdp.send('Browser.close', {}, { signal: grace }).catch(() => {});

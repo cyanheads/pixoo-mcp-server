@@ -4,7 +4,8 @@
  * the browser: spawned with `--remote-debugging-pipe` wiring, it reads commands from its
  * fd 3 and writes to its fd 4, and bridges both to this process over one 127.0.0.1
  * connection, so each launch is a real child process with a real pid and real pipes,
- * while its CDP behavior is scripted here. Like Chromium, it exits when fd 3 closes.
+ * while its CDP behavior is scripted here. Like Chromium, it exits on `Browser.close` and
+ * when fd 3 closes; it also exits when this endpoint hangs up.
  *
  * On connect it reports its launch — argv and the `Default/Preferences` file of its
  * `--user-data-dir`, read before anything could delete it — as a `FakeLaunch`. Each
@@ -146,7 +147,7 @@ export class FakeBrowser {
     return this.#connected;
   }
 
-  /** Close the browser's side of the pipe, as a browser that exits does. */
+  /** Close the browser's side of the pipe; a spawned fake then exits, as a browser does. */
   disconnect(): void {
     this.#output.end();
   }
@@ -196,7 +197,9 @@ export class FakeBrowser {
 /**
  * The stand-in browser executable. It bridges its fds 3 and 4 to the endpoint's
  * 127.0.0.1 listener and exits when fd 3 closes or the endpoint hangs up. CommonJS, so it
- * runs from an extensionless file.
+ * runs from an extensionless file. Fd 3 is read as a `net.Socket`, a libuv stream: an
+ * `fs` read stream parks a threadpool worker in `read()`, and `process.exit` waits for
+ * that worker, so the process could not exit until the launcher closed fd 3.
  */
 function bridgeSource(port: number): string {
   return `#!${process.execPath}
@@ -215,7 +218,7 @@ if (dirFlag) {
 const socket = net.connect(${port}, '127.0.0.1');
 socket.on('error', () => process.exit(1));
 socket.write(JSON.stringify({ pid: process.pid, argv, preferences }) + '\\0');
-const commands = fs.createReadStream(null, { fd: 3 });
+const commands = new net.Socket({ fd: 3, readable: true, writable: false });
 commands.on('end', () => process.exit(0));
 commands.pipe(socket, { end: false });
 const replies = fs.createWriteStream(null, { fd: 4 });
@@ -273,8 +276,9 @@ export class FakeCdpEndpoint {
   }
 
   /**
-   * Hang up on every fake still connected — each exits once its fd 4 has flushed, so no
-   * pid is signalled — then stop listening and delete the executable.
+   * Hang up on every fake still connected, then stop listening and delete the executable.
+   * Each fake exits by itself once its fd 4 has flushed, with no pid signalled; this does
+   * not wait for those exits.
    */
   async close(): Promise<void> {
     for (const socket of this.#sockets) socket.destroy();

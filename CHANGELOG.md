@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [1.5.1](changelog/1.5.x/1.5.1.md) — 2026-11-21
+
+A one-frame scene that sets an effect or a keyframed animate now returns a notice naming what will not play. A non-Pixoo reply at PIXOO_IP fails device_invalid_response, a cancelled push stops sending device commands, and pixoo-toolkit 0.11 moves some icon pixels.
+
 ## [1.5.0](changelog/1.5.x/1.5.0.md) — 2026-10-28
 
 Publishes the pixoo-guide agent skill over MCP and in every package, moves to mcp-ts-core 0.13.18 (fixing a per-request HTTP memory leak under Bun), and corrects four tool-description statements.

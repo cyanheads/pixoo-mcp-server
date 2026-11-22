@@ -10,6 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type GifHost, openGifHost, routedAddress } from '@/services/pixoo/gif-host.js';
+import { freePort } from '../../helpers/free-port.js';
 
 const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 3, 4]);
 /** Large enough to fill the loopback socket buffers of a client that stops reading. */
@@ -42,15 +43,6 @@ function accepts(port: number): Promise<boolean> {
 
 function portOf(url: string): number {
   return Number(new URL(url).port);
-}
-
-/** A port nothing is listening on. */
-async function freePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as { port: number };
-  await new Promise((resolve) => server.close(resolve));
-  return port;
 }
 
 /** Track whether a promise has settled, without letting a rejection go unhandled. */
@@ -214,12 +206,15 @@ describe('openGifHost', () => {
   });
 
   it('advertises PIXOO_SERVE_HOST and PIXOO_SERVE_PORT while binding the routed address', async () => {
-    const host = await open(GIF, { serveHost: 'pixoo-host.lan', servePort: 8765 });
+    const servePort = await freePort();
+    const host = await open(GIF, { serveHost: 'pixoo-host.lan', servePort });
     expect(host.address).toBe('127.0.0.1');
-    expect(host.url).toMatch(/^http:\/\/pixoo-host\.lan:8765\/[0-9a-f]{32}\.gif$/);
+    expect(host.url).toMatch(
+      new RegExp(`^http://pixoo-host\\.lan:${servePort}/[0-9a-f]{32}\\.gif$`),
+    );
 
     const served = host.served();
-    const res = await fetch(`http://127.0.0.1:8765${new URL(host.url).pathname}`);
+    const res = await fetch(`http://127.0.0.1:${servePort}${new URL(host.url).pathname}`);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(GIF);
     await served;
   });

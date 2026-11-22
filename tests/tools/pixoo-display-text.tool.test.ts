@@ -364,6 +364,12 @@ describe('pixooDisplayText', () => {
       const result = await runToolContract(pixooDisplayText, { text: 'hi', push: true });
       expectDeviceFailure(result, pixooDisplayText.errors, 'device_rejected', undefined);
     });
+
+    it('device_invalid_response carries retryable: false', async () => {
+      failDevicePush({ ok: false, kind: 'response', message: 'Reply is not JSON — a Pixoo?' });
+      const result = await runToolContract(pixooDisplayText, { text: 'hi', push: true });
+      expectDeviceFailure(result, pixooDisplayText.errors, 'device_invalid_response', false);
+    });
   });
 
   describe('static output is pinned byte for byte', () => {

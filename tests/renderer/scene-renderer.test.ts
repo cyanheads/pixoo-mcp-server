@@ -343,7 +343,7 @@ describe('renderElement — icon', () => {
     });
     const { canvas } = renderFrame(0, 1, '#000000', icons, emptyCache(), 64);
     expect(hashOf(canvas)).toMatchInlineSnapshot(
-      `"c13da96f343eebfb540f10abbbafe3d5ae6ff7ec6ad1b971ad65407d74f80d0b"`,
+      `"56d97794674ca03a2b143bf84bb3c0a64d6a4f89504a9e0a653e5036bbd9febb"`,
     );
   });
 
@@ -371,7 +371,7 @@ describe('renderElement — icon', () => {
       h: 12,
     });
     const { canvas } = renderFrame(0, 1, '#000000', icons, emptyCache(), 64);
-    expect(hashOf(canvas)).toBe('0d6e584e0bee995def84d18c3769ed6fe34ea5270c4f44ddc0f889df4cdc79bb');
+    expect(hashOf(canvas)).toBe('861cb0088392cee17dfe8a320624173ac90484caad40d8ca7c5e3ec3a4105001');
   });
 
   describe('glyphs', () => {
@@ -524,7 +524,8 @@ describe('renderElement — icon', () => {
 
     it('"music" draws a beam that joins its two stems across the top', () => {
       const canvas = glyph('music');
-      const beamRow = Array.from({ length: 11 }, (_, i): Pixel => [2 + i, 3]);
+      // Row 3 from the left stem's outer column (2) to the right stem's outer column (11).
+      const beamRow = Array.from({ length: 10 }, (_, i): Pixel => [2 + i, 3]);
       const stems: Pixel[] = [
         [3, 6],
         [11, 6],
@@ -541,8 +542,58 @@ describe('renderElement — icon', () => {
     it('"music" at the default 12px keeps its beam unbroken between the stems', () => {
       const canvas = new Canvas(64);
       renderElement(canvas, { type: 'icon', name: 'music' }, 0, 0, 1, emptyCache(), []);
-      const beamRow = Array.from({ length: 8 }, (_, i): Pixel => [2 + i, 2]);
+      // Row 2 from the left stem's outer column (1) to the right stem's outer column (8).
+      const beamRow = Array.from({ length: 8 }, (_, i): Pixel => [1 + i, 2]);
       expect(beamRow.filter(([x, y]) => !isInk(canvas, x, y))).toEqual([]);
+    });
+
+    it.each<[number, number[]]>([
+      [12, [3, 4, 7, 8]],
+      [16, [5, 6, 9, 10]],
+    ])(
+      '"pause" at %ipx draws two 2px bars with a 2px gap, centered in its box, on every ink row',
+      (size, columns) => {
+        const canvas = new Canvas(64);
+        renderElement(
+          canvas,
+          { type: 'icon', name: 'pause', x: 0, y: 0, w: size, h: size },
+          0,
+          0,
+          1,
+          emptyCache(),
+          [],
+        );
+        const rows = inkRows(canvas);
+        expect(rows.length).toBeGreaterThan(size / 2);
+        const rowColumns = new Set(
+          rows.map((y) =>
+            Array.from({ length: size }, (_, x) => x)
+              .filter((x) => isInk(canvas, x, y))
+              .join(','),
+          ),
+        );
+        expect([...rowColumns]).toEqual([columns.join(',')]);
+      },
+    );
+
+    it.each(['arrow-up', 'arrow-down'])(
+      '"%s" centers its head on the shaft: the glyph mirrors across the shaft column 8',
+      (name) => {
+        const ink = inkPixels(glyph(name));
+        const mirrored = ink.map((pixel) => {
+          const [x, y] = pixel.split(',').map(Number) as [number, number];
+          return `${16 - x},${y}`;
+        });
+        expect(mirrored.sort()).toEqual([...ink].sort());
+      },
+    );
+
+    it('"arrow-right" draws a head as tall as arrow-left\'s whose upper edge runs into the shaft\'s tip', () => {
+      const right = glyph('arrow-right');
+      expect(inkRows(right)).toEqual(inkRows(glyph('arrow-left')));
+      // The shaft ends at (14, 8); the head's widest row reaches the column before it.
+      expect(isInk(right, 14, 8)).toBe(true);
+      expect(isInk(right, 13, 7)).toBe(true);
     });
 
     it('x-circle, alert-circle, and info each draw their own mark', () => {
@@ -720,9 +771,9 @@ describe('renderScene — elements with no keyframed color', () => {
     );
     expect(frames.map(hashOf)).toMatchInlineSnapshot(`
       [
-        "17d9084eb66ff3b30985f2bb8ff496a8d9223970d31fb0e6ca7571bb611731a3",
-        "1fb70ed52b459bb8e9e94e2cb0a765b5f260fb3a732896fb396ae887954268f2",
-        "5fbf8a91ebf019ebb5555e117e0422e8c8ef2fecc65f338e74b6f7f6db0a4e28",
+        "fad524c30fa679b0e0aa79d5116aaa0b95b87e0daeb78f82dd3a50b48270afaa",
+        "91514c47078192cc191d305c618e96b72e03b7270f97aea25787c8642098ec8f",
+        "ddf44abbc69a58c242c85db6a72c12e044e678ca3e285ae92f768be38a0b8bc9",
       ]
     `);
   });
@@ -934,10 +985,10 @@ describe('renderScene — a broad scene', () => {
     );
     expect(frames.map(hashOf)).toMatchInlineSnapshot(`
       [
-        "007bdfccdd8059072f3a62ce57e1f05d0b3f8ce42a693cb8c1f94e8aa9cbb731",
-        "4a6c43d16fdc8fc390f8e7b1712b4b57a0aeb6562dc260903f81b0a2c9a2ede4",
-        "8ec68ecb7c75cdc2a9e55a398c62d913c6e75f5f76f664abdfa8b0ffa0d245d2",
-        "308fcf11e46731273482c324e78219121af6e1189fdde69e83183e2ede6be47d",
+        "98d928476d372d5abe6fd4ae45dabefd7eb227f15882ed6caa05063ae660615d",
+        "cce86fda5de0f5e2083bd0d7b388efd84eba468142200b57b05cb8646b4b0b90",
+        "d5f6e2da2054f11d315082b345b68ae4a55b48f94d0fe36a34eb686d89c6ccac",
+        "eb7572e2f40053e47766cb16b4ae51d4fb069c78a301a782629fab8d27941797",
       ]
     `);
     expect(layoutLines(layoutEntries)).toMatchInlineSnapshot(`

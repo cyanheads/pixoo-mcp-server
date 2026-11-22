@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooOverlayText } from '@/mcp-server/tools/definitions/pixoo-overlay-text.tool.js';
 import { getPixooService, initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { resultReadBack } from '../helpers/commonmark.js';
 import { expectDeviceFailure, resultText } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
 import { expectInvalidColor, PROTOTYPE_COLOR_INPUTS } from '../helpers/prototype-color-names.js';
@@ -179,6 +180,42 @@ describe('pixooOverlayText', () => {
       expectForwardedRecovery(result, pixooOverlayText.errors, 'device_rejected');
     });
 
+    it('device_invalid_response — computed from a non-Pixoo reply in clear mode', async () => {
+      vi.spyOn(getPixooService(), 'clearText').mockResolvedValue({
+        ok: false,
+        kind: 'response',
+        message: 'Reply to Draw/ClearHttpText carries no numeric error_code — is 10.0.0.1 a Pixoo?',
+      } as never);
+      const result = await runToolContract(pixooOverlayText, { mode: 'clear', id: 2 });
+      expectForwardedRecovery(result, pixooOverlayText.errors, 'device_invalid_response');
+      expectDeviceFailure(result, pixooOverlayText.errors, 'device_invalid_response', false);
+    });
+
+    it.each([
+      ['set', 'sendText', 'Draw/SendHttpText'],
+      ['clear', 'clearText', 'Draw/ClearHttpText'],
+    ] as const)(
+      'device_invalid_response in %s mode tells the caller to find the Pixoo and point PIXOO_IP at it',
+      async (mode, method, command) => {
+        const hint =
+          "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.";
+        vi.spyOn(getPixooService(), method).mockResolvedValue({
+          ok: false,
+          kind: 'response',
+          message: `Reply to ${command} is not JSON — is 10.0.0.1 a Pixoo?`,
+        } as never);
+
+        const result = await runToolContract(pixooOverlayText, { mode, id: 2, text: 'Hi' });
+
+        const { error } = result.structuredContent as {
+          error: { data: { reason: string; recovery: { hint: string } } };
+        };
+        expect(error.data.reason).toBe('device_invalid_response');
+        expect(error.data.recovery.hint).toBe(hint);
+        expect(resultReadBack(result)).toContain(`Recovery: ${hint}`);
+      },
+    );
+
     it.each([
       ['set', 503],
       ['clear', 404],
@@ -201,6 +238,14 @@ describe('pixooOverlayText', () => {
       [{ kind: 'http', status: 503, message: 'HTTP 503' }, 'device_http_error', true],
       [{ kind: 'http', status: 404, message: 'HTTP 404' }, 'device_http_error', false],
       [{ kind: 'device', deviceCode: 1, message: 'error_code 1' }, 'device_rejected', undefined],
+      [
+        {
+          kind: 'response',
+          message: 'Reply to Draw/SendHttpText is not JSON — is 10.0.0.1 a Pixoo?',
+        },
+        'device_invalid_response',
+        false,
+      ],
     ])('%o → %s, retryable: %s', async (failure, reason, retryable) => {
       vi.spyOn(getPixooService(), 'sendText').mockResolvedValue({
         ok: false,

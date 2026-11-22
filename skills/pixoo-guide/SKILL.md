@@ -4,7 +4,7 @@ description: Gates and workflows for the pixoo_* tools that drive a Divoom Pixoo
 license: Apache-2.0
 metadata:
   author: cyanheads
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Scope
@@ -30,8 +30,8 @@ Design craft (legibility floors, palettes, layout zones, motion budget, HTML pag
 
 ## Gates
 
-1. **Tell "not configured" from "unreachable" before pushing.** The brief's `reachable: false` covers both. `pixoo://device/status` returns `configuredIp: null` when no device is configured, and then every push, overlay, and pixoo_control_device change fails `no_device_configured` (a bare pixoo_control_device read just returns `reachable: false`). You cannot fix that from a tool: run pixoo_discover_devices, give the user the `ip`, and ask them to set `PIXOO_IP` in the server's configuration and restart the server, which reads its environment once at startup. Until then, render with `push: false` only.
-2. **Preview with `push: false` until the result is right, then push.** The render tools default to `push: true`. Before pushing, check the image and the response: a `layout` entry with `fits: false` runs off the panel (pixoo_compose_scene never refits an element), a notice naming a character drawn as `?`, and `pageErrors` from pixoo_render_html, where a blocked network asset is reported and the page still renders without it. Then repeat the same call with `push: true`. The same arguments render the same pixels, so the push matches the preview, except for an HTML page that calls `Math.random` or reads the start time through `Date`: each call draws those anew. When the pushed page must match the preview, use a seeded generator.
+1. **Tell "not configured" from "unreachable" before pushing.** The brief's `reachable: false` covers both, and a `PIXOO_IP` that something other than a Pixoo answers. `pixoo://device/status` returns `configuredIp: null` when no device is configured, and then every push, overlay, and pixoo_control_device change fails `no_device_configured` (a bare pixoo_control_device read just returns `reachable: false`). You cannot fix that from a tool: run pixoo_discover_devices, give the user the `ip`, and ask them to set `PIXOO_IP` in the server's configuration and restart the server, which reads its environment once at startup. Until then, render with `push: false` only.
+2. **Preview with `push: false` until the result is right, then push.** The render tools default to `push: true`. Before pushing, check the image and the response: a `layout` entry with `fits: false` runs off the panel (pixoo_compose_scene never refits an element), a notice naming a character drawn as `?`, a notice that a one-frame scene's `effect` or `animate` elements do not move (set `frames`, 20 for a start), and `pageErrors` from pixoo_render_html, where a blocked network asset is reported and the page still renders without it. Then repeat the same call with `push: true`. The same arguments render the same pixels, so the push matches the preview, except for an HTML page that calls `Math.random` or reads the start time through `Date`: each call draws those anew. When the pushed page must match the preview, use a seeded generator.
 3. **A failed push returns no image.** The error carries the saved preview's path in `data.outputFiles`, and the image block is dropped. When the device is not confirmed reachable, preview with `push: false` first so you still see the render.
 4. **Judge dark and muted colors with the panel in mind.** The preview shows the sRGB values pushed. On a Pixoo-64 at brightness 100, channel levels 0–4 stay unlit and muted warm tones read redder (`#D97757` reads red), so a near-black accent that shows in the preview can vanish on the panel.
 5. **A push takes over the panel.** It switches the device to the `custom` channel and replaces whatever was showing, a clock face included; the server never switches back. When the user wants the previous display back afterward ("flash this, then go back"), call pixoo_control_device with no arguments first and keep `channel` and `clockId`. Restore with `channel`, plus `clockFaceId` when the channel was `faces`: one call applies the channel before the clock face.
@@ -45,7 +45,7 @@ A rendered clock shows the time it was rendered. For the time of day, the device
 
 ### Weather with an animated icon
 
-Get the conditions from a weather source, map them to a registry icon, then compose: a dark background, the icon with an `effect` (`pulse`, `float`, or `twinkle`), and text elements for the reading. Set `frames` (say 20): the default is 1, and a single frame renders the effect static with no warning. pixoo_design_brief topic `dashboard` covers the numerals font and unit labels. Preview, then push. When the registry can't express the scene, pixoo_render_html draws it if the brief's `htmlRenderer` is `available`.
+Get the conditions from a weather source, map them to a registry icon, then compose: a dark background, the icon with an `effect` (`pulse`, `float`, or `twinkle`), and text elements for the reading. Set `frames` (say 20): the default is 1, and a single frame renders the effect static, with a response notice naming each element that asks for motion. pixoo_design_brief topic `dashboard` covers the numerals font and unit labels. Preview, then push. When the registry can't express the scene, pixoo_render_html draws it if the brief's `htmlRenderer` is `available`.
 
 ### A scrolling message
 
@@ -63,6 +63,7 @@ pixoo_overlay_text has no preview, and it does not switch the channel the way a 
 |:--------|:----------|
 | `no_device_configured` | Gate 1 |
 | `device_unreachable` on repeated calls | pixoo_discover_devices. `configuredIpFound: false` means `PIXOO_IP` matches no panel discovery found; the user sets it to the discovered `ip` and restarts the server |
+| `device_invalid_response` | Something other than a Pixoo answers at `PIXOO_IP`, and retrying reaches it again. Run pixoo_discover_devices, then the user sets `PIXOO_IP` to the discovered `ip` and restarts the server |
 | `discovery_failed` | Discovery asks Divoom's cloud, so the server's machine needs internet. Otherwise the user finds the panel's IP in the router's client list |
 | `pushed: true`, nothing visible | The response notice names the screen, brightness, or channel problem and the pixoo_control_device call that fixes it. Otherwise run pixoo_design_brief with topic `troubleshooting` |
 | "Loading..." on the panel for a few seconds | Expected when a new animation starts |

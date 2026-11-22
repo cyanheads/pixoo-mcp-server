@@ -285,6 +285,12 @@ describe('pixooPushImage', () => {
       const result = await runToolContract(pixooPushImage, { source: fixturePath, push: true });
       expectDeviceFailure(result, pixooPushImage.errors, 'device_rejected', undefined);
     });
+
+    it('device_invalid_response carries retryable: false', async () => {
+      failDevicePush({ ok: false, kind: 'response', message: 'Reply is not JSON — a Pixoo?' });
+      const result = await runToolContract(pixooPushImage, { source: fixturePath, push: true });
+      expectDeviceFailure(result, pixooPushImage.errors, 'device_invalid_response', false);
+    });
   });
 
   it('a cancelled call tears down its URL download and pushes nothing', async () => {
@@ -880,6 +886,261 @@ describe('pixooPushImage', () => {
         expectInvalidColor(result, pixooPushImage.errors, entry);
         expect(resultText(result)).toContain('finish.palette');
         expect(client.push).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('a JPEG carrying an EXIF orientation pushes upright', () => {
+    let dir: string;
+    /**
+     * A 64×32 JPEG stored with its left half red and its right half blue, tagged EXIF
+     * orientation 6 (rotate 90° clockwise to display): upright, it is 32×64, red over blue.
+     */
+    let rotated: string;
+
+    beforeAll(async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-push-exif-'));
+      const stored = Buffer.alloc(64 * 32 * 3);
+      for (let p = 0; p < 64 * 32; p++) {
+        const red = p % 64 < 32;
+        stored[p * 3] = red ? 255 : 0;
+        stored[p * 3 + 2] = red ? 0 : 255;
+      }
+      rotated = path.join(dir, 'rotated.jpg');
+      await sharp(stored, { raw: { width: 64, height: 32, channels: 3 } })
+        .jpeg({ quality: 100, chromaSubsampling: '4:4:4' })
+        .withMetadata({ orientation: 6 })
+        .toFile(rotated);
+    });
+
+    afterAll(async () => {
+      await fs.rm(dir, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+      // TEST-NET-1 address: never routable. The device client is a fake regardless.
+      process.env['PIXOO_IP'] = '192.0.2.1';
+      resetServerConfig();
+      initPixooService(fakeConfig, fakeStorage);
+    });
+
+    /**
+     * A 64×64 image as one string per row, read through `rgbaAt`: r red, b blue, . empty
+     * (transparent in the frame, black in the RGB preview), ? anything else.
+     */
+    function colorMap(rgbaAt: (x: number, y: number) => ArrayLike<number>): string[] {
+      return Array.from({ length: 64 }, (_, y) =>
+        Array.from({ length: 64 }, (_, x) => {
+          const px = rgbaAt(x, y);
+          const [r, g, b, a] = [px[0] ?? 0, px[1] ?? 0, px[2] ?? 0, px[3] ?? 0];
+          if (a === 0 || (r < 60 && g < 60 && b < 60)) return '.';
+          if (r > 200 && g < 60 && b < 60) return 'r';
+          if (b > 200 && r < 60 && g < 60) return 'b';
+          return '?';
+        }).join(''),
+      );
+    }
+
+    it('orientation 6: the pushed frame and its preview hold the upright 32×64 image, red over blue, centered', async () => {
+      expect((await sharp(rotated).metadata()).orientation).toBe(6);
+      // contain places the upright 32×64 image at 1:1 in columns 16–47.
+      const upright = Array.from(
+        { length: 64 },
+        (_, y) => `${'.'.repeat(16)}${(y < 32 ? 'r' : 'b').repeat(32)}${'.'.repeat(16)}`,
+      );
+
+      const client = stubDeviceState();
+      const result = await runToolContract(pixooPushImage, { source: rotated, push: true });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({ pushed: true, frames: 1, sourceFrames: 1 });
+      expect(client.push).toHaveBeenCalledTimes(1);
+      const frame = client.push.mock.calls[0]![0] as Canvas;
+      expect(colorMap((x, y) => frame.getPixelRgba(x, y))).toEqual(upright);
+
+      // The preview is the frame at 8×: read each 8×8 cell at its center.
+      const images = result.content.filter((block) => block.type === 'image');
+      expect(images).toHaveLength(1);
+      const { data, info } = await sharp(
+        Buffer.from((images[0] as { data: string }).data, 'base64'),
+      )
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      expect([info.width, info.height]).toEqual([512, 512]);
+      const cellCenter = (x: number, y: number) => {
+        const i = ((y * 8 + 4) * 512 + x * 8 + 4) * 4;
+        return data.subarray(i, i + 4);
+      };
+      expect(colorMap(cellCenter)).toEqual(upright);
+    });
+  });
+
+  describe('a WebP carrying an EXIF orientation: a still pushes upright, an animation as stored', () => {
+    /** Every color the fixtures draw, by the letter a frame is read back in. */
+    const COLORS: Record<string, readonly [number, number, number]> = {
+      r: [255, 0, 0],
+      b: [0, 0, 255],
+      g: [0, 255, 0],
+      y: [255, 255, 0],
+      m: [255, 0, 255],
+      c: [0, 255, 255],
+      w: [255, 255, 255],
+      o: [255, 128, 0],
+    };
+    const LETTER_OF = new Map(
+      Object.entries(COLORS).map(([letter, rgb]) => [rgb.join(','), letter]),
+    );
+    /** The 4-frame animation, each frame stored 64×32: its left half, then its right half. */
+    const ANIMATION = ['rb', 'gy', 'mc', 'wo'];
+    const DELAYS = [30, 60, 90, 120];
+
+    let dir: string;
+    const files: Record<string, string> = {};
+
+    const opaque = (letter: string) => [...COLORS[letter]!, 255];
+
+    /** A 64×32 PNG whose left and right halves are the RGBA `left` and `right`. */
+    function split(left: number[], right: number[]): Promise<Buffer> {
+      const px = Buffer.alloc(64 * 32 * 4);
+      for (let p = 0; p < 64 * 32; p++) px.set(p % 64 < 32 ? left : right, p * 4);
+      return sharp(px, { raw: { width: 64, height: 32, channels: 4 } })
+        .png()
+        .toBuffer();
+    }
+
+    /** A 64×64 frame as one string per row: a color's letter, `.` transparent, `?` else. */
+    function rows(frame: Canvas): string[] {
+      return Array.from({ length: 64 }, (_, y) =>
+        Array.from({ length: 64 }, (_, x) => {
+          const [r, g, b, a] = frame.getPixelRgba(x, y);
+          return a === 0 ? '.' : (LETTER_OF.get(`${r},${g},${b}`) ?? '?');
+        }).join(''),
+      );
+    }
+
+    /** A frame as stored, unrotated: contain places the 64×32 image at 1:1 in rows 16–47. */
+    const asStored = (halves: string) =>
+      Array.from({ length: 64 }, (_, y) =>
+        y < 16 || y >= 48 ? '.'.repeat(64) : `${halves[0]!.repeat(32)}${halves[1]!.repeat(32)}`,
+      );
+
+    beforeAll(async () => {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pixoo-push-webp-exif-'));
+      const frames = await Promise.all(
+        ANIMATION.map((halves) => split(opaque(halves[0]!), opaque(halves[1]!))),
+      );
+      const animation = () =>
+        sharp(frames, { join: { animated: true } }).webp({ lossless: true, delay: DELAYS });
+      // Frames 0 and 1 differ only in the color under full transparency, which the encoder
+      // drops, so they decode identical: a re-encode of the file merges them into one.
+      const repeat = await Promise.all([
+        split(opaque('r'), [0, 0, 0, 0]),
+        split(opaque('r'), [0, 255, 0, 0]),
+        split(opaque('b'), [0, 0, 0, 0]),
+      ]);
+      const repeated = () =>
+        sharp(repeat, { join: { animated: true } }).webp({ lossless: true, delay: [30, 60, 90] });
+      const still = await split(opaque('r'), opaque('b'));
+      const fixtures: Record<string, Promise<Buffer>> = {
+        o6: animation().withMetadata({ orientation: 6 }).toBuffer(),
+        o3: animation().withMetadata({ orientation: 3 }).toBuffer(),
+        still6: sharp(still).webp({ lossless: true }).withMetadata({ orientation: 6 }).toBuffer(),
+        repeatUntagged: repeated().toBuffer(),
+        repeat1: repeated().withMetadata({ orientation: 1 }).toBuffer(),
+      };
+      await Promise.all(
+        Object.entries(fixtures).map(async ([name, data]) => {
+          files[name] = path.join(dir, `${name}.webp`);
+          await fs.writeFile(files[name]!, await data);
+        }),
+      );
+    });
+
+    afterAll(async () => {
+      await fs.rm(dir, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+      // TEST-NET-1 address: never routable. The device client is a fake regardless.
+      process.env['PIXOO_IP'] = '192.0.2.1';
+      resetServerConfig();
+      initPixooService(fakeConfig, fakeStorage);
+    });
+
+    it.each([6, 3])(
+      'an animation tagged orientation %i pushes every frame unrotated, in source order, at the source delays',
+      async (orientation) => {
+        const source = files[`o${orientation}`]!;
+        expect(await sharp(source).metadata()).toMatchObject({
+          pages: 4,
+          orientation,
+          delay: DELAYS,
+        });
+        const client = stubDeviceState();
+
+        const result = await runToolContract(pixooPushImage, { source, push: true });
+
+        expect(result.isError).toBeFalsy();
+        // 300 ms over 4 frames.
+        expect(result.structuredContent).toMatchObject({
+          pushed: true,
+          frames: 4,
+          sourceFrames: 4,
+          speed: 75,
+        });
+        expect(client.pushAnimation).toHaveBeenCalledTimes(1);
+        const [frames] = client.pushAnimation.mock.calls[0] as [Canvas[]];
+        expect(frames.map(rows)).toEqual(ANIMATION.map(asStored));
+      },
+    );
+
+    it('a still tagged orientation 6 pushes upright: 32×64, red over blue, centered', async () => {
+      expect(await sharp(files['still6']!).metadata()).toMatchObject({ orientation: 6 });
+      const client = stubDeviceState();
+
+      const result = await runToolContract(pixooPushImage, {
+        source: files['still6']!,
+        push: true,
+      });
+
+      expect(result.structuredContent).toMatchObject({ pushed: true, frames: 1, sourceFrames: 1 });
+      expect(client.push).toHaveBeenCalledTimes(1);
+      expect(rows(client.push.mock.calls[0]![0] as Canvas)).toEqual(
+        Array.from(
+          { length: 64 },
+          (_, y) => `${'.'.repeat(16)}${(y < 32 ? 'r' : 'b').repeat(32)}${'.'.repeat(16)}`,
+        ),
+      );
+    });
+
+    it.each([
+      ['no orientation tag', 'repeatUntagged'],
+      ['orientation 1', 'repeat1'],
+    ])(
+      'an animation with %s pushes the frames the decoder reads, a repeated frame included',
+      async (_label, name) => {
+        const source = files[name]!;
+        const decoded = await loadAnimation(source, {
+          size: 64,
+          fit: 'contain',
+          kernel: 'nearest',
+          maxFrames: 40,
+        });
+        expect(decoded.sourceFrames).toBe(3);
+        expect(hashOf(decoded.frames[0]!)).toBe(hashOf(decoded.frames[1]!));
+        const client = stubDeviceState();
+
+        const result = await runToolContract(pixooPushImage, { source, push: true });
+
+        // 180 ms over 3 frames.
+        expect(result.structuredContent).toMatchObject({
+          pushed: true,
+          frames: 3,
+          sourceFrames: 3,
+          speed: 60,
+        });
+        const [frames] = client.pushAnimation.mock.calls[0] as [Canvas[]];
+        expect(frames.map(hashOf)).toEqual(decoded.frames.map(hashOf));
       },
     );
   });

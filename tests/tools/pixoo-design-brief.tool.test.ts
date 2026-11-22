@@ -291,6 +291,31 @@ describe('pixooDesignBrief', () => {
     expect(craftGuidance).toContain('#D97757 reads red');
   });
 
+  it('topic "troubleshooting" covers a scene that does not animate', async () => {
+    stubStatus();
+    const { craftGuidance } = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'troubleshooting' }),
+      createMockContext(),
+    );
+    expect(craftGuidance).toContain('**Scene does not animate:**');
+    expect(craftGuidance).toContain(
+      'pixoo_compose_scene renders 1 frame unless frames is set, and effect or animate motion needs 2 or more',
+    );
+  });
+
+  it('topic "animation" lists the fade presets and says motion needs 2 or more frames', async () => {
+    stubStatus();
+    const { craftGuidance } = await pixooDesignBrief.handler(
+      pixooDesignBrief.input.parse({ topic: 'animation' }),
+      createMockContext(),
+    );
+    expect(craftGuidance).toContain('`fade-in` / `fade-out`');
+    expect(craftGuidance).toContain(
+      'Effects and keyframe tracks move only across 2 or more frames.',
+    );
+    expect(craftGuidance).toContain('pixoo_compose_scene defaults to 1');
+  });
+
   it.each(['text', 'dashboard'] as const)(
     'topic "%s" lists the symbols beyond ASCII and the numerals face',
     async (topic) => {

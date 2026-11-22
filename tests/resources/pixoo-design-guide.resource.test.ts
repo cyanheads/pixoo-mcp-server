@@ -35,6 +35,12 @@ describe('pixooDesignGuideResource', () => {
     expect(legibility).toContain('`° ← ↑ → ↓ ▲ ▼ ♥ · …`');
   });
 
+  it('Effect Preset Reference says motion needs 2 or more frames', () => {
+    const presets = guide().split('## Effect Preset Reference')[1]?.split('## ')[0] ?? '';
+    expect(presets).toContain('move only across 2 or more frames');
+    expect(presets).toContain('defaults to `frames: 1`');
+  });
+
   it('lists itself', async () => {
     const listing = await pixooDesignGuideResource.list!(listExtra());
     expect(listing.resources).toEqual([

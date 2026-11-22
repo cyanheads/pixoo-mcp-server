@@ -13,7 +13,7 @@ import { ImageSourceSchema, SpritePathSchema } from '@/mcp-server/tools/asset-so
 import { pushKeepingPreview, visibilityNotice } from '@/mcp-server/tools/device-push.js';
 import { FinishSchema } from '@/mcp-server/tools/finish-schema.js';
 import { ICONS } from '@/renderer/icons.js';
-import { numericValue } from '@/renderer/keyframes.js';
+import { drawsOnFrame, numericValue } from '@/renderer/keyframes.js';
 import {
   autoSavePreview,
   buildContactSheet,
@@ -140,7 +140,7 @@ const BaseElementProps = {
   dx: z.number().int().optional().describe('X offset nudge in pixels.'),
   dy: z.number().int().optional().describe('Y offset nudge in pixels.'),
   effect: EffectSchema.optional().describe(
-    'Named animation preset for this element. Set either effect or animate, not both.',
+    'Named animation preset for this element; its motion needs 2 or more frames. Set either effect or animate, not both.',
   ),
 };
 
@@ -493,6 +493,28 @@ const LayoutEntrySchema = z
   })
   .describe('Layout report entry.');
 
+/**
+ * The notice for a one-frame scene whose elements ask for motion: each element with an
+ * `effect`, or an `animate` track of 2 or more keyframes, by index, type, and preset, marking
+ * those that frame does not draw. A one-keyframe track holds one value, so it is not motion.
+ * `undefined` when no element asks for motion. It names an example frame count, not a
+ * minimum: at 2 frames `pulse` samples its sine at 0 and π and renders two identical frames,
+ * and no notice fires there.
+ */
+function singleFrameMotionNotice(
+  elements: ReadonlyArray<z.infer<typeof ElementSchema>>,
+): string | undefined {
+  const named = elements.flatMap((el, index) => {
+    const keyframed = Object.values(el.animate ?? {}).some((track) => (track?.length ?? 0) >= 2);
+    if (!el.effect && !keyframed) return [];
+    const motion = el.effect ? `effect ${el.effect.name}` : 'animate';
+    const hidden = drawsOnFrame(el, index, 0, 1) ? '' : ', not drawn on that frame';
+    return [`element ${index} (${el.type}, ${motion}${hidden})`];
+  });
+  if (named.length === 0) return;
+  return `Rendered 1 frame (frames defaults to 1), so nothing animates: ${named.join('; ')}. Set frames, for example to 20, to animate.`;
+}
+
 export const pixooComposeScene = tool('pixoo_compose_scene', {
   title: 'pixoo_compose_scene',
   description:
@@ -543,7 +565,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       .max(800)
       .default(1)
       .describe(
-        'Number of animation frames (1–800, default: 1). 20 frames at 150ms ≈ 3s loop. Up to 40 push frame by frame; more play as one GIF the device downloads from this host, so the device must reach it (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), and speed rounds to the nearest 10 ms.',
+        'Number of animation frames (1–800, default: 1). Motion from effect or animate needs 2 or more. 20 frames at 150ms ≈ 3s loop. Up to 40 push frame by frame; more play as one GIF the device downloads from this host, so the device must reach it (behind NAT or a firewall, set PIXOO_SERVE_HOST and PIXOO_SERVE_PORT), and speed rounds to the nearest 10 ms.',
       ),
     speed: z
       .number()
@@ -627,6 +649,15 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Device firmware returned a non-zero error code.',
       recovery: 'Note the device error code and check the Pixoo documentation.',
+      thrownBy: 'service',
+    },
+    {
+      reason: 'device_invalid_response',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: "Something answered at PIXOO_IP, but its reply was not a Pixoo's (JSON with a numeric error_code).",
+      retryable: false,
+      recovery:
+        "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.",
       thrownBy: 'service',
     },
     {
@@ -722,7 +753,15 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
         size,
       ));
     } catch (err) {
-      if (err instanceof Error && err.message.includes('Unknown color')) {
+      /*
+       * The toolkit's color error is a plain Error. An McpError's message can quote a
+       * caller's path or name, so the text match never reads one.
+       */
+      if (
+        err instanceof Error &&
+        !(err instanceof McpError) &&
+        err.message.includes('Unknown color')
+      ) {
         throw ctx.fail('invalid_color', `${err.message}. Valid named colors: ${validColorNames}.`);
       }
       if (err instanceof McpError && err.data?.['reason'] === 'unknown_icon') {
@@ -771,6 +810,8 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
       }),
     );
     if (fallback) notices.push(fallback);
+    const motion = isAnimation ? undefined : singleFrameMotionNotice(input.elements);
+    if (motion) notices.push(motion);
     let pushed = false;
     let deviceState: DeviceStateSnapshot | undefined;
     if (input.push) {
@@ -782,6 +823,7 @@ export const pixooComposeScene = tool('pixoo_compose_scene', {
             : svc.pushFrame(firstFrame, ctx),
         outputFiles,
         writePreview,
+        ctx.signal,
       );
       pushed = true;
       const visibility = visibilityNotice(deviceState);

@@ -1,12 +1,15 @@
 /**
- * @fileoverview Drives the real `PixooService` push path against a fake device client —
- * a failing push, or a successful push followed by a chosen device-state read-back — and
- * asserts the assembled tool result on both client surfaces.
+ * @fileoverview Drives the real `PixooService` push path against a fake device — a fake
+ * client in place of the toolkit's (a failing push, or a successful push followed by a
+ * chosen device-state read-back), or a stand-in Pixoo on loopback behind the real
+ * client — and asserts the assembled tool result on both client surfaces.
  * @module tests/helpers/device-failure
  */
 
 import { rmSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
@@ -24,6 +27,109 @@ const ok = (data: object = {}) => ({ ok: true, data: { error_code: 0, ...data } 
  * frames binds the local address routed to it, so the listener stays on loopback.
  */
 const FAKE_DEVICE_IP = '127.0.0.1';
+
+/** The URL a `PixooClient` for {@link FAKE_DEVICE_IP} posts every command to. */
+const FAKE_DEVICE_URL = `http://${FAKE_DEVICE_IP}/post`;
+
+/** A reply {@link startFakePixoo} sends. Status defaults to 200, type to JSON. */
+export interface FakeReply {
+  body: string;
+  status?: number;
+  type?: string;
+}
+
+/** A stand-in Pixoo started by {@link startFakePixoo}. */
+export interface FakePixoo {
+  /** Stop the server and drop any open connection; the real `fetch` is back afterwards. */
+  close(): Promise<void>;
+  /** The `Command` of every request received, in arrival order. */
+  commands: string[];
+  /**
+   * The `Command` of every request the client has started, in call order — recorded
+   * when `fetch` is called, before the request can reach the server.
+   */
+  requested: string[];
+}
+
+/**
+ * Status-200 replies that are not a Pixoo's JSON envelope with a numeric `error_code` —
+ * what a router page or another HTTP service at `PIXOO_IP` sends.
+ */
+export const NON_PIXOO_REPLIES: ReadonlyArray<[label: string, reply: FakeReply]> = [
+  [
+    'an HTML page',
+    { type: 'text/html', body: '<!doctype html><title>Router</title><p>Sign in</p>' },
+  ],
+  ['an empty body', { type: 'text/plain', body: '' }],
+  ['JSON without an error_code', { body: '{"status":"ok"}' }],
+  ['JSON with a string error_code', { body: '{"error_code":"0"}' }],
+];
+
+/** What a Pixoo-64 on `channel`, the Custom channel unless given, answers each command with. */
+export function pixooReply(command: string, channel: Channel = Channel.Custom): FakeReply {
+  switch (command) {
+    case 'Channel/GetIndex':
+      return { body: JSON.stringify({ error_code: 0, SelectIndex: channel }) };
+    case 'Channel/GetAllConf':
+      return {
+        body: JSON.stringify({ error_code: 0, Brightness: 80, LightSwitch: 1, CurClockId: 0 }),
+      };
+    default:
+      return { body: JSON.stringify({ error_code: 0 }) };
+  }
+}
+
+/**
+ * Stand in for a Pixoo at `PIXOO_IP=127.0.0.1` with a real HTTP server on a free
+ * loopback port. `fetch` is wrapped to send the device URL there, and only that URL:
+ * each command still travels through the real `fetch` and socket with the caller's
+ * signal, so an abort tears the request down as it would against the device. A
+ * request's `Command` is recorded once its body has arrived; `answer` then picks the
+ * reply, a Pixoo's by default. `answer` runs while the caller awaits that reply, so a
+ * test can abort the call from there with the request in flight, and `undefined`
+ * leaves the request unanswered.
+ */
+export async function startFakePixoo(
+  answer: (command: string) => FakeReply | undefined = pixooReply,
+): Promise<FakePixoo> {
+  const commands: string[] = [];
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => {
+      raw += chunk;
+    });
+    req.on('end', () => {
+      const command = String((JSON.parse(raw) as { Command?: unknown }).Command);
+      commands.push(command);
+      const reply = answer(command);
+      if (!reply) return;
+      res
+        .writeHead(reply.status ?? 200, { 'Content-Type': reply.type ?? 'application/json' })
+        .end(reply.body);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const target = `http://127.0.0.1:${(server.address() as AddressInfo).port}/post`;
+
+  const requested: string[] = [];
+  const realFetch = globalThis.fetch;
+  const routed = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    if (String(input) !== FAKE_DEVICE_URL) return realFetch(input, init);
+    requested.push(String((JSON.parse(String(init?.body)) as { Command?: unknown }).Command));
+    return realFetch(target, init);
+  });
+
+  return {
+    commands,
+    requested,
+    close: () => {
+      routed.mockRestore();
+      server.closeAllConnections();
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
+}
 
 /**
  * Swap the service's device client for a fake whose frame pushes, animation pushes,

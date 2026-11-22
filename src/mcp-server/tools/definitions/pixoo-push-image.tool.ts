@@ -62,9 +62,22 @@ async function loadFrames(
   placement: Parameters<typeof loadImage>[1],
   maxFrames: number,
 ): Promise<LoadedAnimation> {
-  const { format } = await sharp(image).metadata();
+  const { format, pages = 1, orientation = 1 } = await sharp(image).metadata();
   if (ANIMATED_FORMATS.has(format)) {
-    return loadAnimation(image, { ...placement, maxFrames });
+    /**
+     * The toolkit turns the pages upright as one stacked strip, which libvips refuses for
+     * a quarter turn and plays in reverse for a half turn or a vertical flip
+     * (cyanheads/pixoo-toolkit#67). Until it orients each page, an oriented animation
+     * loads its frames as stored: a lossless re-encode drops the EXIF tag and keeps the
+     * pixels, the timing, and the loop count (libwebp folds consecutive identical frames
+     * into one that holds their summed delay). Effort 0 decodes to the same frames as the
+     * default effort at a fraction of the time.
+     */
+    const source =
+      pages > 1 && orientation !== 1
+        ? await sharp(image, { animated: true }).webp({ lossless: true, effort: 0 }).toBuffer()
+        : image;
+    return loadAnimation(source, { ...placement, maxFrames });
   }
   return { frames: [await loadImage(image, placement)], delays: [0], sourceFrames: 1 };
 }
@@ -197,6 +210,15 @@ export const pixooPushImage = tool('pixoo_push_image', {
       thrownBy: 'service',
     },
     {
+      reason: 'device_invalid_response',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: "Something answered at PIXOO_IP, but its reply was not a Pixoo's (JSON with a numeric error_code).",
+      retryable: false,
+      recovery:
+        "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.",
+      thrownBy: 'service',
+    },
+    {
       reason: 'gif_serve_failed',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'An animation of more than 40 frames could not be served to the device: its listener failed to open, its URL ran past 255 bytes, or the device did not request the GIF within 10 s of the play, stalled its transfer for 10 s, or dropped it.',
@@ -316,6 +338,7 @@ export const pixooPushImage = tool('pixoo_push_image', {
             : svc.pushAnimation(frames, speed, ctx, viaGif ? panelGif(speed) : undefined),
         outputFiles,
         writePreview,
+        ctx.signal,
       );
       pushed = true;
       const notice = visibilityNotice(deviceState);

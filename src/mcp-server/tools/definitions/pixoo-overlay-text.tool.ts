@@ -110,6 +110,14 @@ export const pixooOverlayText = tool('pixoo_overlay_text', {
       recovery: 'Check the overlay ID is valid (0–19) and the device is in a ready state.',
     },
     {
+      reason: 'device_invalid_response',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: "Something answered at PIXOO_IP, but its reply was not a Pixoo's (JSON with a numeric error_code).",
+      retryable: false,
+      recovery:
+        "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.",
+    },
+    {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set.',

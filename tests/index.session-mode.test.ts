@@ -6,9 +6,9 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { get } from 'node:http';
-import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { freePort } from './helpers/free-port.js';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const PROJECT_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -20,21 +20,6 @@ afterEach(() => {
   child?.kill();
   child = undefined;
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      probe.close(() =>
-        typeof address === 'object' && address
-          ? resolve(address.port)
-          : reject(new Error('No port assigned')),
-      );
-    });
-  });
-}
 
 type ServerCard = { _meta?: Record<string, unknown> };
 

@@ -94,6 +94,9 @@ const CRAFT_CONTENT: Record<string, string> = {
 - \`blink\`: visibility toggle — alerts, status indicators
 - \`twinkle\`: irregular opacity flicker — stars, particles, sparkle elements
 - \`drift\`: slow x wander — background objects, atmospheric depth
+- \`fade-in\` / \`fade-out\`: opacity ramp up from 0 or down to 0 across the scene — intros, exits
+
+**Frames:** Effects and keyframe tracks move only across 2 or more frames. pixoo_compose_scene defaults to 1, a still on which \`fade-in\` and a default-period \`blink\` draw nothing, so set \`frames\` (20 at 150ms is a 3s loop).
 
 **Parallax:** Use different \`amplitude\` and \`phase\` values for depth: hero element amplitude=4, mid-ground amplitude=2, background amplitude=1.
 
@@ -152,6 +155,9 @@ pixoo_render_html lays out a page in a square viewport, one CSS pixel per LED (6
 **push: false → inspect before pushing:**
 - All render tools return a preview image regardless of push setting
 - Use push: false to iterate on designs without affecting the display
+
+**Scene does not animate:**
+- pixoo_compose_scene renders 1 frame unless frames is set, and effect or animate motion needs 2 or more: set frames (20 at the default speed of 150 ms is a 3 s loop)
 
 **Animation stutters:**
 - Reduce frame count

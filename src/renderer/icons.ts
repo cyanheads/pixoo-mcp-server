@@ -64,17 +64,23 @@ export const ICONS: Record<string, IconEntry> = {
     viewBox: '0 0 16 16',
   },
   // --- arrows: a filled head on a stroked shaft ---
+  /**
+   * A fill lights each pixel whose center lies inside it; a center exactly on an edge counts
+   * only on the shape's left edge. The head edges of up, down, and right land on pixel centers
+   * at every multiple of 8 px, so those heads sit 0.01 right of the grid and the ties resolve
+   * toward the shaft: the up and down heads center on its column, the right head runs into its tip.
+   */
   'arrow-up': {
     name: 'arrow-up',
     category: 'arrows',
-    fill: 'M3 7l5-5 5 5',
+    fill: 'M3.01 7l5-5 5 5',
     stroke: 'M8 2L8 14',
     viewBox: '0 0 16 16',
   },
   'arrow-down': {
     name: 'arrow-down',
     category: 'arrows',
-    fill: 'M3 9l5 5 5-5',
+    fill: 'M3.01 9l5 5 5-5',
     stroke: 'M8 14L8 2',
     viewBox: '0 0 16 16',
   },
@@ -88,7 +94,7 @@ export const ICONS: Record<string, IconEntry> = {
   'arrow-right': {
     name: 'arrow-right',
     category: 'arrows',
-    fill: 'M9 3L14 8l-5 5',
+    fill: 'M9.01 3L14.01 8l-5 5',
     stroke: 'M14 8L2 8',
     viewBox: '0 0 16 16',
   },
@@ -139,7 +145,11 @@ export const ICONS: Record<string, IconEntry> = {
   pause: {
     name: 'pause',
     category: 'media',
-    fill: 'M5 2h2v12H5zM9 2h2v12H9z',
+    /**
+     * Two bars 2 wide, each 0.01 in from x 4.5 and 11.5, which are pixel centers at 16 and
+     * 48 px: the bars draw 2 px wide at 12 and 16 px and stay equal and centered from 7 px up.
+     */
+    fill: 'M4.51 2h2v12h-2zM9.49 2h2v12h-2z',
     viewBox: '0 0 16 16',
   },
   stop: {

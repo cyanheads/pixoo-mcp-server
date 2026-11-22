@@ -35,6 +35,13 @@ export const EFFECT_NAMES: EffectName[] = [
   'fade-out',
 ];
 
+/** The tuning fields of an effect preset, as a scene element's `effect` carries them. */
+interface EffectOptions {
+  amplitude?: number | undefined;
+  period?: number | undefined;
+  phase?: number | undefined;
+}
+
 /**
  * A fixed value in [0, 1) for one frame of one element: a 32-bit integer hash of the pair,
  * so a render repeats exactly while neighbouring frames and elements still land far apart.
@@ -60,11 +67,7 @@ function flicker(frame: number, element: number): number {
  */
 export function compileEffect(
   name: EffectName,
-  opts: {
-    amplitude?: number;
-    period?: number;
-    phase?: number;
-  },
+  opts: EffectOptions,
   totalFrames: number,
   element = 0,
 ): KeyframeMap {
@@ -234,13 +237,44 @@ export function interpolateColorKeyframe(frames: KeyframeEntry[], frameIdx: numb
   return `#${rgbToHex(lerped).toString(16).padStart(6, '0')}`;
 }
 
+/** Keyframe tracks by property, any of them absent: a scene element's `animate` as validated. */
+type KeyframeTracks = Readonly<Record<string, KeyframeEntry[] | undefined>>;
+
 /** Get the interpolated value for a named property at a frame index. */
 export function getKeyframeValue(
-  keyframes: KeyframeMap | undefined,
+  keyframes: KeyframeTracks | undefined,
   prop: string,
   frameIdx: number,
   defaultValue: number | string | boolean,
 ): number | string | boolean {
-  if (!keyframes?.[prop]) return defaultValue;
-  return interpolateKeyframe(keyframes[prop], frameIdx);
+  const frames = keyframes?.[prop];
+  if (!frames) return defaultValue;
+  return interpolateKeyframe(frames, frameIdx);
+}
+
+/** The fields of a scene element that decide whether it draws on a frame. */
+interface FrameVisibilityProps {
+  animate?: KeyframeTracks | undefined;
+  effect?: (EffectOptions & { name: EffectName }) | undefined;
+  opacity?: number | undefined;
+  visible?: boolean | undefined;
+}
+
+/**
+ * Whether the element at index `elIdx` draws on `frameIdx` of a `totalFrames` scene, read
+ * as the scene renderer reads it: its `animate` tracks, else its compiled `effect`, with a
+ * `visible` or `opacity` track standing in for the static field of that name. Hidden, or at
+ * opacity 0 or below, it draws no pixel. A NaN opacity (an effect `period` of 0) draws at
+ * full strength, as it does in the renderer.
+ */
+export function drawsOnFrame(
+  el: FrameVisibilityProps,
+  elIdx: number,
+  frameIdx: number,
+  totalFrames: number,
+): boolean {
+  const keyframes =
+    el.animate ?? (el.effect && compileEffect(el.effect.name, el.effect, totalFrames, elIdx));
+  if (!getKeyframeValue(keyframes, 'visible', frameIdx, el.visible ?? true)) return false;
+  return !(Number(getKeyframeValue(keyframes, 'opacity', frameIdx, el.opacity ?? 100)) <= 0);
 }

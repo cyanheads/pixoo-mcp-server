@@ -171,7 +171,7 @@ const PARITY_CASES: [string, string, SceneElement, string][] = [
     'icon, palette, 16px',
     "pixoo.icon(pixoo.context(), 'heart', 4, 40, { w: 16, h: 16, palette: 'ice' });",
     { type: 'icon', name: 'heart', x: 4, y: 40, w: 16, h: 16, palette: 'ice' },
-    '21c948d30f5e5177e6a456edf7dd6709e5b646a4f184fecb73f5bb87f699d59e',
+    '5d877781a0d71b8600bc9156909c6e78ba3aa1fed0fc831eb8ec306a14536625',
   ],
 ];
 

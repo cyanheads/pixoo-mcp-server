@@ -62,16 +62,16 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 
 ### `pixoo_compose_scene` <sub>tool</sub>
 
-- Up to 50 `elements` drawn back-to-front: `text` (in the same three fonts as `pixoo_display_text`), `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image` (absolute path or https URL, with the same `finish` as `pixoo_push_image`), `sprite` (absolute path). The `background` is a solid color, a `v` / `h` / `r` gradient, or a `theme`
+- Up to 50 `elements` drawn back-to-front: `text` (in the same three fonts as `pixoo_display_text`), `icon`, `rect`, `circle`, `line`, `progress`, `sparkline`, `bitmap`, `pixels`, `image` (absolute path or https URL, drawn upright by its EXIF orientation, with the same `finish` as `pixoo_push_image`), `sprite` (absolute path). The `background` is a solid color, a `v` / `h` / `r` gradient, or a `theme`
 - Every element takes `opacity` (each pixel lands at its own alpha × `opacity`, so soft edges fade evenly) and `blend`: `normal`, `add` (glows and light beams), `screen`, or `multiply`. `line` and outline `circle` take `strokeWidth` and `antialias`, and a `rect` border takes `strokeWidth`, growing inward; either field on a shape that draws no stroke fails validation, naming it
 - Returns `layout[]`: each element's placed box — for a wide or anti-aliased stroke, every pixel it draws — and whether it `fits` on the panel. Elements are placed as given and never refit, so `action` is always `none`. An absolute `output` path saves the first frame as a PNG in place of the `PIXOO_OUTPUT_DIR` auto-save. Typed failures: `asset_not_found`, `invalid_image` (an image or sprite that was read but does not decode), `invalid_color`, `unknown_icon`, `invalid_output_path`
-- Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–800, `speed` 10–2000 ms per frame (default 150). Past 40 frames the scene plays as one GIF the device downloads from this host, with `speed` rounded to 10 ms. An element takes `effect` or `animate`, not both. An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
+- Animation through per-element `effect` presets (`float`, `scroll-left`, `scroll-right`, `pulse`, `blink`, `twinkle`, `drift`, `fade-in`, `fade-out`) or raw `animate` keyframes over `dx`, `dy`, `opacity` (numbers or numeric strings), `visible` (`true`/`false`), and `color` (interpolated through RGB on any element with a `color`), each track holding at least one keyframe; `frames` 1–800 (default 1: on a one-frame scene nothing animates, and the `notice` names each element that sets an `effect` or an `animate` track of 2 or more keyframes and says to set `frames`), `speed` 10–2000 ms per frame (default 150). Past 40 frames the scene plays as one GIF the device downloads from this host, with `speed` rounded to 10 ms. An element takes `effect` or `animate`, not both. An effect's `amplitude` sets the movement of `float`, `scroll-*`, and `drift`, and the 0–1 depth of the `pulse` and `twinkle` opacity dip
 
 ---
 
 ### `pixoo_push_image` <sub>tool</sub>
 
-- `source` is an absolute local path or an https URL, with downloads capped at 10 MB; `fit` is `contain` (default), `cover`, or `fill`, and `kernel` is `nearest` (default, for pixel art), `lanczos3` (photos), or `mitchell`
+- `source` is an absolute local path or an https URL, with downloads capped at 10 MB. A still image is drawn upright by its EXIF orientation; an animated WebP plays its frames as stored, without applying its orientation. `fit` is `contain` (default), `cover`, or `fill`, and `kernel` is `nearest` (default, for pixel art), `lanczos3` (photos), or `mitchell`
 - A source that decodes as an animated GIF or WebP, whatever its file name, pushes as an animation of up to `maxFrames` frames (1–800, default 40), sampled evenly from a longer source; past 40 frames it plays as one GIF the device downloads from this host. It plays at the source's total duration over the pushed frame count (150 ms when the source records no delays), or at `speed` (10–2000 ms per frame); `frames`, `sourceFrames`, and `speed` report what was pushed
 - `finish` reduces the image to a palette before the push: exactly one of `colors` (2–256, built from the image) or `palette` (1–256 hex or named colors), plus `dither` (`none`, `bayer4`, `floyd-steinberg`). Transparent pixels stay unlit, and an animation's `colors` palette is shared by every frame
 - An unreadable path or URL fails as `asset_not_found`, a source that is read but does not decode (a text file, an HTML page, a truncated download) fails as `invalid_image`, and an unresolvable `finish` palette entry fails as `invalid_color`; the preview is the exact frame the device receives, or a grid of an animation's frames
@@ -144,7 +144,7 @@ Tools cover the same ground for tool-only clients: `pixoo_control_device` reads 
 ### `pixoo://device/status` <sub>resource</sub>
 
 - Uncached live read: `reachable`, `channel`, `brightness`, `screenOn`, `clockId`, `displaySize`, `configuredIp`
-- Returns `reachable: false` rather than an error when the device can't be reached or `PIXOO_IP` is unset
+- Returns `reachable: false` rather than an error when the device can't be reached, something other than a Pixoo answers at `PIXOO_IP`, or `PIXOO_IP` is unset
 
 ---
 
@@ -182,7 +182,7 @@ Agent-friendly output:
 - Preview on every render: `pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`, and `pixoo_render_html` return the frame as an 8× upscaled PNG image block, pushed or not, so `push: false` checks a design with no device attached. Animations preview as a grid of their frames (every frame while 1× tiles fit the 512 px sheet, an even sample past that), since GIF display varies across MCP clients; the GIF itself is saved to `PIXOO_OUTPUT_DIR` when set — an 8× preview GIF, or past 40 frames the panel-size GIF the device downloads
 - Layout transparency: `layout[]` reports every renderer decision (font fallback, scrolling, and whether each box fits on the panel) so agents can refine a design
 - Device truth: `pushed` reflects the device ACK (past 40 frames, the ACK of the play plus the device's request for the GIF, with the whole file handed to the OS to send; the device does not confirm receipt), and the `deviceState` read back after a push comes with a notice naming the fix when the render won't be visible (screen off, brightness ≤ 10, off the custom channel)
-- Renders survive failed pushes: on all four render tools, the typed error (`device_unreachable`, `device_http_error`, `device_rejected`, `gif_serve_failed`, `no_device_configured`) carries `outputFiles` pointing at the saved preview (the `PIXOO_OUTPUT_DIR` copy, or a temp file when that is unset)
+- Renders survive failed pushes: on all four render tools, the typed error (`device_unreachable`, `device_http_error`, `device_rejected`, `device_invalid_response`, `gif_serve_failed`, `no_device_configured`) carries `outputFiles` pointing at the saved preview (the `PIXOO_OUTPUT_DIR` copy, or a temp file when that is unset)
 
 ## Getting started
 
@@ -225,7 +225,7 @@ For other clients, add this to the MCP config file:
 | `MCP_SESSION_MODE` | HTTP session mode: `stateless`, `stateful`, or `auto`. A value set here overrides the server's declared `stateless`. | `stateless` |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth`. | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.). | `info` |
-| `LOGS_DIR` | Directory for log files (Node.js only). | `<project-root>/logs` |
+| `LOGS_DIR` | Directory for log files (Node.js only). A relative path resolves against the application root, which for an installed server is the server package's own directory. | `<app-root>/logs` |
 | `LOG_TOOL_FAILURE_PAYLOADS` | Log each failed tool call's arguments and result, redacted by key name and capped at `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` (default `16384`). A secret inside a free-form value is not redacted. | `false` |
 | `OTEL_ENABLED` | Enable [OpenTelemetry](https://github.com/cyanheads/mcp-ts-core/tree/main/docs/telemetry). | `false` |
 
@@ -235,7 +235,7 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
-Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+) and a Divoom Pixoo on the local network (Pixoo-64, Pixoo-32, or Pixoo-16).
+Requires [Bun v1.4.4](https://bun.sh/) or higher (or Node.js v24+) and a Divoom Pixoo on the local network (Pixoo-64, Pixoo-32, or Pixoo-16).
 
 The HTML renderer also needs [chrome-headless-shell](https://developer.chrome.com/docs/automation-and-testing/headless-chrome-shell). `npx @puppeteer/browsers install chrome-headless-shell@stable --path ~/.cache/puppeteer` installs it where the server looks by default. Installed anywhere else with `--path <dir>`, set `PIXOO_BROWSER_PATH` to the executable path the install prints. The server launches it headless, with no DevTools port, only when a render needs it.
 

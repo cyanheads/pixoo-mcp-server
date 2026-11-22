@@ -337,6 +337,15 @@ export const pixooDisplayText = tool('pixoo_display_text', {
       thrownBy: 'service',
     },
     {
+      reason: 'device_invalid_response',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: "Something answered at PIXOO_IP, but its reply was not a Pixoo's (JSON with a numeric error_code).",
+      retryable: false,
+      recovery:
+        "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.",
+      thrownBy: 'service',
+    },
+    {
       reason: 'no_device_configured',
       code: JsonRpcErrorCode.InvalidParams,
       when: 'PIXOO_IP is not set and push was requested.',
@@ -530,6 +539,7 @@ export const pixooDisplayText = tool('pixoo_display_text', {
         },
         outputFiles,
         writePreview,
+        ctx.signal,
       );
       pushed = true;
       const visibility = visibilityNotice(deviceState);

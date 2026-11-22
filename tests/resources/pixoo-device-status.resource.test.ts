@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooDeviceStatusResource } from '@/mcp-server/resources/definitions/pixoo-device-status.resource.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { NON_PIXOO_REPLIES, startFakePixoo } from '../helpers/device-failure.js';
 import { listExtra } from '../helpers/list-extra.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
@@ -78,6 +79,23 @@ describe('pixooDeviceStatusResource', () => {
     expect(result.brightness).toBe(75);
     expect(result.screenOn).toBe(true);
     expect(result.displaySize).toBe(64);
+  });
+
+  it('returns reachable:false (not an error) when something other than a Pixoo answers', async () => {
+    process.env['PIXOO_IP'] = '127.0.0.1';
+    initPixooService(fakeConfig, fakeStorage);
+    const [, htmlPage] = NON_PIXOO_REPLIES[0]!;
+    const device = await startFakePixoo(() => htmlPage);
+
+    try {
+      const params = pixooDeviceStatusResource.params!.parse({});
+      const result = await pixooDeviceStatusResource.handler(params, createMockContext());
+
+      expect(result).toEqual({ reachable: false, displaySize: 64, configuredIp: '127.0.0.1' });
+      expect(device.commands).toEqual(['Channel/GetIndex']);
+    } finally {
+      await device.close();
+    }
   });
 
   it('list() returns the expected URI and metadata', async () => {

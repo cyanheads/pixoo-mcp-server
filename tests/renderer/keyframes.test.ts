@@ -7,6 +7,7 @@ import { lerpColor, resolveColor } from '@cyanheads/pixoo-toolkit';
 import { describe, expect, it, vi } from 'vitest';
 import {
   compileEffect,
+  drawsOnFrame,
   EFFECT_NAMES,
   type EffectName,
   getKeyframeValue,
@@ -15,6 +16,8 @@ import {
   type KeyframeEntry,
   type KeyframeMap,
 } from '@/renderer/keyframes.js';
+import { type RectElement, renderFrame } from '@/renderer/scene-renderer.js';
+import { inkPixels } from '../helpers/canvas-ink.js';
 
 /** The opacity values an effect's keyframes step through, in frame order. */
 function opacities(keyframes: KeyframeMap): Array<KeyframeEntry[1]> {
@@ -411,6 +414,12 @@ describe('compileEffect', () => {
     expect(new Set(sequences).size).toBe(8);
   });
 
+  it('twinkle at the floor of a full-depth dip holds element 0 at opacity 0 and element 2 at 2', () => {
+    const options = { amplitude: 1, phase: 0.75, period: 1 };
+    expect(opacities(compileEffect('twinkle', options, 1, 0))).toEqual([0]);
+    expect(opacities(compileEffect('twinkle', options, 1, 2))).toEqual([2]);
+  });
+
   it.each([0.1, 0.25, 1])(
     'pulse at amplitude %s dips to 100 × (1 − amplitude) at its trough and peaks at 100',
     (amplitude) => {
@@ -481,4 +490,153 @@ describe('compileEffect', () => {
     const anyDiffers = aVals.some((v, i) => v !== bVals[i]);
     expect(anyDiffers).toBe(true);
   });
+});
+
+describe('drawsOnFrame', () => {
+  type Props = Pick<RectElement, 'animate' | 'effect' | 'opacity' | 'visible'>;
+
+  /**
+   * [label, element props, frame, scene frame count, whether the element draws there, and its
+   * index in the scene: 0 unless given, placed after that many hidden still elements].
+   */
+  const CASES: Array<[string, Props, number, number, boolean, number?]> = [
+    ['no effect or keyframes', {}, 0, 1, true],
+    ['visible: false', { visible: false }, 0, 1, false],
+    ['opacity: 0', { opacity: 0 }, 0, 1, false],
+    ['fade-in on its only frame', { effect: { name: 'fade-in' } }, 0, 1, false],
+    ['fade-in on frame 0 of 20', { effect: { name: 'fade-in' } }, 0, 20, false],
+    ['fade-in on frame 19 of 20', { effect: { name: 'fade-in' } }, 19, 20, true],
+    ['fade-out on its only frame', { effect: { name: 'fade-out' } }, 0, 1, true],
+    ['blink at its default period on one frame', { effect: { name: 'blink' } }, 0, 1, false],
+    ['blink with period 1', { effect: { name: 'blink', period: 1 } }, 0, 1, false],
+    ['blink with period 2', { effect: { name: 'blink', period: 2 } }, 0, 1, true],
+    ['blink with period 4', { effect: { name: 'blink', period: 4 } }, 0, 1, true],
+    ['pulse over a static opacity of 0', { effect: { name: 'pulse' }, opacity: 0 }, 0, 1, true],
+    ['float over a static opacity of 0', { effect: { name: 'float' }, opacity: 0 }, 0, 1, false],
+    ['pulse with period 0, a NaN opacity', { effect: { name: 'pulse', period: 0 } }, 0, 1, true],
+    [
+      'a visible track starting false',
+      {
+        animate: {
+          visible: [
+            [0, false],
+            [5, true],
+          ],
+        },
+      },
+      0,
+      1,
+      false,
+    ],
+    [
+      'a visible track that reaches its midpoint at frame 0',
+      {
+        animate: {
+          visible: [
+            [-4, false],
+            [4, true],
+          ],
+        },
+      },
+      0,
+      1,
+      true,
+    ],
+    [
+      'an opacity track starting at 0',
+      {
+        animate: {
+          opacity: [
+            [0, 0],
+            [10, 100],
+          ],
+        },
+      },
+      0,
+      1,
+      false,
+    ],
+    [
+      'an opacity track held at a first keyframe of 0 past frame 0',
+      {
+        animate: {
+          opacity: [
+            [2, 0],
+            [10, 100],
+          ],
+        },
+      },
+      0,
+      1,
+      false,
+    ],
+    [
+      'an opacity track at 50 between keyframes at frame 0',
+      {
+        animate: {
+          opacity: [
+            [-4, 0],
+            [4, 100],
+          ],
+        },
+      },
+      0,
+      1,
+      true,
+    ],
+    [
+      'a dx track over visible: false',
+      {
+        visible: false,
+        animate: {
+          dx: [
+            [0, 0],
+            [10, 5],
+          ],
+        },
+      },
+      0,
+      1,
+      false,
+    ],
+    [
+      'animate over effect, which the renderer then ignores',
+      {
+        effect: { name: 'fade-in' },
+        animate: {
+          dx: [
+            [0, 0],
+            [10, 5],
+          ],
+        },
+      },
+      0,
+      1,
+      true,
+    ],
+    [
+      'twinkle at element 2, which its flicker draws where element 0 would sit at opacity 0',
+      { effect: { name: 'twinkle', amplitude: 1, phase: 0.75, period: 1 } },
+      0,
+      1,
+      true,
+      2,
+    ],
+  ];
+
+  it.each(CASES)('%s: draws as the table says', (_label, props, frame, frames, draws, at = 0) => {
+    expect(drawsOnFrame(props, at, frame, frames)).toBe(draws);
+  });
+
+  it.each(CASES)(
+    '%s: agrees with the pixels renderFrame draws',
+    (_l, props, frame, frames, _d, at = 0) => {
+      const rect: RectElement = { type: 'rect', x: 2, y: 2, w: 8, h: 8, color: '#ffffff' };
+      const stills = Array.from({ length: at }, (): RectElement => ({ ...rect, visible: false }));
+      const assets = { images: new Map(), sprites: new Map() };
+      const scene = [...stills, { ...rect, ...props }];
+      const { canvas } = renderFrame(frame, frames, '#000000', scene, assets, 16);
+      expect(inkPixels(canvas, [0, 0, 0]).length > 0).toBe(drawsOnFrame(props, at, frame, frames));
+    },
+  );
 });

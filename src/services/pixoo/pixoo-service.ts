@@ -51,7 +51,11 @@ const CHANNEL_ENUM_TO_NAME: Record<number, string> = {
 };
 
 /** Error-contract reasons a failed device call maps to. */
-export type DeviceFailureReason = 'device_unreachable' | 'device_http_error' | 'device_rejected';
+export type DeviceFailureReason =
+  | 'device_unreachable'
+  | 'device_http_error'
+  | 'device_rejected'
+  | 'device_invalid_response';
 
 /** HTTP statuses a later attempt can clear — the device busy, rate-limited, or restarting. */
 const TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
@@ -59,6 +63,8 @@ const TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 /**
  * Classify a failed device call into its error-contract reason and retryability.
  * `retryable` is absent for a firmware rejection, which makes no claim either way.
+ * Every `PixooErrorKind` has its own case, so a kind the toolkit adds fails typecheck
+ * here instead of reading as one of these.
  *
  * Services cannot call `ctx.fail`, the only path that fills `data.retryable` from a
  * tool's contract, so every throw site writes the value this returns.
@@ -68,6 +74,9 @@ export function classifyDeviceFailure(fail: PixooFailure): {
   retryable?: boolean;
 } {
   switch (fail.kind) {
+    case 'network':
+    case 'timeout':
+      return { reason: 'device_unreachable', retryable: true };
     case 'http':
       return {
         reason: 'device_http_error',
@@ -75,8 +84,40 @@ export function classifyDeviceFailure(fail: PixooFailure): {
       };
     case 'device':
       return { reason: 'device_rejected' };
+    // A reply that is not a Pixoo's: another server holds PIXOO_IP, and asking again reaches it again.
+    case 'response':
+      return { reason: 'device_invalid_response', retryable: false };
     default:
-      return { reason: 'device_unreachable', retryable: true };
+      throw new Error(`classifyDeviceFailure has no case for kind "${fail.kind satisfies never}"`);
+  }
+}
+
+/** Wait `ms`, or reject with the signal's reason the moment it aborts — at once if it already has. */
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** Settle once `turn` does, or reject with the signal's reason the moment it aborts. `turn` never rejects. */
+async function awaitTurn(turn: Promise<void>, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  const { promise: aborted, reject } = Promise.withResolvers<never>();
+  const onAbort = () => reject(signal.reason);
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    await Promise.race([turn, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
   }
 }
 
@@ -91,6 +132,8 @@ function mapFailure(fail: PixooFailure): never {
       throw serviceUnavailable(`Device unreachable: ${fail.message}`, { reason, retryable });
     case 'device_http_error':
       throw serviceUnavailable(`Device HTTP error: ${fail.message}`, { reason, retryable });
+    case 'device_invalid_response':
+      throw serviceUnavailable(`Invalid device response: ${fail.message}`, { reason, retryable });
     case 'device_rejected':
       throw serviceUnavailable(
         `Device rejected command (error_code ${fail.deviceCode ?? '?'}): ${fail.message}`,
@@ -158,8 +201,7 @@ export class PixooService {
   /** Push a single canvas frame, respecting the minimum interval pacing. */
   async pushFrame(canvas: Canvas, ctx: Context): Promise<DeviceStateSnapshot> {
     const client = this.getClient();
-    const result = await this.pacedPush(() => client.push(canvas), ctx);
-    return result;
+    return await this.pacedPush(() => client.push(canvas, undefined, { signal: ctx.signal }), ctx);
   }
 
   /**
@@ -170,7 +212,7 @@ export class PixooService {
    * then succeeds only once the device has accepted the play and requested the file, and
    * the whole file has been handed to the OS to send — not confirmed receipt; a listener
    * that cannot open, a URL over 255 bytes, or a transfer that never completes fails
-   * `gif_serve_failed`.
+   * `gif_serve_failed` — unless the call was cancelled, which rejects with its reason.
    */
   async pushAnimation(
     frames: Canvas[],
@@ -180,44 +222,57 @@ export class PixooService {
   ): Promise<DeviceStateSnapshot> {
     const client = this.getClient();
     if (frames.length <= MAX_FRAME_PUSH) {
-      return await this.pacedPush(() => client.pushAnimation(frames, speed), ctx);
+      return await this.pacedPush(
+        () => client.pushAnimation(frames, speed, { signal: ctx.signal }),
+        ctx,
+      );
     }
     const panelGif = gif ?? encodePanelGif(frames, speed);
     const cfg = getServerConfig();
-    return await this.queued(async () => {
-      // Opened before any device command, so a failed bind or an overlong URL sends none.
-      const host = await openGifHost(panelGif, {
-        deviceIp: client.ip,
-        serveHost: cfg.pixooServeHost,
-        servePort: cfg.pixooServePort,
-        signal: ctx.signal,
-      });
+    return await this.queued(ctx.signal, async () => {
       try {
-        return await this.pushNow(async () => {
-          const played = await client.playGifUrl(host.url);
-          // The device accepts the play before it downloads, even from a dead URL.
-          if (played.ok) await host.served();
-          return played;
-        }, ctx);
-      } finally {
-        host.close();
+        // Opened before any device command, so a failed bind or an overlong URL sends none.
+        const host = await openGifHost(panelGif, {
+          deviceIp: client.ip,
+          serveHost: cfg.pixooServeHost,
+          servePort: cfg.pixooServePort,
+          signal: ctx.signal,
+        });
+        try {
+          return await this.pushNow(async () => {
+            const played = await client.playGifUrl(host.url, { signal: ctx.signal });
+            // The device accepts the play before it downloads, even from a dead URL.
+            if (played.ok) await host.served();
+            return played;
+          }, ctx);
+        } finally {
+          host.close();
+        }
+      } catch (err) {
+        // The listener reports an abort as gif_serve_failed; the caller's cancellation wins.
+        ctx.signal.throwIfAborted();
+        throw err;
       }
     });
   }
 
   /** Serialized, paced device push with Custom channel enforcement. */
   private pacedPush(fn: () => Promise<PixooResult>, ctx: Context): Promise<DeviceStateSnapshot> {
-    return this.queued(() => this.pushNow(fn, ctx));
+    return this.queued(ctx.signal, () => this.pushNow(fn, ctx));
   }
 
-  /** Run `task` once every push queued before it has settled — one device push at a time. */
-  private async queued<T>(task: () => Promise<T>): Promise<T> {
+  /**
+   * Run `task` once every push queued before it has settled — one device push at a time.
+   * Aborted while it waits, it rejects with the signal's reason and gives up its place at
+   * once, so the pushes queued behind it wait only on the ones ahead of it.
+   */
+  private async queued<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
     const { promise: token, resolve } = Promise.withResolvers<void>();
     const prev = this.pushQueue;
     this.pushQueue = prev.then(() => token);
 
     try {
-      await prev;
+      await awaitTurn(prev, signal);
       return await task();
     } finally {
       resolve();
@@ -229,20 +284,21 @@ export class PixooService {
     fn: () => Promise<PixooResult>,
     ctx: Context,
   ): Promise<DeviceStateSnapshot> {
-    // Enforce minimum interval
-    const cfg = getServerConfig();
-    const minInterval = cfg.pixooPushMinIntervalMs;
-    const elapsed = Date.now() - this.lastPushTime;
-    if (elapsed < minInterval) {
-      await new Promise((r) => setTimeout(r, minInterval - elapsed));
-    }
+    // Enforce the minimum interval; a cancellation ends the wait and sends nothing.
+    ctx.signal.throwIfAborted();
+    const wait = this.lastPushTime + getServerConfig().pixooPushMinIntervalMs - Date.now();
+    if (wait > 0) await delay(wait, ctx.signal);
 
     // Ensure Custom channel
     await this.ensureCustomChannel(ctx);
 
-    // Cancelled during the wait or the channel switch: send no push command.
+    // Cancelled during the channel switch, whose commands take no signal: send no push command.
     ctx.signal.throwIfAborted();
-    const pushResult = await fn();
+    const pushResult = await fn().catch((err: unknown) => {
+      // Cut short by a cancellation, the push may have sent commands already: pace from now.
+      if (ctx.signal.aborted) this.lastPushTime = Date.now();
+      throw err;
+    });
     if (!pushResult.ok) {
       mapFailure(pushResult);
     }
@@ -252,7 +308,10 @@ export class PixooService {
     return await this.getStatus(ctx);
   }
 
-  /** Switch to Custom channel if not already there. */
+  /**
+   * Switch to Custom channel if not already there. The channel commands take no signal,
+   * so a cancellation that arrives during one rejects with its reason before the next.
+   */
   async ensureCustomChannel(ctx: Context): Promise<void> {
     const client = this.getClient();
     const channelRes = await client.getChannel();
@@ -263,13 +322,14 @@ export class PixooService {
       return;
     }
     if (channelRes.data.SelectIndex !== Channel.Custom) {
+      ctx.signal.throwIfAborted();
       const switchRes = await client.setChannel(Channel.Custom);
       if (!switchRes.ok) {
         ctx.log.warning('Channel switch failed — push may not display on Custom channel', {
           kind: switchRes.kind,
         });
       } else {
-        // Verify
+        ctx.signal.throwIfAborted();
         const verifyRes = await client.getChannel();
         if (verifyRes.ok && verifyRes.data.SelectIndex !== Channel.Custom) {
           ctx.log.warning('Channel verification failed after switch');

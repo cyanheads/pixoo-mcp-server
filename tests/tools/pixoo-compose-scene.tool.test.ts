@@ -360,6 +360,63 @@ describe('pixooComposeScene', () => {
     });
   });
 
+  describe('a caller value holding the words "Unknown color" keeps its own reason', () => {
+    /** An absolute path named `Unknown color.png` in a fresh directory, written when `contents` is given. */
+    async function phrasePath(contents?: string): Promise<string> {
+      const dir = await mkdtemp(path.join(os.tmpdir(), 'pixoo-compose-phrase-'));
+      onTestFinished(() => rm(dir, { recursive: true, force: true }));
+      const file = path.join(dir, 'Unknown color.png');
+      if (contents !== undefined) await writeFile(file, contents);
+      return file;
+    }
+
+    it.each([
+      ['a missing file', undefined, 'asset_not_found', JsonRpcErrorCode.NotFound],
+      [
+        'a non-image file',
+        'this is not an image\n',
+        'invalid_image',
+        JsonRpcErrorCode.InvalidParams,
+      ],
+    ] as const)(
+      '%s as an image source at that path fails with the renderer’s error and message',
+      async (_label, contents, reason, code) => {
+        const source = await phrasePath(contents);
+        const elements: SceneInput['elements'] = [{ type: 'image', source }];
+        const thrown: unknown = await renderScene(
+          '#000000',
+          elements as Parameters<typeof renderScene>[1],
+          1,
+          createMockContext(),
+          64,
+        ).catch((err: unknown) => err);
+        expect(thrown).toBeInstanceOf(Error);
+        const result = await runToolContract(pixooComposeScene, {
+          background: '#000000',
+          elements,
+          push: false,
+        });
+        expect(result.structuredContent).toMatchObject({
+          error: { code, message: (thrown as Error).message, data: { reason } },
+        });
+        expectForwardedRecovery(result, pixooComposeScene.errors, reason);
+      },
+    );
+
+    it('an icon by that name fails as unknown_icon, listing icons rather than colors', async () => {
+      const result = await runToolContract(pixooComposeScene, {
+        background: '#000000',
+        elements: [{ type: 'icon', name: 'Unknown color' }],
+        push: false,
+      });
+      expectForwardedRecovery(result, pixooComposeScene.errors, 'unknown_icon');
+      const { message } = (result.structuredContent as { error: { message: string } }).error;
+      expect(message).toContain('Unknown icon "Unknown color".');
+      expect(message).toContain(' Valid icons: ');
+      expect(message).not.toContain('Valid named colors');
+    });
+  });
+
   describe('device failures on push reach both surfaces through the contract', () => {
     const staticScene: SceneInput = {
       background: '#000000',
@@ -394,6 +451,12 @@ describe('pixooComposeScene', () => {
       failDevicePush({ ok: false, kind: 'device', deviceCode: 1, message: 'error_code 1' });
       const result = await runToolContract(pixooComposeScene, staticScene);
       expectDeviceFailure(result, pixooComposeScene.errors, 'device_rejected', undefined);
+    });
+
+    it('device_invalid_response carries retryable: false', async () => {
+      failDevicePush({ ok: false, kind: 'response', message: 'Reply is not JSON — a Pixoo?' });
+      const result = await runToolContract(pixooComposeScene, animatedScene);
+      expectDeviceFailure(result, pixooComposeScene.errors, 'device_invalid_response', false);
     });
   });
 
@@ -1492,7 +1555,8 @@ describe('pixooComposeScene', () => {
         layout: [{ type: 'icon', box: { x: 0, y: 0, w: 16, h: 16 }, fits: true }],
       });
       expect(resultText(result)).toContain('icon @ (0,0) 16×16 fits:true');
-      const beam = Array.from({ length: 11 }, (_, i) => 2 + i);
+      // Row 3 from the left stem's outer column (2) to the right stem's outer column (11).
+      const beam = Array.from({ length: 10 }, (_, i) => 2 + i);
       expect(beam.filter((x) => !isInk(frames[0]!, x, 3, BLACK))).toEqual([]);
     });
 
@@ -3012,9 +3076,9 @@ describe('pixooComposeScene', () => {
       expect(hashes).toMatchInlineSnapshot(`
         {
           "icon, color": "db83ea70cfdb0793d4299aeb3a080ca6de905c5a8affa1b472f2a9e0d12279ab",
-          "icon, custom path, color": "e4508531b95cfbefe7c472cd46e215fd639c2ef15dfc12e0fd68ad23eed6b3c1",
+          "icon, custom path, color": "701279cfaa4efaa907454252e95de6c07be45d4c167752463ca18741909e2df4",
           "icon, palette": "cf495c17502545f86080426f1140d97f8436f9731f7d67099136f44413c32f1e",
-          "icon, palette, 16px": "21c948d30f5e5177e6a456edf7dd6709e5b646a4f184fecb73f5bb87f699d59e",
+          "icon, palette, 16px": "5d877781a0d71b8600bc9156909c6e78ba3aa1fed0fc831eb8ec306a14536625",
           "text, color, outline, compact": "c5966bf34119c7928c6d6a926fea5d56fccbd0cd10d2d485cd3a4b2bdc20fca6",
           "text, numerals, color": "b3732f0f41c595cd46356cb7c1bb93d11e3339f577f20b95666ff1283c7ad817",
           "text, palette, scale 2, shadow": "f39c0ed4d78985ee082520d774849dd5458ded8c03bdb729b9729b4b90398f87",
@@ -3120,5 +3184,350 @@ describe('pixooComposeScene — up to 800 frames', () => {
     expect(schema.properties.frames.description).toMatch(/1–800/);
     expect(schema.properties.frames.description).toMatch(/GIF/);
     expect(schema.properties.frames.description).toMatch(/PIXOO_SERVE_HOST/);
+  });
+});
+
+describe('pixooComposeScene — effect and animate on a one-frame scene', () => {
+  type Elements = SceneInput['elements'];
+
+  beforeEach(() => {
+    resetServerConfig();
+    process.env['PIXOO_SIZE'] = '64';
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '0';
+    // The device client is swapped for a loopback fake: nothing leaves the process.
+    process.env['PIXOO_IP'] = '127.0.0.1';
+    initPixooService(fakeConfig, fakeStorage);
+  });
+
+  afterEach(() => {
+    delete process.env['PIXOO_IP'];
+    delete process.env['PIXOO_SIZE'];
+    delete process.env['PIXOO_PUSH_MIN_INTERVAL_MS'];
+    resetServerConfig();
+    vi.restoreAllMocks();
+  });
+
+  /** Push `elements` to a fake device reporting `state`; return the result and the frame it received. */
+  async function render(
+    elements: Elements,
+    extra: Partial<SceneInput> = {},
+    state: Parameters<typeof stubDeviceState>[0] = {},
+  ) {
+    const client = stubDeviceState(state);
+    const result = await runToolContract(pixooComposeScene, {
+      background: '#000000',
+      elements,
+      push: true,
+      ...extra,
+    });
+    expect(result.isError).toBeFalsy();
+    return { result, frame: client.push.mock.calls[0]?.[0] as Canvas | undefined };
+  }
+
+  // Shapes only: icon and text drawing can move in other work without touching this pin.
+  const PINNED_SCENE: Elements = [
+    { type: 'rect', x: 4, y: 4, w: 20, h: 12, color: '#ff8800', effect: { name: 'pulse' } },
+    {
+      type: 'circle',
+      cx: 44,
+      cy: 12,
+      radius: 8,
+      color: '#00ccff',
+      fill: true,
+      effect: { name: 'float', amplitude: 3 },
+    },
+    {
+      type: 'line',
+      x0: 0,
+      y0: 40,
+      x1: 63,
+      y1: 40,
+      color: '#ffffff',
+      animate: {
+        dx: [
+          [0, 0],
+          [10, 20],
+        ],
+      },
+    },
+    { type: 'rect', x: 30, y: 30, w: 10, h: 10, color: '#00ff00', effect: { name: 'fade-in' } },
+    {
+      type: 'pixels',
+      data: [
+        { x: 2, y: 60, color: '#ff00ff' },
+        { x: 3, y: 60, color: '#ff00ff' },
+      ],
+      effect: { name: 'blink', period: 4 },
+    },
+  ];
+
+  it('the frame pushed for a one-frame scene with effects and keyframes is pinned byte for byte', async () => {
+    const { frame } = await render(PINNED_SCENE);
+    expect(hashOf(frame!)).toBe('d6635e825e9055fa01178049022f62d24fcec44be3f055681f8f569ee1c9df2a');
+  });
+
+  type ToolResult = Awaited<ReturnType<typeof runToolContract>>;
+  const BLACK: RGB = [0, 0, 0];
+  const motionNotice = (named: string) =>
+    `Rendered 1 frame (frames defaults to 1), so nothing animates: ${named}. Set frames, for example to 20, to animate.`;
+  const FALLBACK_NOTICE =
+    'Not in the standard and compact fonts, so drawn as "?": element 0 "€" (U+20AC). Those fonts draw printable ASCII plus ° ← ↑ → ↓ ▲ ▼ ♥ · … only.';
+  const SCREEN_OFF_NOTICE =
+    'Pushed, but the render may not be visible: the screen is off (pixoo_control_device with screen: "on").';
+  const square = (extra: Partial<Extract<Elements[number], { type: 'rect' }>> = {}) =>
+    ({ type: 'rect', x: 20, y: 20, w: 10, h: 10, color: '#ffffff', ...extra }) as const;
+  const pulsingSun = {
+    type: 'icon',
+    name: 'sun',
+    x: 'center',
+    y: 'center',
+    effect: { name: 'pulse' },
+  } as const;
+
+  /** `notice` is the whole notice on both surfaces: raw in structuredContent, quoted in content[]. */
+  function expectNotice(result: ToolResult, notice: string) {
+    expect((result.structuredContent as { notice?: string }).notice).toBe(notice);
+    expect(resultText(result)).toContain(`> ${notice}`);
+    expect(resultReadBack(result)).toContain(notice);
+  }
+
+  it('the pinned scene carries the notice, naming all five of its elements', async () => {
+    const { result } = await render(PINNED_SCENE);
+    expectNotice(
+      result,
+      motionNotice(
+        'element 0 (rect, effect pulse); element 1 (circle, effect float); element 2 (line, animate); element 3 (rect, effect fade-in, not drawn on that frame); element 4 (pixels, effect blink)',
+      ),
+    );
+  });
+
+  it.each([
+    ['frames omitted', undefined],
+    ['frames: 1', 1],
+  ])('%s: an effect is named by index, type, and preset', async (_label, frames) => {
+    const { result } = await render([pulsingSun], { frames });
+    expect(result.structuredContent).toMatchObject({ pushed: true, frames: 1 });
+    expect(resultText(result)).toContain('**Frames:** 1');
+    expectNotice(result, motionNotice('element 0 (icon, effect pulse)'));
+  });
+
+  it('an animate track of 2 keyframes is named as animate', async () => {
+    const { result } = await render([
+      square({
+        animate: {
+          dx: [
+            [0, 0],
+            [10, 20],
+          ],
+        },
+      }),
+    ]);
+    expectNotice(result, motionNotice('element 0 (rect, animate)'));
+  });
+
+  /*
+   * [label, element, motion, whether the one frame draws it, and its index: 0 unless given,
+   * placed after that many hidden still elements, which the notice skips and which draw no ink].
+   */
+  it.each<[string, Elements[number], string, boolean, number?]>([
+    ['fade-in', square({ effect: { name: 'fade-in' } }), 'effect fade-in', false],
+    ['blink at its default period', square({ effect: { name: 'blink' } }), 'effect blink', false],
+    [
+      'blink with period 1',
+      square({ effect: { name: 'blink', period: 1 } }),
+      'effect blink',
+      false,
+    ],
+    ['blink with period 4', square({ effect: { name: 'blink', period: 4 } }), 'effect blink', true],
+    [
+      'a visible track starting false',
+      square({
+        animate: {
+          visible: [
+            [0, false],
+            [5, true],
+          ],
+        },
+      }),
+      'animate',
+      false,
+    ],
+    [
+      'a visible track that reaches its midpoint at frame 0',
+      square({
+        animate: {
+          visible: [
+            [-4, false],
+            [4, true],
+          ],
+        },
+      }),
+      'animate',
+      true,
+    ],
+    [
+      'an opacity track starting at 0',
+      square({
+        animate: {
+          opacity: [
+            [0, 0],
+            [10, 100],
+          ],
+        },
+      }),
+      'animate',
+      false,
+    ],
+    [
+      'an opacity track at 50 between keyframes at frame 0',
+      square({
+        animate: {
+          opacity: [
+            [-4, 0],
+            [4, 100],
+          ],
+        },
+      }),
+      'animate',
+      true,
+    ],
+    [
+      'pulse over a static opacity of 0',
+      square({ effect: { name: 'pulse' }, opacity: 0 }),
+      'effect pulse',
+      true,
+    ],
+    [
+      'float over a static opacity of 0',
+      square({ effect: { name: 'float' }, opacity: 0 }),
+      'effect float',
+      false,
+    ],
+    [
+      'twinkle at element 2, which its flicker draws where element 0 would sit at opacity 0',
+      square({ effect: { name: 'twinkle', amplitude: 1, phase: 0.75, period: 1 } }),
+      'effect twinkle',
+      true,
+      2,
+    ],
+  ])(
+    '%s: the notice says whether the one frame draws it, as the pixels do',
+    async (_l, el, motion, drawn, at = 0) => {
+      const stills = Array.from({ length: at }, () => square({ visible: false }));
+      const { result, frame } = await render([...stills, el]);
+      const hidden = drawn ? '' : ', not drawn on that frame';
+      expectNotice(result, motionNotice(`element ${at} (rect, ${motion}${hidden})`));
+      expect(inkPixels(frame!, BLACK).length > 0).toBe(drawn);
+    },
+  );
+
+  it.each<[string, Elements, number | undefined]>([
+    ['a scene with no elements', [], undefined],
+    ['a one-frame scene with no effect or keyframes', [square()], 1],
+    [
+      'a still element hidden by visible: false or opacity: 0',
+      [square({ visible: false }), square({ opacity: 0 })],
+      undefined,
+    ],
+    ['an effect over 2 frames', [pulsingSun], 2],
+    ['an effect over 20 frames', [pulsingSun], 20],
+    [
+      'animate holding one keyframe on every track',
+      [
+        square({
+          animate: {
+            dx: [[0, 4]],
+            dy: [[0, 2]],
+            opacity: [[0, 50]],
+            visible: [[0, false]],
+            color: [[0, '#ff0000']],
+          },
+        }),
+      ],
+      undefined,
+    ],
+  ])('%s: no notice on either surface', async (_label, elements, frames) => {
+    const { result } = await render(elements, { frames });
+    expect(result.structuredContent).not.toHaveProperty('notice');
+    expect(resultText(result)).not.toContain('Rendered 1 frame');
+  });
+
+  it('names every element asking for motion in index order, and none that holds still', async () => {
+    const { result } = await render([
+      square(),
+      { type: 'icon', name: 'sun', x: 0, y: 0, effect: { name: 'pulse' } },
+      { type: 'text', text: 'HI', y: 50 },
+      {
+        type: 'circle',
+        cx: 50,
+        cy: 10,
+        radius: 5,
+        color: '#00ff00',
+        animate: {
+          dy: [
+            [0, 0],
+            [4, 3],
+          ],
+        },
+      },
+      square({ x: 0, y: 30, effect: { name: 'fade-in' } }),
+      {
+        type: 'line',
+        x0: 0,
+        y0: 63,
+        x1: 63,
+        y1: 63,
+        color: '#ffffff',
+        animate: { opacity: [[0, 40]] },
+      },
+      { type: 'text', text: 'B', y: 40, effect: { name: 'blink', period: 4 } },
+    ]);
+    expectNotice(
+      result,
+      motionNotice(
+        'element 1 (icon, effect pulse); element 3 (circle, animate); element 4 (rect, effect fade-in, not drawn on that frame); element 6 (text, effect blink)',
+      ),
+    );
+  });
+
+  it('joins after the fallback-character notice', async () => {
+    const { result } = await render([{ type: 'text', text: '20 €' }, pulsingSun]);
+    expectNotice(result, `${FALLBACK_NOTICE} ${motionNotice('element 1 (icon, effect pulse)')}`);
+  });
+
+  it('joins before the push-visibility notice', async () => {
+    const { result } = await render([pulsingSun], {}, { screenOn: false });
+    expectNotice(result, `${motionNotice('element 0 (icon, effect pulse)')} ${SCREEN_OFF_NOTICE}`);
+  });
+
+  it('sits between the fallback-character and push-visibility notices when all three fire', async () => {
+    const { result } = await render(
+      [{ type: 'text', text: '20 €', effect: { name: 'float' } }],
+      {},
+      { screenOn: false },
+    );
+    expectNotice(
+      result,
+      `${FALLBACK_NOTICE} ${motionNotice('element 0 (text, effect float)')} ${SCREEN_OFF_NOTICE}`,
+    );
+  });
+
+  it('tools/list says on frames and on every element’s effect that motion needs 2 or more frames', () => {
+    const schema = z.toJSONSchema(pixooComposeScene.input) as unknown as {
+      properties: {
+        frames: { description: string };
+        elements: { items: { oneOf?: Variant[]; anyOf?: Variant[] } };
+      };
+    };
+    type Variant = { properties: { effect: { description: string } } };
+    expect(schema.properties.frames.description).toContain(
+      'Motion from effect or animate needs 2 or more.',
+    );
+    const variants =
+      schema.properties.elements.items.oneOf ?? schema.properties.elements.items.anyOf;
+    expect(variants).toHaveLength(11);
+    for (const variant of variants!) {
+      expect(variant.properties.effect.description).toContain('its motion needs 2 or more frames');
+    }
   });
 });

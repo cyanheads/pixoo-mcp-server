@@ -2,8 +2,8 @@
 
 **Server:** pixoo-mcp-server
 **Version:** 1.5.0
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
-**Engines:** Bun ≥1.4.0, Node ≥24.0.0
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.22`
+**Engines:** Bun ≥1.4.4, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.4.0 (protocol revision 2026-07-28 alongside the 2025 era)
 **Zod:** ^4.6.7
 
@@ -18,7 +18,7 @@ Local-network MCP server for Divoom Pixoo LED matrix displays (Pixoo-64 primary;
 **Two distinct layers:**
 
 - **`src/renderer/`** — Pure rendering pipeline with no device dependency. Element renderers, styled-text engine (gradient ramps, shadows, outlines, semantic alignment), theme/palette registry, icon registry, effect compiler (presets → keyframes), keyframe interpolation, preview encoding (PNG/contact-sheet/GIF). Independently unit-testable.
-- **`src/services/pixoo/`** — `PixooService` wraps `@cyanheads/pixoo-toolkit`. Handles lazy init from config, command serialization with min-interval pacing, `ensureCustomChannel()`, result→error-contract mapping, and device state snapshots.
+- **`src/services/pixoo/`** — `PixooService` wraps `@cyanheads/pixoo-toolkit`. Handles lazy init from config, command serialization with min-interval pacing (a cancelled push sends no further device command), `ensureCustomChannel()`, result→error-contract mapping, and device state snapshots.
 
 Tools call renderer + service; they don't talk to the toolkit directly.
 
@@ -186,6 +186,7 @@ Pixoo-specific error reasons declared on tools:
 | `device_unreachable` | `ServiceUnavailable` | Toolkit result kind `network`/`timeout` | `true` |
 | `device_http_error` | `ServiceUnavailable` | Non-2xx from the device's HTTP server | `true` for 408, 429, 500, 502–504; `false` otherwise |
 | `device_rejected` | `ServiceUnavailable` | Firmware returned non-zero `error_code` | — |
+| `device_invalid_response` | `ServiceUnavailable` | Toolkit result kind `response` — the reply at `PIXOO_IP` is not a Pixoo's (not JSON with a numeric `error_code`: an HTML page, an empty body, other JSON) | `false` |
 | `gif_serve_failed` | `ServiceUnavailable` | An animation past 40 frames could not be served: the one-shot listener could not open, its URL ran past 255 bytes, or the device did not request the GIF within 10 s, stalled its transfer for 10 s, or dropped it | — |
 | `no_device_configured` | `InvalidParams` | Device tool called without `PIXOO_IP` | — |
 | `asset_not_found` | `NotFound` | Image/sprite path or URL unreadable | — |
@@ -202,7 +203,7 @@ Pixoo-specific error reasons declared on tools:
 
 A contract's `retryable` reaches the wire only through `ctx.fail`; a service throw carries it only when the service writes `data.retryable` itself. `classifyDeviceFailure` (in `pixoo-service.ts`) is the one place a failed device call becomes a reason and a retryability — `PixooService` writes both on its push-path throws, and `pixoo_overlay_text` passes the retryability into `ctx.fail` so it overrides the contract default per occurrence.
 
-The four push tools (`pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`, `pixoo_render_html`) share one post-render path in `src/mcp-server/tools/device-push.ts`. `pushKeepingPreview` rethrows a failed push's error with its code, `reason`, `retryable`, and recovery untouched, adding `data.outputFiles` (the file the call already saved, else a copy in a fresh `os.tmpdir()` directory) and naming the path in the message. Past 40 frames (`MAX_FRAME_PUSH`), `pixoo_compose_scene`, `pixoo_push_image`, and `pixoo_render_html` push through `PixooService.pushAnimation`'s GIF path, and that file is the panel-size GIF the device downloads (`encodePanelGif`), not the 8× preview GIF. The framework drops `ctx.content` blocks from error results, so the file path is how the render survives. On success, `visibilityNotice` turns the post-push `DeviceStateSnapshot` into one `ctx.enrich.notice` (screen off, brightness ≤ 10, not on the custom channel). `ctx.enrich.notice` is last-wins, so a tool with a second notice source composes them into one string.
+The four push tools (`pixoo_display_text`, `pixoo_compose_scene`, `pixoo_push_image`, `pixoo_render_html`) share one post-render path in `src/mcp-server/tools/device-push.ts`. `pushKeepingPreview` rethrows a failed push's error with its code, `reason`, `retryable`, and recovery untouched, adding `data.outputFiles` (the file the call already saved, else a copy in a fresh `os.tmpdir()` directory) and naming the path in the message. A cancelled call is not a failed push: once its signal has aborted, the error goes back untouched and no preview is kept. Past 40 frames (`MAX_FRAME_PUSH`), `pixoo_compose_scene`, `pixoo_push_image`, and `pixoo_render_html` push through `PixooService.pushAnimation`'s GIF path, and that file is the panel-size GIF the device downloads (`encodePanelGif`), not the 8× preview GIF. The framework drops `ctx.content` blocks from error results, so the file path is how the render survives. On success, `visibilityNotice` turns the post-push `DeviceStateSnapshot` into one `ctx.enrich.notice` (screen off, brightness ≤ 10, not on the custom channel). `ctx.enrich.notice` is last-wins, so a tool with a second notice source composes them into one string.
 
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';

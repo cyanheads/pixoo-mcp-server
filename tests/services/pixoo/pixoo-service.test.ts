@@ -8,12 +8,24 @@ import { type AddressInfo, createServer, Server, connect as tcpConnect } from 'n
 import * as path from 'node:path';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
-import { Canvas } from '@cyanheads/pixoo-toolkit';
+import { Canvas, Channel, PixooClient, type PixooFailure } from '@cyanheads/pixoo-toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pushKeepingPreview } from '@/mcp-server/tools/device-push.js';
 import { encodePanelGif, savePanelGif } from '@/renderer/preview.js';
-import { getPixooService, initPixooService, PixooService } from '@/services/pixoo/pixoo-service.js';
+import {
+  classifyDeviceFailure,
+  getPixooService,
+  initPixooService,
+  PixooService,
+} from '@/services/pixoo/pixoo-service.js';
+import {
+  type FakePixoo,
+  NON_PIXOO_REPLIES,
+  pixooReply,
+  startFakePixoo,
+} from '../../helpers/device-failure.js';
+import { freePort } from '../../helpers/free-port.js';
 
 // ─── Shared mock helpers ──────────────────────────────────────────────────────
 
@@ -263,22 +275,56 @@ describe('PixooService failure kind mapping', () => {
     // A firmware rejection is deterministic — no retryability claim either way.
     expect((error as McpError).data).not.toHaveProperty('retryable');
   });
+});
 
-  it('unknown failure kind → device_unreachable', async () => {
-    const svc = getPixooService();
-    injectClient(
-      svc,
-      makeFakeClient({
-        push: () => Promise.resolve({ ok: false, kind: 'something_unknown', message: 'unknown' }),
-        getChannel: () => Promise.resolve({ ok: true, data: { SelectIndex: 3 } }),
-      }),
+// ─── classifyDeviceFailure: every PixooErrorKind ──────────────────────────────
+
+describe('classifyDeviceFailure', () => {
+  it.each<[string, PixooFailure, ReturnType<typeof classifyDeviceFailure>]>([
+    [
+      'network',
+      { ok: false, kind: 'network', message: 'fetch failed: ECONNREFUSED' },
+      { reason: 'device_unreachable', retryable: true },
+    ],
+    [
+      'timeout',
+      { ok: false, kind: 'timeout', message: 'Request timed out' },
+      { reason: 'device_unreachable', retryable: true },
+    ],
+    [
+      'http 503, transient',
+      { ok: false, kind: 'http', status: 503, message: 'HTTP 503 Service Unavailable' },
+      { reason: 'device_http_error', retryable: true },
+    ],
+    [
+      'http 404',
+      { ok: false, kind: 'http', status: 404, message: 'HTTP 404 Not Found' },
+      { reason: 'device_http_error', retryable: false },
+    ],
+    [
+      'device',
+      { ok: false, kind: 'device', deviceCode: 5, message: 'Device rejected Draw/SendHttpGif' },
+      { reason: 'device_rejected' },
+    ],
+    [
+      'response',
+      {
+        ok: false,
+        kind: 'response',
+        message: 'Reply to Channel/GetIndex is not JSON — is 127.0.0.1 a Pixoo?',
+      },
+      { reason: 'device_invalid_response', retryable: false },
+    ],
+  ])('%s → %o', (_kind, failure, expected) => {
+    // Strict: a firmware rejection carries no retryable key at all.
+    expect(classifyDeviceFailure(failure)).toStrictEqual(expected);
+  });
+
+  it('a kind outside PixooErrorKind throws rather than reading as device_unreachable', () => {
+    const unknown = { ok: false, kind: 'something_unknown', message: 'unknown' };
+    expect(() => classifyDeviceFailure(unknown as unknown as PixooFailure)).toThrow(
+      'something_unknown',
     );
-
-    const ctx = createMockContext();
-    const canvas = new Canvas(64);
-    await expect(svc.pushFrame(canvas, ctx)).rejects.toMatchObject({
-      data: { reason: 'device_unreachable', retryable: true },
-    });
   });
 });
 
@@ -553,8 +599,9 @@ describe('PixooService.pushAnimation past 40 frames', () => {
   });
 
   it('advertises PIXOO_SERVE_HOST:PIXOO_SERVE_PORT while binding the routed address', async () => {
+    const servePort = await freePort();
     process.env['PIXOO_SERVE_HOST'] = 'pixoo-host.lan';
-    process.env['PIXOO_SERVE_PORT'] = '8765';
+    process.env['PIXOO_SERVE_PORT'] = String(servePort);
     resetServerConfig();
     const device = fakeDevice();
     const listen = vi.spyOn(Server.prototype, 'listen');
@@ -562,9 +609,9 @@ describe('PixooService.pushAnimation past 40 frames', () => {
     await getPixooService().pushAnimation(frameStack(41), 100, createMockContext());
 
     expect(device.named('Device/PlayTFGif')[0]?.['FileName']).toMatch(
-      /^http:\/\/pixoo-host\.lan:8765\/[0-9a-f]{32}\.gif$/,
+      new RegExp(`^http://pixoo-host\\.lan:${servePort}/[0-9a-f]{32}\\.gif$`),
     );
-    expect(listen.mock.calls[0]?.slice(0, 2)).toEqual([8765, '127.0.0.1']);
+    expect(listen.mock.calls[0]?.slice(0, 2)).toEqual([servePort, '127.0.0.1']);
     await Promise.all(device.downloads);
   });
 
@@ -620,11 +667,13 @@ describe('PixooService.pushAnimation past 40 frames', () => {
     const device = fakeDevice('unreachable');
     const frames = frameStack(41);
     const gif = encodePanelGif(frames, 100);
+    const ctx = createMockContext();
 
     const error = (await pushKeepingPreview(
-      () => getPixooService().pushAnimation(frames, 100, createMockContext(), gif),
+      () => getPixooService().pushAnimation(frames, 100, ctx, gif),
       [],
       (dir) => savePanelGif(gif, dir, 'scene'),
+      ctx.signal,
     ).catch((err: unknown) => err)) as McpError;
 
     expect(error).toMatchObject({
@@ -640,6 +689,386 @@ describe('PixooService.pushAnimation past 40 frames', () => {
 
     const url = new URL(String(device.named('Device/PlayTFGif')[0]?.['FileName']));
     expect(await accepts(Number(url.port))).toBe(false);
+  });
+});
+
+// ─── A cancelled push sends nothing after the abort ───────────────────────────
+
+/**
+ * Each case runs the real `PixooClient` against a stand-in Pixoo on loopback that
+ * replies as a Pixoo would, and aborts from inside it once the request the case is about
+ * has reached it. A push that carried on past the abort would send its next command
+ * before it settled, so once the push has settled the commands received are complete.
+ */
+describe('PixooService — a cancelled push', () => {
+  /** What a frame push sends: the channel check, the push itself, the state read-back. */
+  const FRAME_PUSH = [
+    'Channel/GetIndex',
+    'Draw/ResetHttpGifId',
+    'Draw/SendHttpGif',
+    'Channel/GetIndex',
+    'Channel/GetAllConf',
+  ];
+  let device: FakePixoo | undefined;
+
+  /** Let pending I/O callbacks and microtasks run. */
+  async function flush() {
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  /**
+   * Fake `setTimeout` from here on, with the clock at the current `Date` — the frozen one,
+   * where a test froze `Date` alone before its first push. Faked any earlier, the `fetch`
+   * beneath a push leaves its own timers pending, and `vi.getTimerCount()` counts them.
+   */
+  function fakeTimersFromNow() {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now: Date.now() });
+  }
+
+  beforeEach(() => {
+    resetServerConfig();
+    process.env['PIXOO_IP'] = '127.0.0.1';
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '0';
+    initPixooService(fakeConfig, fakeStorage);
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await device?.close();
+    device = undefined;
+    vi.restoreAllMocks();
+    delete process.env['PIXOO_IP'];
+    delete process.env['PIXOO_PUSH_MIN_INTERVAL_MS'];
+    resetServerConfig();
+  });
+
+  it('a frame push aborted with its frame on the wire rejects with the reason and sends nothing more', async () => {
+    const controller = new AbortController();
+    device = await startFakePixoo((command) => {
+      if (command === 'Draw/SendHttpGif') controller.abort();
+      return pixooReply(command);
+    });
+
+    const error = await getPixooService()
+      .pushFrame(new Canvas(64), createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err);
+
+    expect(error).toBe(controller.signal.reason);
+    expect(device.commands).toEqual(FRAME_PUSH.slice(0, 3));
+  });
+
+  it.each([
+    ['its channel read', 'Channel/GetIndex', ['Channel/GetIndex']],
+    ['its channel switch', 'Channel/SetIndex', ['Channel/GetIndex', 'Channel/SetIndex']],
+  ])(
+    'a push to a device on another channel aborted during %s sends no further channel command and no push',
+    async (_during, abortOn, sent) => {
+      const controller = new AbortController();
+      let channel: Channel = Channel.Faces;
+      device = await startFakePixoo((command) => {
+        if (command === abortOn) controller.abort();
+        if (command === 'Channel/SetIndex') channel = Channel.Custom;
+        return pixooReply(command, channel);
+      });
+
+      const error = await getPixooService()
+        .pushFrame(new Canvas(64), createMockContext({ signal: controller.signal }))
+        .catch((err: unknown) => err);
+
+      expect(error).toBe(controller.signal.reason);
+      expect(device.commands).toEqual(sent);
+    },
+  );
+
+  it('an animation of 40 frames or fewer aborted after its second frame sends no third', async () => {
+    const controller = new AbortController();
+    let frames = 0;
+    device = await startFakePixoo((command) => {
+      if (command === 'Draw/SendHttpGif' && ++frames === 2) controller.abort('User cancelled');
+      return pixooReply(command);
+    });
+
+    const error = await getPixooService()
+      .pushAnimation(frameStack(10), 100, createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err);
+
+    // The reason a notifications/cancelled carries arrives as the raw string.
+    expect(error).toBe('User cancelled');
+    expect(device.commands).toEqual([
+      'Channel/GetIndex',
+      'Draw/ResetHttpGifId',
+      'Draw/SendHttpGif',
+      'Draw/SendHttpGif',
+    ]);
+  });
+
+  it('an animation past 40 frames aborted during Device/PlayTFGif sends nothing more and closes its listener', async () => {
+    const controller = new AbortController();
+    let port: number | undefined;
+    device = await startFakePixoo((command) => {
+      if (command !== 'Device/PlayTFGif') return pixooReply(command);
+      port = ((listen.mock.contexts[0] as Server).address() as AddressInfo).port;
+      // Cancelled while the device has yet to answer the play: no reply goes back.
+      controller.abort();
+      return;
+    });
+    const listen = vi.spyOn(Server.prototype, 'listen');
+
+    const error = await getPixooService()
+      .pushAnimation(frameStack(41), 100, createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err);
+
+    // The cancellation itself, not the gif_serve_failed its listener reports when cut short.
+    expect(error).toBe(controller.signal.reason);
+    expect(device.commands).toEqual(['Channel/GetIndex', 'Device/PlayTFGif']);
+    expect((listen.mock.contexts[0] as Server).listening).toBe(false);
+    expect(await accepts(port!)).toBe(false);
+  });
+
+  it('an animation past 40 frames aborted while its listener waits for the download rejects with the reason', async () => {
+    const controller = new AbortController();
+    // A Pixoo's reply to the play, from a device that never downloads the GIF.
+    device = await startFakePixoo();
+    const play = vi.spyOn(PixooClient.prototype, 'playGifUrl');
+    const listen = vi.spyOn(Server.prototype, 'listen');
+
+    const push = getPixooService()
+      .pushAnimation(frameStack(41), 100, createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err);
+    while (play.mock.results.length === 0) await new Promise((resolve) => setImmediate(resolve));
+    // Once the accepted play is back, the push waits on the download.
+    await expect(play.mock.results[0]?.value).resolves.toMatchObject({ ok: true });
+    await flush();
+    controller.abort();
+
+    // The cancellation itself, not the gif_serve_failed the listener's wait ends with.
+    expect(await push).toBe(controller.signal.reason);
+    expect(device.commands).toEqual(['Channel/GetIndex', 'Device/PlayTFGif']);
+    expect((listen.mock.contexts[0] as Server).listening).toBe(false);
+  });
+
+  it('a push aborted while queued behind another sends nothing and holds up no push behind it', async () => {
+    const queued = new AbortController();
+    device = await startFakePixoo((command) => {
+      // The first push has its frame on the wire, so the second is still waiting its turn.
+      if (command === 'Draw/SendHttpGif') queued.abort();
+      return pixooReply(command);
+    });
+    const svc = getPixooService();
+    let firstSettled = false;
+
+    const first = svc.pushFrame(new Canvas(64), createMockContext()).finally(() => {
+      firstSettled = true;
+    });
+    const second = svc
+      .pushFrame(new Canvas(64), createMockContext({ signal: queued.signal }))
+      .catch((err: unknown) => err);
+    const third = svc.pushFrame(new Canvas(64), createMockContext());
+
+    expect(await second).toBe(queued.signal.reason);
+    // It gave up its place at the abort, before the push ahead of it finished.
+    expect(firstSettled).toBe(false);
+    await expect(first).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    await expect(third).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    // The first push and then the third: nothing from the cancelled one between them.
+    expect(device.commands).toEqual([...FRAME_PUSH, ...FRAME_PUSH]);
+  });
+
+  it('a push that fails uncancelled gives up its place: the next push on the service sends its frame', async () => {
+    const [, htmlPage] = NON_PIXOO_REPLIES[0]!;
+    let isPixoo = false;
+    device = await startFakePixoo((command) => (isPixoo ? pixooReply(command) : htmlPage));
+    const svc = getPixooService();
+    await expect(svc.pushFrame(new Canvas(64), createMockContext())).rejects.toMatchObject({
+      data: { reason: 'device_invalid_response' },
+    });
+    const before = device.commands.length;
+    isPixoo = true;
+
+    const started = device.requested.length;
+    const next = svc.pushFrame(new Canvas(64), createMockContext());
+    await flush();
+    // Its turn came at once: it has started its first command.
+    expect(device.requested[started]).toBe('Channel/GetIndex');
+    await expect(next).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    expect(device.commands.slice(before)).toEqual(FRAME_PUSH);
+  });
+
+  it('a push cancelled during its read-back, after the device took the frame, resolves with the device state', async () => {
+    const controller = new AbortController();
+    device = await startFakePixoo((command) => {
+      if (command === 'Channel/GetAllConf') controller.abort();
+      return pixooReply(command);
+    });
+
+    await expect(
+      getPixooService().pushFrame(new Canvas(64), createMockContext({ signal: controller.signal })),
+    ).resolves.toEqual({
+      reachable: true,
+      channel: 'custom',
+      brightness: 80,
+      screenOn: true,
+      clockId: 0,
+    });
+    expect(device.commands).toEqual(FRAME_PUSH);
+  });
+
+  it('a push aborted during the pacing wait ends the wait at once and sends nothing', async () => {
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '60000';
+    resetServerConfig();
+    device = await startFakePixoo();
+    const svc = getPixooService();
+    await svc.pushFrame(new Canvas(64), createMockContext());
+    const before = device.commands.length;
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const controller = new AbortController();
+    let pacedSettled = false;
+    const paced = svc
+      .pushFrame(new Canvas(64), createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err)
+      .finally(() => {
+        pacedSettled = true;
+      });
+    // No request is in flight, so the one timer is its pacing wait.
+    while (vi.getTimerCount() === 0) await new Promise((resolve) => setImmediate(resolve));
+    const behind = svc.pushFrame(new Canvas(64), createMockContext());
+
+    controller.abort();
+    await flush();
+
+    // Settled with no time passing: the wait ended at the abort.
+    expect(pacedSettled).toBe(true);
+    expect(await paced).toBe(controller.signal.reason);
+    // The push queued behind it then waits out its own interval and pushes.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(behind).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    expect(device.commands.slice(before)).toEqual(FRAME_PUSH);
+  });
+
+  it('a push aborted as the push ahead of it settles rejects without waiting out the interval', async () => {
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '60000';
+    resetServerConfig();
+    device = await startFakePixoo();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const svc = getPixooService();
+    const controller = new AbortController();
+    let secondSettled = false;
+
+    const first = svc.pushFrame(new Canvas(64), createMockContext());
+    const second = svc
+      .pushFrame(new Canvas(64), createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err)
+      .finally(() => {
+        secondSettled = true;
+      });
+    // Its turn has come by the time this runs; its pacing wait has not begun.
+    await first.then(() => controller.abort());
+    await flush();
+
+    // Settled with no time passing: no wait started on the cancelled signal.
+    expect(secondSettled).toBe(true);
+    expect(await second).toBe(controller.signal.reason);
+    expect(device.commands).toEqual(FRAME_PUSH);
+  });
+
+  /** Reject the first `Draw/SendHttpGif` with a non-zero `error_code`; answer the rest as a Pixoo. */
+  function rejectFirstFrame() {
+    let rejected = false;
+    return (command: string) => {
+      if (command !== 'Draw/SendHttpGif' || rejected) return pixooReply(command);
+      rejected = true;
+      return { body: JSON.stringify({ error_code: 1 }) };
+    };
+  }
+
+  it.each([
+    ['the device rejects its frame', rejectFirstFrame, 64, { data: { reason: 'device_rejected' } }],
+    ['its frame does not fit the panel', () => pixooReply, 32, { name: 'RangeError' }],
+  ])(
+    'a push that fails uncancelled because %s leaves the next push unpaced',
+    async (_because, answer, size, failure) => {
+      process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '60000';
+      resetServerConfig();
+      device = await startFakePixoo(answer());
+      const svc = getPixooService();
+      await expect(svc.pushFrame(new Canvas(size), createMockContext())).rejects.toMatchObject(
+        failure,
+      );
+      const before = device.requested.length;
+
+      fakeTimersFromNow();
+      const next = svc.pushFrame(new Canvas(64), createMockContext());
+      while (vi.getTimerCount() === 0) await new Promise((resolve) => setImmediate(resolve));
+
+      // Its one timer belongs to its first command, already sent: no pacing wait held it.
+      expect(device.requested.slice(before)).toEqual(['Channel/GetIndex']);
+      await expect(next).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    },
+  );
+
+  it('a push cancelled once its commands began holds the next push back for the whole interval', async () => {
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '60000';
+    resetServerConfig();
+    const controller = new AbortController();
+    let frames = 0;
+    device = await startFakePixoo((command) => {
+      if (command === 'Draw/SendHttpGif' && ++frames === 2) controller.abort();
+      return pixooReply(command);
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const svc = getPixooService();
+    const cutShort = await svc
+      .pushAnimation(frameStack(10), 100, createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err);
+    expect(cutShort).toBe(controller.signal.reason);
+    const before = device.requested.length;
+
+    fakeTimersFromNow();
+    const next = svc.pushFrame(new Canvas(64), createMockContext());
+    while (vi.getTimerCount() === 0) await new Promise((resolve) => setImmediate(resolve));
+
+    // Its one timer is the pacing wait: nothing goes to the device a moment before the interval.
+    expect(device.requested.slice(before)).toEqual([]);
+    vi.advanceTimersByTime(59_999);
+    await flush();
+    expect(device.requested.slice(before)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(next).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    expect(device.commands.slice(before)).toEqual(FRAME_PUSH);
+  });
+
+  it('a push cancelled during its pacing wait leaves the interval measured from the push before it', async () => {
+    process.env['PIXOO_PUSH_MIN_INTERVAL_MS'] = '60000';
+    resetServerConfig();
+    device = await startFakePixoo();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const svc = getPixooService();
+    await svc.pushFrame(new Canvas(64), createMockContext());
+    const before = device.requested.length;
+
+    fakeTimersFromNow();
+    const controller = new AbortController();
+    const cancelled = svc
+      .pushFrame(new Canvas(64), createMockContext({ signal: controller.signal }))
+      .catch((err: unknown) => err);
+    // No request is in flight, so the one timer is its pacing wait.
+    while (vi.getTimerCount() === 0) await new Promise((resolve) => setImmediate(resolve));
+    const behind = svc.pushFrame(new Canvas(64), createMockContext());
+    await vi.advanceTimersByTimeAsync(30_000);
+    controller.abort();
+    expect(await cancelled).toBe(controller.signal.reason);
+    await flush();
+
+    // The push behind it sends once the first push's interval is over, not a fresh one after the abort.
+    vi.advanceTimersByTime(29_999);
+    await flush();
+    expect(device.requested.slice(before)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await flush();
+    expect(device.requested.slice(before)).toContain('Channel/GetIndex');
+    await expect(behind).resolves.toMatchObject({ reachable: true, channel: 'custom' });
+    expect(device.commands.slice(before)).toEqual(FRAME_PUSH);
   });
 });
 

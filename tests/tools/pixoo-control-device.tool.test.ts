@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetServerConfig } from '@/config/server-config.js';
 import { pixooControlDevice } from '@/mcp-server/tools/definitions/pixoo-control-device.tool.js';
 import { getPixooService, initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { type FakePixoo, NON_PIXOO_REPLIES, startFakePixoo } from '../helpers/device-failure.js';
 
 const fakeConfig = {} as Parameters<typeof initPixooService>[0];
 const fakeStorage = {} as Parameters<typeof initPixooService>[1];
@@ -195,6 +196,31 @@ describe('pixooControlDevice', () => {
       const result = await runToolContract(pixooControlDevice, {});
       expect(result.structuredContent).not.toHaveProperty('notice');
       expect(result.content).toHaveLength(1);
+    });
+  });
+
+  describe('something other than a Pixoo answering at PIXOO_IP', () => {
+    let device: FakePixoo | undefined;
+
+    afterEach(async () => {
+      await device?.close();
+      device = undefined;
+    });
+
+    it('reports the setter failed (response) and the device unreachable, and the call resolves', async () => {
+      process.env['PIXOO_IP'] = '127.0.0.1';
+      resetServerConfig();
+      initPixooService(fakeConfig, fakeStorage);
+      const [, htmlPage] = NON_PIXOO_REPLIES[0]!;
+      device = await startFakePixoo(() => htmlPage);
+
+      const result = await runToolContract(pixooControlDevice, { brightness: 50 });
+
+      const notice =
+        'brightness:50 failed (response): Reply to Channel/SetBrightness is not JSON — is 127.0.0.1 a Pixoo?';
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toEqual({ reachable: false, applied: [], notice });
+      expect(device.commands).toEqual(['Channel/SetBrightness', 'Channel/GetIndex']);
     });
   });
 

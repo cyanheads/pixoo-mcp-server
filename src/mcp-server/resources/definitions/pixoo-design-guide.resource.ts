@@ -85,6 +85,8 @@ At typical viewing distance for a 64×64 LED display:
 | \`fade-in\` | Scene intros | — |
 | \`fade-out\` | Scene exits | — |
 
+Effects and keyframe tracks move only across 2 or more frames. \`pixoo_compose_scene\` defaults to \`frames: 1\`, a still on which \`fade-in\` and a default-period \`blink\` draw nothing.
+
 ## Pixel Art Rules
 
 - **Max 4–6 colors** per sprite/bitmap for clean art

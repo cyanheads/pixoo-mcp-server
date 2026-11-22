@@ -209,6 +209,15 @@ export const pixooRenderHtml = tool('pixoo_render_html', {
       thrownBy: 'service',
     },
     {
+      reason: 'device_invalid_response',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: "Something answered at PIXOO_IP, but its reply was not a Pixoo's (JSON with a numeric error_code).",
+      retryable: false,
+      recovery:
+        "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.",
+      thrownBy: 'service',
+    },
+    {
       reason: 'gif_serve_failed',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'An animation of more than 40 frames could not be served to the device: its listener failed to open, its URL ran past 255 bytes, or the device did not request the GIF within 10 s of the play, stalled its transfer for 10 s, or dropped it.',
@@ -331,6 +340,7 @@ export const pixooRenderHtml = tool('pixoo_render_html', {
             : svc.pushFrame(first, ctx),
         outputFiles,
         writePreview,
+        ctx.signal,
       );
       pushed = true;
       const visibility = visibilityNotice(deviceState);

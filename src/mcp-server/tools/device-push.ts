@@ -16,17 +16,20 @@ export const DIM_BRIGHTNESS = 10;
  * `retryable`, and recovery hint untouched — with the preview's path added as
  * `data.outputFiles` and named in the message: the files this call already saved, or
  * a copy written under the OS temp dir when it saved none. Error results carry no
- * `ctx.content` blocks, so the file is how the render outlives the failure.
+ * `ctx.content` blocks, so the file is how the render outlives the failure. Once the
+ * call's `signal` has aborted, the error goes back untouched whatever its type: a
+ * cancelled call is not a failed push, and keeps no preview.
  */
 export async function pushKeepingPreview(
   push: () => Promise<DeviceStateSnapshot>,
   savedFiles: string[],
   writePreview: PreviewWriter,
+  signal: AbortSignal,
 ): Promise<DeviceStateSnapshot> {
   try {
     return await push();
   } catch (err) {
-    if (!(err instanceof McpError)) throw err;
+    if (!(err instanceof McpError) || signal.aborted) throw err;
     const outputFiles = savedFiles.length > 0 ? savedFiles : [await saveTempPreview(writePreview)];
     throw new McpError(
       err.code,

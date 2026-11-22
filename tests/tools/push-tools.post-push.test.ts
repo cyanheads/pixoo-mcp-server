@@ -10,7 +10,8 @@ import { createServer, Server } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { z } from '@cyanheads/mcp-ts-core';
-import { runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { Canvas, Channel, type PixooFailure, savePng } from '@cyanheads/pixoo-toolkit';
 import sharp from 'sharp';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,15 +21,20 @@ import { pixooDisplayText } from '@/mcp-server/tools/definitions/pixoo-display-t
 import { pixooPushImage } from '@/mcp-server/tools/definitions/pixoo-push-image.tool.js';
 import { pixooRenderHtml } from '@/mcp-server/tools/definitions/pixoo-render-html.tool.js';
 import { initPixooService } from '@/services/pixoo/pixoo-service.js';
+import { resultReadBack } from '../helpers/commonmark.js';
 import {
   errorOutputFiles,
   expectDeviceFailure,
   type FakeDeviceState,
+  type FakePixoo,
   failDevicePush,
   imageKind,
   isolateTmpdir,
   listFiles,
+  NON_PIXOO_REPLIES,
+  pixooReply,
   resultText,
+  startFakePixoo,
   stubDeviceState,
 } from '../helpers/device-failure.js';
 import { expectForwardedRecovery } from '../helpers/expect-forwarded-recovery.js';
@@ -76,9 +82,11 @@ let longFixturePath: string;
 interface PushTool {
   animated?: Extra;
   errors: ReadonlyArray<{ code: number; reason: string; recovery: string }> | undefined;
+  /** Call the handler itself on a mock context carrying `signal`, with no contract runner around it. */
+  handle: (extra: Extra, signal: AbortSignal) => Promise<unknown>;
   long?: Extra;
   name: string;
-  run: (extra?: Extra) => Promise<ToolResult>;
+  run: (extra?: Extra, context?: { signal: AbortSignal }) => Promise<ToolResult>;
 }
 
 const TOOLS: PushTool[] = [
@@ -86,22 +94,42 @@ const TOOLS: PushTool[] = [
     name: 'pixoo_display_text',
     errors: pixooDisplayText.errors,
     animated: { effect: 'float' },
-    run: (extra = {}) =>
-      runToolContract(pixooDisplayText, { text: 'hi', ...extra } as z.input<
-        typeof pixooDisplayText.input
-      >),
+    run: (extra = {}, context) =>
+      runToolContract(
+        pixooDisplayText,
+        { text: 'hi', ...extra } as z.input<typeof pixooDisplayText.input>,
+        context && { context },
+      ),
+    handle: async (extra, signal) =>
+      pixooDisplayText.handler(
+        pixooDisplayText.input.parse({ text: 'hi', ...extra }),
+        createMockContext({ errors: pixooDisplayText.errors, signal }),
+      ),
   },
   {
     name: 'pixoo_compose_scene',
     errors: pixooComposeScene.errors,
     animated: { frames: 3, elements: [{ type: 'text', text: 'HI', effect: { name: 'float' } }] },
     long: { frames: 50, elements: [{ type: 'text', text: 'HI', effect: { name: 'float' } }] },
-    run: (extra = {}) =>
-      runToolContract(pixooComposeScene, {
-        background: '#000000',
-        elements: [{ type: 'text', text: 'HI' }],
-        ...extra,
-      } as z.input<typeof pixooComposeScene.input>),
+    run: (extra = {}, context) =>
+      runToolContract(
+        pixooComposeScene,
+        {
+          background: '#000000',
+          elements: [{ type: 'text', text: 'HI' }],
+          ...extra,
+        } as z.input<typeof pixooComposeScene.input>,
+        context && { context },
+      ),
+    handle: async (extra, signal) =>
+      pixooComposeScene.handler(
+        pixooComposeScene.input.parse({
+          background: '#000000',
+          elements: [{ type: 'text', text: 'HI' }],
+          ...extra,
+        }),
+        createMockContext({ errors: pixooComposeScene.errors, signal }),
+      ),
   },
   {
     name: 'pixoo_push_image',
@@ -113,20 +141,34 @@ const TOOLS: PushTool[] = [
     get long() {
       return { source: longFixturePath, maxFrames: 50 };
     },
-    run: (extra = {}) =>
-      runToolContract(pixooPushImage, { source: fixturePath, ...extra } as z.input<
-        typeof pixooPushImage.input
-      >),
+    run: (extra = {}, context) =>
+      runToolContract(
+        pixooPushImage,
+        { source: fixturePath, ...extra } as z.input<typeof pixooPushImage.input>,
+        context && { context },
+      ),
+    handle: async (extra, signal) =>
+      pixooPushImage.handler(
+        pixooPushImage.input.parse({ source: fixturePath, ...extra }),
+        createMockContext({ errors: pixooPushImage.errors, signal }),
+      ),
   },
   {
     name: 'pixoo_render_html',
     errors: pixooRenderHtml.errors,
     animated: { frames: 3 },
     long: { frames: 50 },
-    run: (extra = {}) =>
-      runToolContract(pixooRenderHtml, { html: '<p>hi</p>', ...extra } as z.input<
-        typeof pixooRenderHtml.input
-      >),
+    run: (extra = {}, context) =>
+      runToolContract(
+        pixooRenderHtml,
+        { html: '<p>hi</p>', ...extra } as z.input<typeof pixooRenderHtml.input>,
+        context && { context },
+      ),
+    handle: async (extra, signal) =>
+      pixooRenderHtml.handler(
+        pixooRenderHtml.input.parse({ html: '<p>hi</p>', ...extra }),
+        createMockContext({ errors: pixooRenderHtml.errors, signal }),
+      ),
   },
 ];
 
@@ -282,6 +324,16 @@ describe.each(TOOLS)('$name — preview kept on a failed push', (tool) => {
       'device_rejected',
       undefined,
     ],
+    [
+      'not a Pixoo reply',
+      {
+        ok: false,
+        kind: 'response',
+        message: 'Reply to Draw/ResetHttpGifId is not JSON — is 10.0.0.1 a Pixoo?',
+      },
+      'device_invalid_response',
+      false,
+    ],
   ])(
     '%s: the typed error is unchanged and outputFiles names a temp PNG',
     async (_label, failure, reason, retryable) => {
@@ -371,6 +423,138 @@ describe.each(TOOLS)('$name — preview kept on a failed push', (tool) => {
     expect(result.isError).toBeFalsy();
     expect(await listFiles(tmp.dir)).toEqual([]);
   });
+});
+
+describe.each(TOOLS)('$name — something other than a Pixoo answering at PIXOO_IP', (tool) => {
+  const NOT_A_PIXOO_HINT =
+    "Something other than a Pixoo is answering at PIXOO_IP. Run pixoo_discover_devices to find the Pixoo's IP, then set PIXOO_IP to it.";
+  let device: FakePixoo | undefined;
+  let tmp: Awaited<ReturnType<typeof isolateTmpdir>>;
+
+  beforeEach(async () => {
+    process.env['PIXOO_IP'] = '127.0.0.1';
+    resetServerConfig();
+    initPixooService(fakeConfig, fakeStorage);
+    tmp = await isolateTmpdir();
+  });
+
+  afterEach(async () => {
+    await device?.close();
+    device = undefined;
+    tmp.restore();
+  });
+
+  it.each(NON_PIXOO_REPLIES)(
+    '%s fails device_invalid_response, not retryable, pointing at PIXOO_IP',
+    async (_label, reply) => {
+      device = await startFakePixoo(() => reply);
+
+      const result = await tool.run({ push: true });
+
+      expectDeviceFailure(result, tool.errors, 'device_invalid_response', false);
+      expectForwardedRecovery(result, tool.errors, 'device_invalid_response');
+      const { error } = result.structuredContent as {
+        error: { message: string; data: { recovery: { hint: string } } };
+      };
+      expect(error.data.recovery.hint).toBe(NOT_A_PIXOO_HINT);
+      expect(resultReadBack(result)).toContain(`Recovery: ${NOT_A_PIXOO_HINT}`);
+      expect(error.message).toContain('is 127.0.0.1 a Pixoo?');
+      // One request per command: nothing retried, nothing sent after the failed reset.
+      expect(device.commands).toEqual(['Channel/GetIndex', 'Draw/ResetHttpGifId']);
+    },
+  );
+});
+
+describe.each(TOOLS)('$name — a cancelled push', (tool) => {
+  /** What a frame push has sent when its frame reaches the device. */
+  const UP_TO_THE_FRAME = ['Channel/GetIndex', 'Draw/ResetHttpGifId', 'Draw/SendHttpGif'];
+  let device: FakePixoo | undefined;
+  let tmp: Awaited<ReturnType<typeof isolateTmpdir>>;
+
+  beforeEach(async () => {
+    process.env['PIXOO_IP'] = '127.0.0.1';
+    resetServerConfig();
+    initPixooService(fakeConfig, fakeStorage);
+    tmp = await isolateTmpdir();
+  });
+
+  afterEach(async () => {
+    await device?.close();
+    device = undefined;
+    tmp.restore();
+  });
+
+  /**
+   * A stand-in Pixoo that aborts `controller` with `reason` once `command` reaches it,
+   * then answers as a Pixoo would, so a push that ignored the abort would carry on.
+   */
+  async function abortOn(command: string, controller: AbortController, reason?: unknown) {
+    device = await startFakePixoo((received) => {
+      if (received === command) controller.abort(reason);
+      return pixooReply(received);
+    });
+    return device;
+  }
+
+  it('cancelled with its frame on the wire, the call settles RequestCancelled and sends nothing after', async () => {
+    const controller = new AbortController();
+    const sent = await abortOn('Draw/SendHttpGif', controller, 'User cancelled');
+
+    const result = await tool.run({ push: true }, { signal: controller.signal });
+
+    expect(result.structuredContent).toMatchObject({
+      error: { code: JsonRpcErrorCode.RequestCancelled, message: 'User cancelled' },
+    });
+    expect(sent.commands).toEqual(UP_TO_THE_FRAME);
+  });
+
+  // The contract runner settles any call that ends after an abort as cancelled, so only
+  // the handler's own rejection shows whether it rethrew the cancellation.
+  it('cancelled with its frame on the wire, the handler rejects with the reason and keeps no preview', async () => {
+    const controller = new AbortController();
+    const sent = await abortOn('Draw/SendHttpGif', controller);
+
+    const error = await tool.handle({ push: true }, controller.signal).then(
+      (result) => ({ resolved: result }),
+      (err: unknown) => err,
+    );
+
+    expect(error).toBe(controller.signal.reason);
+    expect(sent.commands).toEqual(UP_TO_THE_FRAME);
+    expect(await listFiles(tmp.dir)).toEqual([]);
+  });
+
+  it('cancelled with an McpError as the reason, the handler rejects with that error itself and keeps no preview', async () => {
+    const controller = new AbortController();
+    const reason = new McpError(JsonRpcErrorCode.RequestCancelled, 'Cancelled by the client.');
+    const sent = await abortOn('Draw/SendHttpGif', controller, reason);
+
+    const error = await tool.handle({ push: true }, controller.signal).then(
+      (result) => ({ resolved: result }),
+      (err: unknown) => err,
+    );
+
+    expect(error).toBe(reason);
+    expect(error).not.toHaveProperty(['data', 'outputFiles']);
+    expect(sent.commands).toEqual(UP_TO_THE_FRAME);
+    expect(await listFiles(tmp.dir)).toEqual([]);
+  });
+
+  if (tool.long) {
+    it('past 40 frames, cancelled during the play, the handler rejects with the reason and keeps no GIF', async () => {
+      const controller = new AbortController();
+      const sent = await abortOn('Device/PlayTFGif', controller);
+
+      const error = await tool.handle({ push: true, ...tool.long }, controller.signal).then(
+        (result) => ({ resolved: result }),
+        (err: unknown) => err,
+      );
+
+      expect(error).toBe(controller.signal.reason);
+      expect(sent.commands).toEqual(['Channel/GetIndex', 'Device/PlayTFGif']);
+      expect(await listFiles(tmp.dir)).toEqual([]);
+    });
+  }
 });
 
 /** Frame count and frame size of the GIF in `bytes`. */
